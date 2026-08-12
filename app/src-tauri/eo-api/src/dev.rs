@@ -21,6 +21,7 @@
 //! byte-identical below), and the crash-reporting / compaction / rebuild
 //! bodies match the hand-built HTTP JSON exactly.
 
+use eo_services::auction_fee_research::{ResearchError, ResearchStatus};
 use eo_services::config_service::load_config_readonly;
 use eo_services::maintenance::rebuild_and_verify;
 use eo_services::observability_config::{crash_reporting_enabled, set_crash_reporting_enabled};
@@ -105,9 +106,90 @@ pub struct RebuildReport {
     pub tables: Vec<TableVerdict>,
 }
 
+/// The last attempt made by the research collector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionFeeCaptureStatus {
+    pub sample: i64,
+    pub accepted: bool,
+    pub message: String,
+}
+
+/// Full main-window state for the development research session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionFeeResearchStatus {
+    pub active: bool,
+    pub busy: bool,
+    pub sample_count: i64,
+    pub output_dir: Nullable<String>,
+    pub last_capture: Nullable<AuctionFeeCaptureStatus>,
+}
+
+/// Least-privilege state exposed to the floating overlay. It deliberately
+/// omits the filesystem path and every OCR field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuctionFeeOverlayStatus {
+    pub active: bool,
+    pub busy: bool,
+    pub sample_count: i64,
+    pub message: Nullable<String>,
+    pub failed: bool,
+}
+
 // ── Facade methods ──────────────────────────────────────────────────
 
 impl Api {
+    /// Shell-only state check for choosing which authority the capture
+    /// overlay represents. This is not an IPC operation and exposes no data.
+    pub fn auction_fee_research_active_for_shell(&self) -> bool {
+        self.auction_fee_research.is_active()
+    }
+
+    /// Shell teardown used when the floating window closes, even if the
+    /// developer-mode setting changed while it was open.
+    pub fn stop_auction_fee_research_for_shell(&self) {
+        self.spacebar.set_research_enabled(false);
+        self.auction_fee_research.stop();
+    }
+
+    pub fn dev_auction_fee_research_start(&self) -> Result<AuctionFeeResearchStatus, ApiError> {
+        self.require_developer_mode()?;
+        let status = self.auction_fee_research.start().map_err(research_error)?;
+        self.spacebar.set_research_enabled(true);
+        Ok(research_status(status))
+    }
+
+    pub fn dev_auction_fee_research_stop(&self) -> Result<AuctionFeeResearchStatus, ApiError> {
+        self.require_developer_mode()?;
+        self.spacebar.set_research_enabled(false);
+        Ok(research_status(self.auction_fee_research.stop()))
+    }
+
+    pub fn dev_auction_fee_research_status(&self) -> Result<AuctionFeeResearchStatus, ApiError> {
+        self.require_developer_mode()?;
+        Ok(research_status(self.auction_fee_research.status()))
+    }
+
+    /// Capture through the floating overlay while returning status only.
+    /// The full observation goes to the local dataset, never the renderer.
+    pub fn dev_auction_fee_research_capture(&self) -> Result<AuctionFeeOverlayStatus, ApiError> {
+        self.require_developer_mode()?;
+        let _ = self
+            .auction_fee_research
+            .capture()
+            .map_err(research_error)?;
+        Ok(research_overlay_status(self.auction_fee_research.status()))
+    }
+
+    pub fn dev_auction_fee_research_overlay_status(
+        &self,
+    ) -> Result<AuctionFeeOverlayStatus, ApiError> {
+        self.require_developer_mode()?;
+        Ok(research_overlay_status(self.auction_fee_research.status()))
+    }
+
     /// The in-process metrics snapshot (throughput counts, latency
     /// histograms, resource-drift gauges). Gate-off => [`ApiError::NotFound`].
     pub fn dev_metrics(&self) -> Result<MetricsSnapshot, ApiError> {
@@ -208,6 +290,52 @@ impl Api {
         } else {
             Err(ApiError::not_found("Not Found"))
         }
+    }
+}
+
+fn research_error(error: ResearchError) -> ApiError {
+    match error {
+        ResearchError::Unavailable | ResearchError::Inactive => {
+            ApiError::invalid_state(error.to_string())
+        }
+        ResearchError::Busy => ApiError::invalid_state(error.to_string()),
+        ResearchError::Io(_) | ResearchError::Encode => {
+            ApiError::internal("auction fee research capture")(error)
+        }
+    }
+}
+
+fn research_status(status: ResearchStatus) -> AuctionFeeResearchStatus {
+    AuctionFeeResearchStatus {
+        active: status.active,
+        busy: status.busy,
+        sample_count: status.sample_count as i64,
+        output_dir: status
+            .output_dir
+            .map(|path| path.to_string_lossy().into_owned())
+            .into(),
+        last_capture: status
+            .last_capture
+            .map(|capture| AuctionFeeCaptureStatus {
+                sample: capture.sample as i64,
+                accepted: capture.accepted,
+                message: capture.message,
+            })
+            .into(),
+    }
+}
+
+fn research_overlay_status(status: ResearchStatus) -> AuctionFeeOverlayStatus {
+    let failed = status
+        .last_capture
+        .as_ref()
+        .is_some_and(|capture| !capture.accepted);
+    AuctionFeeOverlayStatus {
+        active: status.active,
+        busy: status.busy,
+        sample_count: status.sample_count as i64,
+        message: status.last_capture.map(|capture| capture.message).into(),
+        failed,
     }
 }
 

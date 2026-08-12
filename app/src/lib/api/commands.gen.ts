@@ -292,6 +292,38 @@ export interface AuctionExpireInput {
 }
 
 /**
+ * The last attempt made by the research collector.
+ */
+export interface AuctionFeeCaptureStatus {
+	sample: number;
+	accepted: boolean;
+	message: string;
+}
+
+/**
+ * Least-privilege state exposed to the floating overlay. It deliberately
+ * omits the filesystem path and every OCR field.
+ */
+export interface AuctionFeeOverlayStatus {
+	active: boolean;
+	busy: boolean;
+	sampleCount: number;
+	message: string | null;
+	failed: boolean;
+}
+
+/**
+ * Full main-window state for the development research session.
+ */
+export interface AuctionFeeResearchStatus {
+	active: boolean;
+	busy: boolean;
+	sampleCount: number;
+	outputDir: string | null;
+	lastCapture: AuctionFeeCaptureStatus | null;
+}
+
+/**
  * One auction listing across its lifecycle. Realised figures are `null`
  * until the listing is confirmed sold: an open auction has no price yet,
  * and an expired one never realised anything.
@@ -1292,6 +1324,15 @@ export interface MapView {
 }
 
 /**
+ * Gross markup needed for the auction listing fee to consume no more than
+ * the requested share. Item packet TT is this amount divided by its premium.
+ */
+export interface MarketAuctionPacketThreshold {
+	maxFeeSharePct: number;
+	grossMarkupPed: number;
+}
+
+/**
  * The break-even readout: the player's looter professions and every
  * library weapon's modelled break-even markup against each of them.
  */
@@ -1385,6 +1426,8 @@ export interface MarketHarvestItem {
 	markupPct: number | null;
 	horizon: string | null;
 	salesPed: number | null;
+	/** Fee-efficient TT packet at the resolved direct-market markup. This deliberately excludes turnover: capacity is a separate market signal. */
+	recommendedPacketTt: number | null;
 	/** Every horizon's reading, ordered day, week, month, year. */
 	readings: MarketHarvestHorizon[];
 }
@@ -3314,6 +3357,10 @@ export async function marketContributionBatch(): Promise<MarketContributionBatch
 	return invokeCommand('market_contribution_batch', {});
 }
 
+export async function marketAuctionPacketThreshold(maxFeeSharePct: number): Promise<MarketAuctionPacketThreshold> {
+	return invokeCommand('market_auction_packet_threshold', { max_fee_share_pct: maxFeeSharePct });
+}
+
 export async function marketBreakEven(): Promise<MarketBreakEven> {
 	return invokeCommand('market_break_even', {});
 }
@@ -3524,6 +3571,26 @@ export async function devCompactDatabase(): Promise<CompactResult> {
 
 export async function devRebuildProjections(): Promise<RebuildReport> {
 	return invokeCommand('dev_rebuild_projections', {});
+}
+
+export async function devAuctionFeeResearchStart(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_start', {});
+}
+
+export async function devAuctionFeeResearchStop(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_stop', {});
+}
+
+export async function devAuctionFeeResearchStatus(): Promise<AuctionFeeResearchStatus> {
+	return invokeCommand('dev_auction_fee_research_status', {});
+}
+
+export async function devAuctionFeeResearchCapture(): Promise<AuctionFeeOverlayStatus> {
+	return invokeCommand('dev_auction_fee_research_capture', {});
+}
+
+export async function devAuctionFeeResearchOverlayStatus(): Promise<AuctionFeeOverlayStatus> {
+	return invokeCommand('dev_auction_fee_research_overlay_status', {});
 }
 
 export async function planetMapsList(): Promise<PlanetMap[]> {

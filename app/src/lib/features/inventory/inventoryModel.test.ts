@@ -23,6 +23,7 @@ vi.mock('$lib/api/inventory', () => ({
 }));
 
 vi.mock('$lib/api/market', () => ({
+	getMarketAuctionPacketThreshold: vi.fn(),
 	getMarketHarvestMarkups: vi.fn(),
 	getMarketHuntMarkups: vi.fn(),
 }));
@@ -59,6 +60,7 @@ beforeEach(() => {
 				markupPct: 125,
 				horizon: 'week',
 				salesPed: 1_000,
+				recommendedPacketTt: 39.2,
 				readings: [
 					{ horizon: 'day', markupPct: 126, salesPed: 100 },
 					{ horizon: 'week', markupPct: 125, salesPed: 1_000 },
@@ -69,6 +71,10 @@ beforeEach(() => {
 	mockedMarket.getMarketHarvestMarkups.mockResolvedValue({
 		nanocubeMarkupPct: 100.6,
 		items: [],
+	});
+	mockedMarket.getMarketAuctionPacketThreshold.mockResolvedValue({
+		maxFeeSharePct: 10,
+		grossMarkupPed: 9.8,
 	});
 });
 
@@ -85,8 +91,38 @@ describe('central inventory model', () => {
 			effectiveMarkupPct: 125,
 			tier: 'liquid',
 			markupHorizon: 'week',
+			recommendedPacketTt: 39.2,
 		});
 		expect(model.loading).toBe(false);
+	});
+
+	it('recomputes packet TT from a selected listing-fee cap', async () => {
+		const model = createInventoryModel();
+		await model.load();
+		mockedMarket.getMarketAuctionPacketThreshold.mockResolvedValueOnce({
+			maxFeeSharePct: 5,
+			grossMarkupPed: 126,
+		});
+
+		await model.setPacketFeeSharePct(5);
+
+		expect(model.packetFeeSharePct).toBe(5);
+		expect(model.loot[0].recommendedPacketTt).toBe(504);
+	});
+
+	it('clears a packet fee-cap error after a successful retry', async () => {
+		const model = createInventoryModel();
+		await model.load();
+		mockedMarket.getMarketAuctionPacketThreshold
+			.mockRejectedValueOnce(new Error('fee model unavailable'))
+			.mockResolvedValueOnce({ maxFeeSharePct: 15, grossMarkupPed: 4.94 });
+
+		await model.setPacketFeeSharePct(5);
+		expect(model.error).toBe('fee model unavailable');
+
+		await model.setPacketFeeSharePct(15);
+		expect(model.error).toBeNull();
+		expect(model.packetFeeSharePct).toBe(15);
 	});
 
 	it('turns a manual loot listing into the same reviewed draft an OCR intake will use', async () => {
@@ -131,6 +167,7 @@ describe('central inventory model', () => {
 					markupPct: 110,
 					horizon: 'month',
 					salesPed: 100,
+					recommendedPacketTt: 98,
 					readings: [
 						{ horizon: 'week', markupPct: null, salesPed: 0 },
 						{ horizon: 'month', markupPct: 110, salesPed: 100 },

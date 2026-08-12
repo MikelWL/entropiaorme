@@ -16,6 +16,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "auction_sale_revert",
     "begin_navigation_area_selection",
     "capture_png",
+    "capture_sale_from_overlay",
     "character_activity_recommender",
     "character_calibration",
     "character_hp_optimizer",
@@ -49,6 +50,11 @@ pub const APP_COMMANDS: &[&str] = &[
     "demo_tracking_session_detail",
     "demo_tracking_sessions",
     "demo_tracking_snapshot",
+    "dev_auction_fee_research_capture",
+    "dev_auction_fee_research_overlay_status",
+    "dev_auction_fee_research_start",
+    "dev_auction_fee_research_status",
+    "dev_auction_fee_research_stop",
     "dev_compact_database",
     "dev_crash_reporting",
     "dev_metrics",
@@ -100,6 +106,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "maps_calibration_start",
     "maps_calibration_status",
     "maps_scan_coordinates",
+    "market_auction_packet_threshold",
     "market_break_even",
     "market_contribution_batch",
     "market_harvest_markups",
@@ -206,8 +213,12 @@ pub const APP_COMMANDS: &[&str] = &[
 
 /// The capture overlay does one thing: read the sale window and take
 /// itself off screen. It gets those two and nothing else.
-pub const SALE_CAPTURE_COMMANDS: &[&str] =
-    &["hide_sale_capture_overlay", "inventory_sale_window_capture"];
+pub const SALE_CAPTURE_COMMANDS: &[&str] = &[
+    "capture_sale_from_overlay",
+    "dev_auction_fee_research_capture",
+    "dev_auction_fee_research_overlay_status",
+    "hide_sale_capture_overlay",
+];
 
 pub const CARTOGRAPHY_COMMANDS: &[&str] = &[
     "map_pin_create",

@@ -33,7 +33,10 @@ use crate::codex::{
     CodexCalibrateResult, CodexClaimResult, CodexMasteryClaimResult, CodexMetaAttribute,
     CodexMetaClaimResult, CodexRecommendTarget, CodexSkillOption, CodexSpecies, CodexSpeciesRanks,
 };
-use crate::dev::{CompactResult, CrashReportingStatus, MetricsSnapshot, RebuildReport};
+use crate::dev::{
+    AuctionFeeOverlayStatus, AuctionFeeResearchStatus, CompactResult, CrashReportingStatus,
+    MetricsSnapshot, RebuildReport,
+};
 use crate::equipment::{
     EquipmentDetail, EquipmentRequest, EquipmentSearchHit, EquipmentSummary, SearchKind,
 };
@@ -43,8 +46,9 @@ use crate::maps::{
     PinConfigInput, PlanetMap, RadarCalibrationStatus, RadarGeometry,
 };
 use crate::market::{
-    MarketBreakEven, MarketCommitResult, MarketContributionBatch, MarketHarvestData,
-    MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow, MarketPastePreview,
+    MarketAuctionPacketThreshold, MarketBreakEven, MarketCommitResult, MarketContributionBatch,
+    MarketHarvestData, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow,
+    MarketPastePreview,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
@@ -908,6 +912,14 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(Nullable<MarketContributionBatch>))),
         },
         CommandSpec {
+            name: "market_auction_packet_threshold",
+            args: vec![ArgSpec {
+                name: "max_fee_share_pct",
+                schema: schema(schema_for!(f64)),
+            }],
+            returns: Some(schema(schema_for!(MarketAuctionPacketThreshold))),
+        },
+        CommandSpec {
             name: "market_break_even",
             args: Vec::new(),
             returns: Some(schema(schema_for!(MarketBreakEven))),
@@ -1377,6 +1389,31 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "dev_rebuild_projections",
             args: Vec::new(),
             returns: Some(schema(schema_for!(RebuildReport))),
+        },
+        CommandSpec {
+            name: "dev_auction_fee_research_start",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AuctionFeeResearchStatus))),
+        },
+        CommandSpec {
+            name: "dev_auction_fee_research_stop",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AuctionFeeResearchStatus))),
+        },
+        CommandSpec {
+            name: "dev_auction_fee_research_status",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AuctionFeeResearchStatus))),
+        },
+        CommandSpec {
+            name: "dev_auction_fee_research_capture",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AuctionFeeOverlayStatus))),
+        },
+        CommandSpec {
+            name: "dev_auction_fee_research_overlay_status",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(AuctionFeeOverlayStatus))),
         },
         // The planet-maps family: the catalogue read only. The raster
         // fetch answers raw bytes and rides a bespoke shell command

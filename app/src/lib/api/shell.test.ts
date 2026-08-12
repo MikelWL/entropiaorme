@@ -28,6 +28,7 @@ describe('window commands', () => {
 		['showScanOverlay', 'show_scan_overlay'],
 		['hideScanOverlay', 'hide_scan_overlay'],
 		['showSaleCaptureOverlay', 'show_sale_capture_overlay'],
+		['captureSaleFromOverlay', 'capture_sale_from_overlay'],
 		['hideSaleCaptureOverlay', 'hide_sale_capture_overlay'],
 	] as const)('%s invokes %s with no arguments', async (fn, command) => {
 		const shell = await loadModule();

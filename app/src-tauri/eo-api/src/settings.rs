@@ -352,6 +352,7 @@ impl Api {
     /// tracker unconditionally so an in-flight session re-reads its
     /// config), and reply with the full assembled settings.
     pub async fn settings_update(&self, patch: SettingsPatch) -> Result<AppSettings, ApiError> {
+        let disables_developer_mode = patch.developer_mode_enabled == Some(false);
         let mut updates = patch.into_updates();
         // An empty patch is the backend's 400 (nothing to update).
         if updates.is_empty() {
@@ -404,6 +405,9 @@ impl Api {
         }
         if hooks_present {
             self.hotbar.set_hotbar_hooks_enabled(hooks_value);
+        }
+        if disables_developer_mode {
+            self.stop_auction_fee_research_for_shell();
         }
         self.tracker.reload_config().await;
         self.settings().await

@@ -9,6 +9,8 @@
 
 pub mod activity_recommender;
 pub mod analytics;
+pub mod auction_fee;
+pub mod auction_fee_research;
 pub mod bus_events;
 pub mod character_calc;
 pub mod chatlog_parser;

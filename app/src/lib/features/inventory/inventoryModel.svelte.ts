@@ -31,7 +31,11 @@ import {
 	undoInventoryRemoval,
 	undoInventoryTrade,
 } from '$lib/api/inventory';
-import { getMarketHarvestMarkups, getMarketHuntMarkups } from '$lib/api/market';
+import {
+	getMarketAuctionPacketThreshold,
+	getMarketHarvestMarkups,
+	getMarketHuntMarkups,
+} from '$lib/api/market';
 import type {
 	ActivityListingDraft,
 	ActivityTradeDraft,
@@ -68,11 +72,17 @@ function stockRow(
 	row: StockPosition,
 	market: MarketHarvestData | null,
 	confidenceMode: ConfidenceMode,
+	packetGrossMarkupPed: number | null,
 ): TreeCuttingStock {
 	const marketItem = market?.items.find((item) => item.itemName === row.itemName);
 	const nanocubeMarkup = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
 	const opportunity = market ? marketOpportunity(marketItem, nanocubeMarkup) : null;
 	const applied = opportunity ? effectiveMarkup(opportunity, nanocubeMarkup, confidenceMode) : null;
+	const premium = marketItem?.markupPct ? marketItem.markupPct / 100 - 1 : 0;
+	const recommendedPacketTt =
+		packetGrossMarkupPed !== null && premium > 0
+			? Math.ceil((packetGrossMarkupPed / premium) * 100 - 1e-9) / 100
+			: null;
 	return {
 		itemName: row.itemName,
 		heldQty: row.quantity,
@@ -92,6 +102,7 @@ function stockRow(
 		salesPed: marketItem?.salesPed ?? null,
 		weeklySalesPed:
 			marketItem?.readings.find((reading) => reading.horizon === 'week')?.salesPed ?? null,
+		recommendedPacketTt,
 	};
 }
 
@@ -125,6 +136,8 @@ export function createInventoryModel() {
 	let kind = $state<InventoryKind>('loot');
 	let view = $state<InventoryView>('holdings');
 	let confidenceMode = $state<ConfidenceMode>('liquidMiddling');
+	let packetFeeSharePct = $state(10);
+	let packetGrossMarkupPed = $state<number | null>(null);
 	let loading = $state(true);
 	let historyLoading = $state(false);
 	let historyLoaded = $state(false);
@@ -134,27 +147,52 @@ export function createInventoryModel() {
 	let equipment = $state<InventoryItem[]>([]);
 	let listings = $state<AuctionListing[]>([]);
 	let history = $state<ActivityHistoryEntry[]>([]);
+	let packetThresholdRequest = 0;
 
 	async function load() {
 		loading = true;
 		error = null;
 		try {
-			const [positionRows, equipmentRows, listingRows, huntingMarket, harvestingMarket] =
-				await Promise.all([
-					getLootInventory(),
-					getEquipmentInventory(),
-					getInventoryListings(),
-					getMarketHuntMarkups().catch(() => null),
-					getMarketHarvestMarkups().catch(() => null),
-				]);
+			const [
+				positionRows,
+				equipmentRows,
+				listingRows,
+				huntingMarket,
+				harvestingMarket,
+				packetThreshold,
+			] = await Promise.all([
+				getLootInventory(),
+				getEquipmentInventory(),
+				getInventoryListings(),
+				getMarketHuntMarkups().catch(() => null),
+				getMarketHarvestMarkups().catch(() => null),
+				getMarketAuctionPacketThreshold(packetFeeSharePct),
+			]);
 			positions = positionRows;
 			market = mergeMarketFeeds([huntingMarket, harvestingMarket]);
 			equipment = equipmentRows;
 			listings = listingRows;
+			packetFeeSharePct = packetThreshold.maxFeeSharePct;
+			packetGrossMarkupPed = packetThreshold.grossMarkupPed;
 		} catch (cause) {
 			error = describeError(cause, 'Failed to load inventory');
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function setPacketFeeSharePct(value: number) {
+		const request = ++packetThresholdRequest;
+		error = null;
+		try {
+			const threshold = await getMarketAuctionPacketThreshold(value);
+			if (request !== packetThresholdRequest) return;
+			packetFeeSharePct = threshold.maxFeeSharePct;
+			packetGrossMarkupPed = threshold.grossMarkupPed;
+			error = null;
+		} catch (cause) {
+			if (request !== packetThresholdRequest) return;
+			error = describeError(cause, 'Failed to model the packet fee cap');
 		}
 	}
 
@@ -373,7 +411,7 @@ export function createInventoryModel() {
 	const visibleHistory = $derived(history.filter((row) => row.subjectKind === kind));
 	const loot = $derived.by(() =>
 		positions
-			.map((position) => stockRow(position, market, confidenceMode))
+			.map((position) => stockRow(position, market, confidenceMode, packetGrossMarkupPed))
 			.sort((a, b) => b.heldTt - a.heldTt || a.itemName.localeCompare(b.itemName)),
 	);
 	// Everything currently held, in one list, for the intake typeahead: the
@@ -414,6 +452,9 @@ export function createInventoryModel() {
 		},
 		set confidenceMode(value: ConfidenceMode) {
 			confidenceMode = value;
+		},
+		get packetFeeSharePct() {
+			return packetFeeSharePct;
 		},
 		get loading() {
 			return loading;
@@ -460,6 +501,7 @@ export function createInventoryModel() {
 		load,
 		loadHistory,
 		refresh,
+		setPacketFeeSharePct,
 		listLoot,
 		sellLootByTrade,
 		resolveDraftName,

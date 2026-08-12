@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-	ActivityHistoryEntry,
 	AnalyticsHarvest,
 	HarvestLootItem,
 	MarketHarvestData,
@@ -20,17 +19,7 @@ import {
 vi.mock('$lib/api', () => ({
 	getAnalyticsHarvest: vi.fn(),
 	getMarketHarvestMarkups: vi.fn(),
-	getActivityStock: vi.fn(),
-	getAuctionListings: vi.fn(),
 	getHarvestRealisedMarkup: vi.fn(),
-	createAuctionListing: vi.fn(),
-	confirmAuctionListing: vi.fn(),
-	expireAuctionListing: vi.fn(),
-	convertStock: vi.fn(),
-	getActivityHistory: vi.fn(),
-	revertAuctionSale: vi.fn(),
-	undoAuctionListing: vi.fn(),
-	undoStockConversion: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -52,49 +41,6 @@ const sectionOf = (model: ReturnType<typeof createTreeCuttingModel>, tier: strin
 		model.sections.find((section) => section.yieldTier === tier),
 		`section ${tier}`,
 	);
-const stockOf = (model: ReturnType<typeof createTreeCuttingModel>, itemName: string) =>
-	required(
-		model.stock.find((item) => item.itemName === itemName),
-		`stock item ${itemName}`,
-	);
-
-function position(itemName: string, quantity: number, ttValue: number) {
-	return { itemName, quantity, ttValue, listedQuantity: 0 };
-}
-
-function listingInput(itemName: string, quantity: number) {
-	return { itemName, quantity, startingBid: 1, buyout: null, listingFee: 0.5, listedAt: null };
-}
-
-function listing(over: Record<string, unknown>) {
-	return {
-		id: 'listing-1',
-		itemName: 'Long Moonleaf Board',
-		quantity: 10,
-		attributedQty: 10,
-		unattributedQty: 0,
-		ttValue: 0.6,
-		attributedTt: 0.6,
-		startingBid: 1,
-		buyout: null,
-		listingFee: 0.5,
-		listedAt: '2026-07-20',
-		status: 'pending',
-		finalPrice: null,
-		saleFee: null,
-		resolvedAt: null,
-		subjectKind: 'loot',
-		inventoryItemId: null,
-		costBasis: null,
-		channel: 'auction',
-		auctionDays: null,
-		expiresAt: null,
-		activityNetMarkup: null,
-		grossMarkup: null,
-		...over,
-	};
-}
-
 function loot(name: string, quantity: number, valuePed: number): HarvestLootItem {
 	return { itemName: name, quantity, valuePed };
 }
@@ -105,6 +51,7 @@ function obs(
 	horizon: string | null,
 	salesPed: number | null,
 	weeklyVolume: number | null = null,
+	recommendedPacketTt: number | null = null,
 ): MarketHarvestItem {
 	// Synthesise a day/week/month/year breakdown: the resolved horizon
 	// carries (markup, salesPed), the week carries the weekly volume, the
@@ -115,7 +62,7 @@ function obs(
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : h === 'week' ? (weeklyVolume ?? 0) : 0,
 	}));
-	return { itemName: name, markupPct, horizon, salesPed, readings };
+	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
 }
 
 // Exercises broad and thin market opportunities together. Tier order here is
@@ -159,115 +106,7 @@ function market(): MarketHarvestData {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocked.getMarketHarvestMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
-	// The default position set mirrors the harvest fixture's lifetime loot,
-	// which is what the backend derives positions from.
-	mocked.getActivityStock.mockResolvedValue([
-		position('Wood Shavings', 8738, 87.38),
-		position('Long Moonleaf Board', 571, 34.26),
-	]);
-	mocked.getAuctionListings.mockResolvedValue([]);
 	mocked.getHarvestRealisedMarkup.mockResolvedValue([]);
-	mocked.createAuctionListing.mockResolvedValue(listing({}));
-	mocked.confirmAuctionListing.mockResolvedValue(listing({ status: 'sold' }));
-	mocked.expireAuctionListing.mockResolvedValue(listing({ status: 'expired' }));
-	mocked.convertStock.mockResolvedValue(undefined);
-	mocked.getActivityHistory.mockResolvedValue([]);
-	mocked.revertAuctionSale.mockResolvedValue(listing({ status: 'pending' }));
-	mocked.undoAuctionListing.mockResolvedValue(undefined);
-	mocked.undoStockConversion.mockResolvedValue(undefined);
-});
-
-function historyEntry(over: Partial<ActivityHistoryEntry> = {}): ActivityHistoryEntry {
-	return {
-		id: 'entry-1',
-		subjectKind: 'loot',
-		channel: 'auction',
-		kind: 'listing',
-		status: 'sold',
-		itemName: 'Long Moonleaf Board',
-		targetItem: null,
-		occurredAt: '2026-07-26',
-		quantity: 71,
-		ttValue: 4.26,
-		netMarkup: 1.2,
-		activityNetMarkup: 1.2,
-		canRevertSale: true,
-		canDelete: true,
-		undoBlockedReason: null,
-		undone: false,
-		...over,
-	};
-}
-
-describe('activity history', () => {
-	it('reads only when opened, so an undo verdict is never offered stale', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		expect(mocked.getActivityHistory).not.toHaveBeenCalled();
-		expect(model.history).toEqual([]);
-
-		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
-		await model.loadHistory();
-		expect(model.history).toHaveLength(1);
-	});
-
-	it('routes each undo to the command that matches the entry and the choice', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
-		await model.loadHistory();
-
-		await model.undoHistoryEntry(historyEntry(), true);
-		expect(mocked.revertAuctionSale).toHaveBeenCalledWith({ id: 'entry-1' });
-		expect(mocked.undoAuctionListing).not.toHaveBeenCalled();
-
-		await model.undoHistoryEntry(historyEntry(), false);
-		expect(mocked.undoAuctionListing).toHaveBeenCalledWith({ id: 'entry-1' });
-
-		// A conversion has one way back, whatever the caller asks for: there is
-		// no sale on it to revert.
-		await model.undoHistoryEntry(historyEntry({ id: 'conv-1', kind: 'conversion' }), true);
-		expect(mocked.undoStockConversion).toHaveBeenCalledWith({ id: 'conv-1' });
-		expect(mocked.revertAuctionSale).toHaveBeenCalledTimes(1);
-	});
-
-	it('re-reads holdings and history after an undo, since both have moved', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-		mocked.getActivityHistory.mockResolvedValue([historyEntry()]);
-		await model.loadHistory();
-
-		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 642, 38.52)]);
-		mocked.getActivityHistory.mockResolvedValue([
-			historyEntry({ undone: true, canRevertSale: false, canDelete: false }),
-		]);
-		await model.undoHistoryEntry(historyEntry(), false);
-
-		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(642);
-		// The entry stays on the list as the record of the correction.
-		expect(model.history).toHaveLength(1);
-		expect(model.history[0].undone).toBe(true);
-		// Undoing a sale is not new gameplay evidence either.
-		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledTimes(1);
-	});
-
-	it('surfaces a refused undo and rethrows so the row can stay open', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-		mocked.undoStockConversion.mockRejectedValue(
-			new Error('Nanocube this produced has since been sold'),
-		);
-
-		await expect(
-			model.undoHistoryEntry(historyEntry({ kind: 'conversion' }), false),
-		).rejects.toThrow();
-		expect(model.error).toContain('Nanocube');
-	});
 });
 
 describe('harvestTierLabel', () => {
@@ -371,7 +210,7 @@ describe('loadData', () => {
 		expect(model.data).toBeNull();
 	});
 
-	it('scopes activity evidence while keeping current stock all-time', async () => {
+	it('scopes activity evidence to the selected analytical range', async () => {
 		const allTime = harvest();
 		const recent: AnalyticsHarvest = { tierComparisons: [allTime.tierComparisons[0]] };
 		mocked.getAnalyticsHarvest.mockImplementation(async (period = 'all') =>
@@ -385,12 +224,6 @@ describe('loadData', () => {
 
 		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledWith('30d');
 		expect(model.sections.map((section) => section.yieldTier)).toEqual([HUGE]);
-		// Positions are a lifetime figure served by the backend, so narrowing
-		// the analytical range must not narrow what the player holds.
-		expect(model.stock.map((item) => item.itemName)).toEqual([
-			'Wood Shavings',
-			'Long Moonleaf Board',
-		]);
 	});
 });
 
@@ -439,7 +272,7 @@ describe('sections', () => {
 		expect(treeCuttingActivityName(sectionOf(model, HUGE))).toBe('Long Boards');
 	});
 
-	it('keeps Unclassified last and out of the default selection', async () => {
+	it('keeps Unclassified last and starts on Overall', async () => {
 		const data = harvest();
 		data.tierComparisons.push({
 			yieldTier: 'unknown',
@@ -454,7 +287,7 @@ describe('sections', () => {
 		await model.loadData();
 
 		expect(model.sections.map((section) => section.yieldTier)).toEqual([LONG, HUGE, 'unknown']);
-		expect(model.selectedSection?.yieldTier).toBe(LONG);
+		expect(model.selectedSection).toBeNull();
 	});
 
 	it('combines every yield tier into the overall aggregate', async () => {
@@ -487,19 +320,6 @@ describe('sections', () => {
 		expect(overall.returns).toBeCloseTo(34.26 + 87.38, 4);
 	});
 
-	it('does not change activity opportunity when current holdings change', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		const before = sectionOf(model, HUGE).muProjectedReturns;
-		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
-		await model.listStock(listingInput('Long Moonleaf Board', 568));
-		expect(sectionOf(model, HUGE).muProjectedReturns).toBe(before);
-		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
-	});
-
 	it('lets the confidence toggle choose which supported MU tiers feed the aggregate', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
@@ -507,21 +327,15 @@ describe('sections', () => {
 		await model.loadData();
 
 		const woodAtDefault = sectionOf(model, LONG);
-		const woodStockAtDefault = stockOf(model, 'Wood Shavings');
 		expect(model.confidenceMode).toBe('liquidMiddling');
 		expect(woodAtDefault.items[0].tier).toBe('illiquid');
 		expect(woodAtDefault.items[0].floored).toBe(true);
 		expect(woodAtDefault.items[0].effectiveMarkupPct).toBe(100.84);
-		expect(woodStockAtDefault.floored).toBe(true);
-		expect(woodStockAtDefault.effectiveMarkupPct).toBe(100.84);
 
 		model.confidenceMode = 'all';
 		const woodAtAll = sectionOf(model, LONG);
-		const woodStockAtAll = stockOf(model, 'Wood Shavings');
 		expect(woodAtAll.items[0].floored).toBe(false);
 		expect(woodAtAll.items[0].effectiveMarkupPct).toBe(110.01);
-		expect(woodStockAtAll.floored).toBe(false);
-		expect(woodStockAtAll.effectiveMarkupPct).toBe(110.01);
 		expect(woodAtAll.muProjectedReturns).toBeGreaterThan(
 			required(woodAtDefault.muProjectedReturns, 'default MU return'),
 		);
@@ -553,19 +367,20 @@ describe('sections', () => {
 		expect(long.returns).toBe(34.26);
 	});
 
-	it('orders sections by cycled volume and opens the busiest by default', async () => {
+	it('orders sections by cycled volume and keeps Overall as the default', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
 		const model = createTreeCuttingModel();
 		await model.loadData();
 
-		// Long cycled 111.13 outranks Huge's 91.24, so it leads the list and
-		// opens as the default selection.
+		// Long cycled 111.13 outranks Huge's 91.24, so it leads the picker.
 		expect(model.sections.map((s) => s.yieldTier)).toEqual([LONG, HUGE]);
-		expect(model.selectedSection?.yieldTier).toBe(LONG);
+		expect(model.selectedSection).toBeNull();
 
 		// Selecting another sub-activity swaps the open detail.
 		model.selectSection('huge');
 		expect(model.selectedSection?.yieldTier).toBe(HUGE);
+		model.selectSection(null);
+		expect(model.selectedSection).toBeNull();
 	});
 
 	it('sorts the activity comparison by either economic rate without changing selection', async () => {
@@ -615,139 +430,6 @@ describe('sections', () => {
 	});
 });
 
-describe('stock', () => {
-	it('reports the positions the backend serves, most valuable first', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		expect(model.stock.map((s) => s.itemName)).toEqual(['Wood Shavings', 'Long Moonleaf Board']);
-		const long = stockOf(model, 'Long Moonleaf Board');
-		expect(long.heldQty).toBe(571);
-		expect(long.heldTt).toBeCloseTo(34.26, 4);
-		expect(long.listedQty).toBe(0);
-	});
-
-	it('reports stock out on an open auction rather than showing it simply gone', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getActivityStock.mockResolvedValue([
-			{ ...position('Long Moonleaf Board', 500, 30.0), listedQuantity: 71 },
-		]);
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		const long = stockOf(model, 'Long Moonleaf Board');
-		expect(long.heldQty).toBe(500);
-		expect(long.listedQty).toBe(71);
-	});
-
-	it('lists stock and re-reads the position without touching the aggregates', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
-		await model.listStock(listingInput('Long Moonleaf Board', 71));
-
-		expect(mocked.createAuctionListing).toHaveBeenCalledWith(
-			expect.objectContaining({ itemName: 'Long Moonleaf Board', quantity: 71 }),
-		);
-		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(500);
-		// A sale is not new gameplay evidence, so the analytics read is not
-		// re-driven by it.
-		expect(mocked.getAnalyticsHarvest).toHaveBeenCalledTimes(1);
-	});
-
-	it('keeps market opportunity stable while selling down current stock', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
-
-		// Selling changes current stock, not what the observed market says
-		// about repeating the source activity.
-		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 3, 0.18)]);
-		await model.listStock(listingInput('Long Moonleaf Board', 568));
-		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(3);
-		expect(sectionOf(model, HUGE).items[0].opportunity.kind).toBe('broad');
-		expect(sectionOf(model, HUGE).items[0].opportunity.appliedMarkupPct).toBe(353.69);
-	});
-
-	it('joins each stock row to its resolved markup and horizon breakdown', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getMarketHarvestMarkups.mockResolvedValue(market());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		const long = stockOf(model, 'Long Moonleaf Board');
-		expect(long.opportunity?.ownMarkupPct).toBe(353.69);
-		expect(long.opportunity?.horizon).toBe('week');
-		expect(long.opportunity?.kind).toBe('broad');
-		// Ordered day, week, month, year, from the synthesised breakdown.
-		expect(long.readings.map((r) => r.horizon)).toEqual(['day', 'week', 'month', 'year']);
-		expect(long.readings.find((r) => r.horizon === 'week')?.markupPct).toBe(353.69);
-
-		const wood = stockOf(model, 'Wood Shavings');
-		expect(wood.opportunity?.ownMarkupPct).toBe(110.01);
-		expect(wood.opportunity?.horizon).toBe('month');
-		expect(wood.opportunity?.kind).toBe('thin');
-	});
-});
-
-describe('listings', () => {
-	it('separates the open worklist from resolved history and orders each', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		mocked.getAuctionListings.mockResolvedValue([
-			listing({ id: 'b', status: 'pending', listedAt: '2026-07-20' }),
-			listing({ id: 'a', status: 'pending', listedAt: '2026-07-18' }),
-			listing({ id: 'c', status: 'sold', listedAt: '2026-07-10', resolvedAt: '2026-07-12' }),
-			listing({ id: 'd', status: 'expired', listedAt: '2026-07-11', resolvedAt: '2026-07-19' }),
-		]);
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		// Open auctions are a worklist: longest-waiting first.
-		expect(model.openListings.map((l) => l.id)).toEqual(['a', 'b']);
-		// Resolved auctions are history: newest first.
-		expect(model.resolvedListings.map((l) => l.id)).toEqual(['d', 'c']);
-	});
-
-	it('confirms a sale with the price it actually fetched and both fees', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		await model.resolveListing('listing-1', {
-			sold: true,
-			finalPrice: 12.5,
-			saleFee: 0.34,
-			resolvedAt: '2026-07-25',
-		});
-		expect(mocked.confirmAuctionListing).toHaveBeenCalledWith({
-			listingId: 'listing-1',
-			finalPrice: 12.5,
-			saleFee: 0.34,
-			resolvedAt: '2026-07-25',
-		});
-		expect(mocked.expireAuctionListing).not.toHaveBeenCalled();
-	});
-
-	it('expires a listing without asking for a price', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		await model.resolveListing('listing-1', { sold: false, resolvedAt: '2026-07-25' });
-		expect(mocked.expireAuctionListing).toHaveBeenCalledWith({
-			listingId: 'listing-1',
-			resolvedAt: '2026-07-25',
-		});
-		expect(mocked.confirmAuctionListing).not.toHaveBeenCalled();
-	});
-});
-
 describe('realised figures', () => {
 	it('is zero for every tier until a sale is confirmed', async () => {
 		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
@@ -789,36 +471,5 @@ describe('realised figures', () => {
 		// MU Rate answers what the market implies for repeating the activity;
 		// a confirmed sale is a different question and must not move it.
 		expect(sectionOf(model, HUGE).items[0].opportunity.appliedMarkupPct).toBe(353.69);
-	});
-});
-
-describe('holdings refresh', () => {
-	it('keeps the last-good figures when a re-read fails, and says they are stale', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-		const held = stockOf(model, 'Long Moonleaf Board').heldQty;
-
-		// The write lands; the re-read behind it does not.
-		mocked.getActivityStock.mockRejectedValue(new Error('offline'));
-		await model.listStock(listingInput('Long Moonleaf Board', 10));
-
-		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(held);
-		expect(model.error).toContain('may be out of date');
-	});
-
-	it('clears the staleness notice once a refresh succeeds', async () => {
-		mocked.getAnalyticsHarvest.mockResolvedValue(harvest());
-		const model = createTreeCuttingModel();
-		await model.loadData();
-
-		mocked.getActivityStock.mockRejectedValue(new Error('offline'));
-		await model.listStock(listingInput('Long Moonleaf Board', 10));
-		expect(model.error).not.toBeNull();
-
-		mocked.getActivityStock.mockResolvedValue([position('Long Moonleaf Board', 500, 30.0)]);
-		await model.listStock(listingInput('Long Moonleaf Board', 10));
-		expect(model.error).toBeNull();
-		expect(stockOf(model, 'Long Moonleaf Board').heldQty).toBe(500);
 	});
 });

@@ -236,6 +236,9 @@ pub struct MarketHarvestItem {
     pub markup_pct: Nullable<f64>,
     pub horizon: Nullable<String>,
     pub sales_ped: Nullable<f64>,
+    /// Fee-efficient TT packet at the resolved direct-market markup. This
+    /// deliberately excludes turnover: capacity is a separate market signal.
+    pub recommended_packet_tt: Nullable<f64>,
     /// Every horizon's reading, ordered day, week, month, year.
     pub readings: Vec<MarketHarvestHorizon>,
 }
@@ -254,6 +257,15 @@ pub struct MarketHarvestData {
     /// frontend then falls back to a constant).
     pub nanocube_markup_pct: Nullable<f64>,
     pub items: Vec<MarketHarvestItem>,
+}
+
+/// Gross markup needed for the auction listing fee to consume no more than
+/// the requested share. Item packet TT is this amount divided by its premium.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketAuctionPacketThreshold {
+    pub max_fee_share_pct: f64,
+    pub gross_markup_ped: f64,
 }
 
 /// One looter profession and its believed-current level.
@@ -299,6 +311,26 @@ pub struct MarketBreakEven {
 // ── Operations ──────────────────────────────────────────────────────
 
 impl Api {
+    /// Resolve a user-selected listing-fee share through the measured auction
+    /// fee curve. Keeping this calculation behind the typed API prevents UI
+    /// clients from acquiring their own approximation of the game's curve.
+    pub fn market_auction_packet_threshold(
+        &self,
+        max_fee_share_pct: f64,
+    ) -> Result<MarketAuctionPacketThreshold, ApiError> {
+        let gross_markup_ped =
+            eo_services::auction_fee::minimum_efficient_gross_markup_ped(max_fee_share_pct)
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        "max_fee_share_pct must be greater than 0 and at most 100",
+                    )
+                })?;
+        Ok(MarketAuctionPacketThreshold {
+            max_fee_share_pct,
+            gross_markup_ped,
+        })
+    }
+
     /// Parse a market-ledger paste without storing anything: the
     /// preview leg of the review-before-accept flow.
     pub async fn market_paste_preview(&self, text: String) -> Result<MarketPastePreview, ApiError> {
@@ -545,6 +577,7 @@ fn market_items_dto(data: eo_services::market_service::HarvestMarketData) -> Mar
                 markup_pct: item.markup_pct.into(),
                 horizon: item.horizon.into(),
                 sales_ped: item.sales_ped.into(),
+                recommended_packet_tt: item.recommended_packet_tt.into(),
                 readings: item
                     .readings
                     .into_iter()
