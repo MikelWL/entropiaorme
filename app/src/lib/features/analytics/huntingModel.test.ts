@@ -11,17 +11,7 @@ import { createHuntingModel } from './huntingModel.svelte';
 vi.mock('$lib/api', () => ({
 	getAnalyticsHuntingActivity: vi.fn(),
 	getMarketHuntMarkups: vi.fn(),
-	getActivityStock: vi.fn(),
-	getAuctionListings: vi.fn(),
 	getHuntingRealisedMarkup: vi.fn(),
-	createAuctionListing: vi.fn(),
-	confirmAuctionListing: vi.fn(),
-	expireAuctionListing: vi.fn(),
-	convertStock: vi.fn(),
-	getActivityHistory: vi.fn(),
-	revertAuctionSale: vi.fn(),
-	undoAuctionListing: vi.fn(),
-	undoStockConversion: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -113,31 +103,13 @@ beforeEach(() => {
 		nanocubeMarkupPct: 100.6,
 		items: [obs('Animal Muscle Oil', 130, 'week', 5000)],
 	});
-	mocked.getActivityStock.mockResolvedValue([
-		{ itemName: 'Animal Muscle Oil', quantity: 400, ttValue: 120, listedQuantity: 0 },
-	]);
-	mocked.getAuctionListings.mockResolvedValue([]);
 	mocked.getHuntingRealisedMarkup.mockResolvedValue({
 		species: [{ mobSpecies: 'Atrox', netMarkup: 12 }],
 		definitions: [{ definitionId: 1, netMarkup: 18 }],
 	});
-	mocked.getActivityHistory.mockResolvedValue([]);
-	mocked.createAuctionListing.mockResolvedValue({} as never);
-	mocked.convertStock.mockResolvedValue(undefined);
 });
 
 describe('createHuntingModel', () => {
-	it('scopes every stock and lifecycle read to hunting', async () => {
-		const model = createHuntingModel();
-		await model.loadData();
-
-		expect(mocked.getActivityStock).toHaveBeenCalledWith('hunting');
-		expect(mocked.getAuctionListings).toHaveBeenCalledWith('hunting');
-		expect(mocked.getActivityHistory).not.toHaveBeenCalled();
-		await model.loadHistory();
-		expect(mocked.getActivityHistory).toHaveBeenCalledWith('hunting');
-	});
-
 	it('projects the Tree Cutting economics for each session definition', async () => {
 		const model = createHuntingModel();
 		await model.loadData();
@@ -249,28 +221,6 @@ describe('createHuntingModel', () => {
 		expect(model.selectedSession).toBeNull();
 		model.selectSession(null);
 		expect(model.selectedSession).toBeNull();
-	});
-
-	it('stamps hunting on listings and conversions', async () => {
-		const model = createHuntingModel();
-		await model.loadData();
-
-		await model.listStock({
-			itemName: 'Animal Muscle Oil',
-			quantity: 10,
-			startingBid: 1,
-			buyout: null,
-			listingFee: 0.5,
-			listedAt: null,
-		});
-		expect(mocked.createAuctionListing).toHaveBeenCalledWith(
-			expect.objectContaining({ profession: 'hunting', itemName: 'Animal Muscle Oil' }),
-		);
-
-		await model.recycleStock('Animal Muscle Oil', 5);
-		expect(mocked.convertStock).toHaveBeenCalledWith(
-			expect.objectContaining({ profession: 'hunting', targetItem: 'Nanocube' }),
-		);
 	});
 
 	it('keeps the economic spine available when optional market context fails', async () => {

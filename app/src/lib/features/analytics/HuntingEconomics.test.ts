@@ -74,23 +74,10 @@ function primaryProps(
 ) {
 	return {
 		overall: overall(),
-		stock: [],
 		table,
 		selected,
 		totalCount: table.filtered.length,
 		onselect,
-		onsell: vi.fn(),
-		onconvert: vi.fn(),
-		onremove: vi.fn(),
-		onshrapnelconvert: vi.fn(),
-		overallPanel: 'stock' as const,
-		onpanelchange: vi.fn(),
-		openListings: [],
-		resolvedListings: [],
-		history: [],
-		historyLoading: false,
-		onresolve: vi.fn(),
-		onundo: vi.fn(),
 	};
 }
 
@@ -325,14 +312,13 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.getByLabelText('Switch hunting view (currently Overall)')).not.toBeNull();
 		expect(screen.getByText('180.00')).not.toBeNull();
 		for (const panel of ['Stock', 'Market', 'History']) {
-			expect(screen.getByRole('button', { name: panel })).not.toBeNull();
+			expect(screen.queryByRole('button', { name: panel })).toBeNull();
 		}
 		await fireEvent.click(screen.getByLabelText('Switch hunting view (currently Overall)'));
 		await fireEvent.click(screen.getByRole('menuitem', { name: /ARIS Dailies/ }));
 		expect(onselect).toHaveBeenCalledWith('definition:7');
 
 		await view.rerender(primaryProps(table, row, onselect));
-		expect(screen.queryByRole('button', { name: 'Stock' })).toBeNull();
 		await fireEvent.click(screen.getByLabelText('Switch hunting view (currently ARIS Dailies)'));
 		await fireEvent.click(screen.getByRole('menuitem', { name: /Overall/ }));
 		expect(onselect).toHaveBeenCalledWith(null);
