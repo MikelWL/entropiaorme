@@ -110,6 +110,21 @@ describe('central inventory model', () => {
 		expect(model.loot[0].recommendedPacketTt).toBe(504);
 	});
 
+	it('clears a packet fee-cap error after a successful retry', async () => {
+		const model = createInventoryModel();
+		await model.load();
+		mockedMarket.getMarketAuctionPacketThreshold
+			.mockRejectedValueOnce(new Error('fee model unavailable'))
+			.mockResolvedValueOnce({ maxFeeSharePct: 15, grossMarkupPed: 4.94 });
+
+		await model.setPacketFeeSharePct(5);
+		expect(model.error).toBe('fee model unavailable');
+
+		await model.setPacketFeeSharePct(15);
+		expect(model.error).toBeNull();
+		expect(model.packetFeeSharePct).toBe(15);
+	});
+
 	it('turns a manual loot listing into the same reviewed draft an OCR intake will use', async () => {
 		const model = createInventoryModel();
 		await model.load();

@@ -87,7 +87,7 @@
 	{#snippet children({ close })}
 		<DefinitionCataloguePanel
 			title="Choose activity"
-			count={totalCount + 1}
+			count={totalCount + (showOverall ? 1 : 0)}
 			bind:filter={table.search}
 			hasMatches={showOverall || displaySections.length > 0}
 			filterLabel="Filter tree cutting activities"

@@ -183,11 +183,13 @@ export function createInventoryModel() {
 
 	async function setPacketFeeSharePct(value: number) {
 		const request = ++packetThresholdRequest;
+		error = null;
 		try {
 			const threshold = await getMarketAuctionPacketThreshold(value);
 			if (request !== packetThresholdRequest) return;
 			packetFeeSharePct = threshold.maxFeeSharePct;
 			packetGrossMarkupPed = threshold.grossMarkupPed;
+			error = null;
 		} catch (cause) {
 			if (request !== packetThresholdRequest) return;
 			error = describeError(cause, 'Failed to model the packet fee cap');

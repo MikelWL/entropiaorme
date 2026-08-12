@@ -18,7 +18,8 @@
 		try {
 			research = await getAuctionFeeResearchStatus();
 		} catch {
-			research = null;
+			// Preserve the last-good session through transient polling errors.
+			// Disabling developer mode unmounts this developer-only surface.
 		}
 	}
 

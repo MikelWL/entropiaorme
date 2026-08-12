@@ -83,16 +83,13 @@ function obs(
 	markupPct: number | null,
 	horizon: string | null,
 	salesPed: number | null,
+	recommendedPacketTt: number | null = null,
 ): MarketHarvestItem {
 	const readings = ['day', 'week', 'month', 'year'].map((h) => ({
 		horizon: h,
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : 0,
 	}));
-	const recommendedPacketTt =
-		markupPct !== null && markupPct > 100
-			? Math.ceil((9.8 / (markupPct / 100 - 1)) * 100) / 100
-			: null;
 	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
 }
 

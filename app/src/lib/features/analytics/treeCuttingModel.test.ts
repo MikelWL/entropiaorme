@@ -51,6 +51,7 @@ function obs(
 	horizon: string | null,
 	salesPed: number | null,
 	weeklyVolume: number | null = null,
+	recommendedPacketTt: number | null = null,
 ): MarketHarvestItem {
 	// Synthesise a day/week/month/year breakdown: the resolved horizon
 	// carries (markup, salesPed), the week carries the weekly volume, the
@@ -61,10 +62,6 @@ function obs(
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : h === 'week' ? (weeklyVolume ?? 0) : 0,
 	}));
-	const recommendedPacketTt =
-		markupPct !== null && markupPct > 100
-			? Math.ceil((9.8 / (markupPct / 100 - 1)) * 100) / 100
-			: null;
 	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
 }
 

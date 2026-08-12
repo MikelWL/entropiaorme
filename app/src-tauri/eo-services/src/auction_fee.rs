@@ -19,8 +19,7 @@ pub fn listing_fee_ped(gross_markup_ped: f64) -> f64 {
     if !gross_markup_ped.is_finite() || gross_markup_ped <= 0.0 {
         return BASE_FEE_PED;
     }
-    let raw =
-        BASE_FEE_PED + (0.05 * gross_markup_ped) / (1.0 + CURVE_COEFFICIENT * gross_markup_ped);
+    let raw = BASE_FEE_PED + 0.05 / (CURVE_COEFFICIENT + gross_markup_ped.recip());
     (raw * PEC_PER_PED + f64::EPSILON).floor() / PEC_PER_PED
 }
 
@@ -82,6 +81,11 @@ mod tests {
         ] {
             assert_eq!(listing_fee_ped(markup), fee, "gross markup {markup}");
         }
+    }
+
+    #[test]
+    fn finite_markup_extremes_reach_the_displayed_fee_cap() {
+        assert_eq!(listing_fee_ped(f64::MAX), 75.12);
     }
 
     #[test]

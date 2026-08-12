@@ -324,6 +324,12 @@
 				{#if actionLayout === 'inventory'}
 					{@const packetTt = item.recommendedPacketTt}
 					<span
+						aria-label={packetTt !== null && item.heldTt >= packetTt
+							? `${formatPed(packetTt)} packet ready`
+							: packetTt !== null
+								? `${formatPed(packetTt)} recommended packet`
+								: 'Recommended packet unavailable'}
+						title={packetTt !== null && item.heldTt >= packetTt ? 'Packet ready' : undefined}
 						class="w-24 text-right shrink-0 text-sm tabular-nums font-medium
 							{packetTt !== null && item.heldTt >= packetTt
 								? 'text-positive'

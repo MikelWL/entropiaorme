@@ -1404,7 +1404,10 @@ pub async fn dev_rebuild_projections(app: tauri::AppHandle) -> Result<RebuildRep
 pub async fn dev_auction_fee_research_start(
     app: tauri::AppHandle,
 ) -> Result<AuctionFeeResearchStatus, ApiError> {
-    facade(&app)?.dev_auction_fee_research_start()
+    let api = facade(&app)?;
+    tokio::task::spawn_blocking(move || api.dev_auction_fee_research_start())
+        .await
+        .map_err(|_| ApiError::invalid_state("auction fee research start task failed"))?
 }
 
 #[tauri::command(rename_all = "snake_case")]
