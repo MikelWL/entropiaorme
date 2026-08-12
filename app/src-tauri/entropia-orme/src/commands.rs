@@ -1802,6 +1802,7 @@ mod tests {
         "market_paste_commit",
         "market_overview",
         "market_contribution_batch",
+        "market_auction_packet_threshold",
         "market_break_even",
         "market_mob_ranking",
         "market_harvest_markups",
