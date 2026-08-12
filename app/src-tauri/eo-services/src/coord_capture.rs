@@ -594,34 +594,7 @@ fn write_debug_artefacts(
     reads: &[(&'static str, String, f64)],
     outcome: &CoordScanOutcome,
 ) {
-    use image::ImageEncoder as _;
-    if let Err(err) = std::fs::create_dir_all(dir) {
-        tracing::warn!(target: "eo::coord_capture", %err, "debug dir not creatable");
-        return;
-    }
-    let mut rgb = Vec::with_capacity(frame.w * frame.h * 3);
-    for px in frame.data.chunks_exact(3) {
-        rgb.push(px[2]);
-        rgb.push(px[1]);
-        rgb.push(px[0]);
-    }
-    let mut png = Vec::new();
-    let encoded = image::codecs::png::PngEncoder::new(&mut png).write_image(
-        &rgb,
-        frame.w as u32,
-        frame.h as u32,
-        image::ExtendedColorType::Rgb8,
-    );
-    match encoded {
-        Ok(()) => {
-            if let Err(err) = std::fs::write(dir.join("coord-scan-last.png"), &png) {
-                tracing::warn!(target: "eo::coord_capture", %err, "debug frame not writable");
-            }
-        }
-        Err(err) => {
-            tracing::warn!(target: "eo::coord_capture", %err, "debug frame not encodable");
-        }
-    }
+    crate::screen_capture::write_debug_frame(dir, "coord-scan-last.png", frame);
     let mut report = format!("outcome: {outcome:?}\nframe: {}x{}\n", frame.w, frame.h);
     for (label, text, confidence) in reads {
         report.push_str(&format!("{label}: {text:?} (confidence {confidence:.3})\n"));

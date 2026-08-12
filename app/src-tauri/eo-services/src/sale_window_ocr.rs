@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 
+use crate::fuzzy_match::wratio;
 use crate::ocr_text::parse_amount;
 use crate::scan_presets::PanelAnchor;
 use crate::skill_panel::BgrImage;
@@ -54,6 +55,26 @@ pub type AnchorLookup = Arc<dyn Fn() -> PanelAnchor + Send + Sync>;
 /// numeric field usually means it read furniture (a spinner arrow, a
 /// label's edge) rather than the value.
 pub const FIELD_CONFIDENCE_FLOOR: f64 = 0.50;
+
+/// The rectangle that proves the window is where the calibration says.
+///
+/// Nothing else in the read checks that. Every field rectangle is taken on
+/// faith from the panel anchor, so a window docked somewhere else, or an
+/// interface at a different scale, would have the read cropping whatever
+/// happens to sit at those offsets. The confidence floor catches most of
+/// that, but not all: another panel's digits can read cleanly and mean
+/// something entirely different, and a wrong figure that looks right is
+/// the one failure this design exists to prevent.
+///
+/// So one rectangle covers a label the window always shows, and the whole
+/// capture is refused unless it reads as that label. The text is fixed in
+/// code rather than calibrated because the game owns it, not the user.
+pub const LANDMARK_FIELD: &str = "landmark";
+pub const LANDMARK_TEXT: &str = "Item Name";
+
+/// How close the landmark must read. Below this the panel is not where it
+/// is supposed to be, and no field of the capture can be trusted.
+pub const LANDMARK_SCORE_FLOOR: f64 = 70.0;
 
 /// The fields this read expects, in the order the window shows them.
 /// A calibration carrying fewer is read for what it has; one carrying
@@ -146,6 +167,26 @@ impl SaleWindowOcrService {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 tap("sale_window", &region, &panel)
             }));
+        }
+
+        // The landmark first: everything after it is only meaningful if the
+        // panel really is the sale window. A calibration recorded before
+        // there was a landmark to record carries none, and reads on without
+        // one rather than refusing work that used to be fine.
+        if let Some((_, cell)) = anchor.cells.iter().find(|(name, _)| name == LANDMARK_FIELD) {
+            let (cx, cy, cw, ch) = cell.single_rect();
+            let crop = panel.crop(cy, cy + ch, cx, cx + cw);
+            let seen = (self.providers.read_text)(&crop).map(|(text, _)| text);
+            let score = seen
+                .as_deref()
+                .map(|text| wratio(text.trim(), LANDMARK_TEXT))
+                .unwrap_or(0.0);
+            if score < LANDMARK_SCORE_FLOOR {
+                return failure(
+                    "That is not the sale window: dock it in the bottom-right corner at the \
+                     default interface scale",
+                );
+            }
         }
 
         let mut fields = Map::new();
@@ -457,6 +498,67 @@ mod tests {
         });
         let result = service.scan_sale_window();
         assert_eq!(result["unread"], json!(["buyout"]));
+        assert_eq!(result["starting_bid"], 12.0);
+    }
+
+    #[test]
+    fn a_capture_of_the_wrong_panel_is_refused_whole() {
+        let mut anchor = calibrated();
+        anchor.cells.push(cell(LANDMARK_FIELD, 0, 35));
+
+        // The landmark reads as something else: the window is not where the
+        // calibration says, so nothing cropped from it means anything.
+        let elsewhere = SaleWindowOcrService::new(SaleWindowProviders {
+            sale_window_region: Arc::new(|| Some(([0, 0], [40, 40]))),
+            anchor: Arc::new({
+                let anchor = anchor.clone();
+                move || anchor.clone()
+            }),
+            capture_region: Arc::new(|_, _, _, _| Some(panel())),
+            read_text: Arc::new(|_| Some(("Repair cost".to_string(), 0.99))),
+        });
+        let result = elsewhere.scan_sale_window();
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("That is not the sale window"));
+        assert_eq!(
+            result.get("quantity"),
+            None,
+            "no field survives a failed landmark, however well it read"
+        );
+
+        // The landmark reads as itself: the fields are trusted as before.
+        // Recognition is imperfect on a label too, so a near miss passes.
+        let found = SaleWindowOcrService::new(SaleWindowProviders {
+            sale_window_region: Arc::new(|| Some(([0, 0], [40, 40]))),
+            anchor: Arc::new(move || anchor.clone()),
+            capture_region: Arc::new(|_, _, _, _| Some(panel())),
+            read_text: Arc::new({
+                // The landmark is read before any field, so call order is
+                // what tells them apart here.
+                let call = Mutex::new(0usize);
+                move |_: &BgrImage| {
+                    let mut call = call.lock().unwrap();
+                    *call += 1;
+                    // A near miss on the label still passes: recognition is
+                    // no more exact on a word than on a number.
+                    let text = if *call == 1 { "ltem Name" } else { "12" };
+                    Some((text.to_string(), 0.99))
+                }
+            }),
+        });
+        let result = found.scan_sale_window();
+        assert_eq!(result.get("error"), None);
+        assert_eq!(result["starting_bid"], 12.0, "the fields read as normal");
+    }
+
+    #[test]
+    fn a_calibration_without_a_landmark_still_reads() {
+        // The landmark arrived after the first calibrations did, so its
+        // absence must not refuse work that was fine the day before.
+        let result = SaleWindowOcrService::new(reading("12", 0.9)).scan_sale_window();
+        assert_eq!(result.get("error"), None);
         assert_eq!(result["starting_bid"], 12.0);
     }
 

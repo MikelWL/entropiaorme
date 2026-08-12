@@ -745,7 +745,10 @@ async fn compose_with(
         game_data.clone(),
         db.clone(),
         clock.clone(),
-        geometry_path,
+        ScanPaths {
+            geometry: geometry_path,
+            debug: data_dir.join("debug"),
+        },
         producers.keystroke_source_handle(),
     )
     .await;
@@ -976,13 +979,21 @@ async fn build_ocr_engine(models: PathBuf) -> Option<Arc<OcrEngine>> {
 /// "engine unavailable" rather than declining composition, so the scan
 /// operations still serve (the scan reports offline, a golden-pinned
 /// reply). Both services are always constructed.
+/// Where the scan services read their calibration and drop what they saw.
+struct ScanPaths {
+    /// The calibration artefact, beside the snapshot in both layouts.
+    geometry: PathBuf,
+    /// Where a scan leaves its last captured frame for later inspection.
+    debug: PathBuf,
+}
+
 async fn compose_scan_services(
     bus: Arc<EventBus>,
     ocr_engine: Option<Arc<OcrEngine>>,
     game_data: Arc<GameDataStore>,
     db: Db,
     clock: Arc<dyn Clock>,
-    geometry_path: PathBuf,
+    paths: ScanPaths,
     keystroke_source: Arc<dyn KeystrokeSource>,
 ) -> (
     Arc<SkillScanManual>,
@@ -997,7 +1008,7 @@ async fn compose_scan_services(
     // assets (the geometry artefact beside the snapshot dir, the skill
     // names from the bundled `skills` endpoint), so this is port scope, not
     // new surface.
-    let presets = Arc::new(ScanPresets::new(&geometry_path));
+    let presets = Arc::new(ScanPresets::new(&paths.geometry));
     let skill_geom = presets.skill.to_geom_value();
     let vocab: Vec<String> = game_data
         .get_entities("skills")
@@ -1101,6 +1112,19 @@ async fn compose_scan_services(
                 .recognize_bgr(&frame.data, frame.h, frame.w)
                 .ok()
         }),
+    }));
+
+    // Every sale-window read drops its captured panel under the data dir's
+    // debug/, the way a coordinate scan drops its frame: one small
+    // overwritten file, local only, and the only way to see afterwards what
+    // the recogniser was actually looking at when a field would not read.
+    let sale_debug_dir = paths.debug;
+    sale_window_ocr.set_capture_tap(Arc::new(move |_panel, _region, frame| {
+        eo_services::screen_capture::write_debug_frame(
+            &sale_debug_dir,
+            "sale-window-last.png",
+            frame,
+        );
     }));
 
     // The spacebar-capture listener fires a manual-scan capture on a space

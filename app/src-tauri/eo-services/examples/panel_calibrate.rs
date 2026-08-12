@@ -32,6 +32,11 @@ use serde_json::Value;
 /// name's rectangle is drawn wide enough for a long name rather than
 /// tight to the sample on screen.
 const SALE_WINDOW_FIELDS: &[(&str, &str)] = &[
+    (
+        "landmark",
+        "the 'Item Name' LABEL itself, not its value (this is what proves the window is the \
+         sale window before any figure is believed)",
+    ),
     ("item_name", "item name (draw it wide: long names must fit)"),
     ("quantity", "quantity"),
     ("tt_value", "TT value"),

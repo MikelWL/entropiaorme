@@ -52,6 +52,46 @@ pub fn capture_region_bgr(x: i64, y: i64, w: i64, h: i64) -> Option<BgrImage> {
     })
 }
 
+/// Encode a captured BGR frame as PNG bytes.
+pub fn frame_to_png(frame: &BgrImage) -> Option<Vec<u8>> {
+    use image::ImageEncoder as _;
+    let mut rgb = Vec::with_capacity(frame.w * frame.h * 3);
+    for px in frame.data.chunks_exact(3) {
+        rgb.push(px[2]);
+        rgb.push(px[1]);
+        rgb.push(px[0]);
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(
+            &rgb,
+            frame.w as u32,
+            frame.h as u32,
+            image::ExtendedColorType::Rgb8,
+        )
+        .ok()?;
+    Some(png)
+}
+
+/// Drop one captured frame under `dir` as `name`, best effort.
+///
+/// The standing instrument for a read that will not read: the pixels the
+/// recogniser actually saw, kept where a later look can find them. One
+/// small overwritten file per scan kind, local only.
+pub fn write_debug_frame(dir: &std::path::Path, name: &str, frame: &BgrImage) {
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        tracing::warn!(target: "eo::capture", %error, "debug dir not creatable");
+        return;
+    }
+    let Some(png) = frame_to_png(frame) else {
+        tracing::warn!(target: "eo::capture", "debug frame not encodable");
+        return;
+    };
+    if let Err(error) = std::fs::write(dir.join(name), &png) {
+        tracing::warn!(target: "eo::capture", %error, "debug frame not writable");
+    }
+}
+
 /// Return the generation of the newest Linux portal frame.
 ///
 /// This is intentionally hidden from the generated API documentation: it is
