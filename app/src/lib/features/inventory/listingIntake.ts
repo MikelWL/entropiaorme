@@ -2,6 +2,13 @@
  * The listing-intake draft: what the game's sale window says, before any of
  * it becomes a transaction.
  *
+ * The TT value is read, never worked out from what we hold. Our per-unit
+ * figure is an average over recorded loot, and it drifts: a stack the game
+ * values at 336.49 came to 336.34 by that route. A percentage being a
+ * fraction out is cosmetic, but the TT value is what a markup is measured
+ * against, so it is taken from the window and typed only when there is no
+ * window to read.
+ *
  * The markup percentages are not among them. In game they are a read-only
  * consequence of the TT value and the two bids, so they are derived here the
  * same way rather than recorded: a figure the player cannot set is not a
@@ -27,19 +34,7 @@ export interface HoldingOption {
 	holdingId: string;
 	name: string;
 	score: number;
-	/** `null` for a holding with no per-unit value to divide (a whole
-	 * capital position, or a tracked quantity of zero). */
-	unitTt: number | null;
 	heldQty: number | null;
-}
-
-/** The TT a quantity of a holding comes to, at the value it was recorded at.
- * `null` when the holding has no per-unit figure to multiply. */
-export function derivedTt(holding: HoldingOption | null, quantity: number | null): number | null {
-	if (!holding || holding.unitTt === null || quantity === null || quantity <= 0) return null;
-	// Rounded to the hundredth the game itself displays; an unrounded product
-	// would show a TT with more precision than any figure it came from.
-	return Math.round(holding.unitTt * quantity * 100) / 100;
 }
 
 /** What the sale window states, as read or typed. Percentages are the game's

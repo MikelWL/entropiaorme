@@ -43,7 +43,6 @@
 	import type { InventoryHoldingCandidate, SaleWindowCapture } from '$lib/api/commands.gen';
 	import {
 		capturedDraft,
-		derivedTt,
 		draftIssues,
 		EMPTY_DRAFT,
 		type HoldingOption,
@@ -101,10 +100,6 @@
 	/** The name the free-text resolver last answered for, so a stale answer
 	 * cannot be mistaken for one about what is in the box now. */
 	let resolvedFor = $state<string | null>(null);
-	/** Set once the player edits TT themselves, after which it is theirs and
-	 * the derived figure stops overwriting it. */
-	let ttEdited = $state(false);
-
 	/** Emitted by the shell when the overlay has read a window for this form. */
 	const CAPTURE_READY_EVENT = 'sale-capture-ready';
 
@@ -165,7 +160,6 @@
 			chosen = null;
 			candidates = [];
 			resolvedFor = null;
-			ttEdited = false;
 		},
 	};
 
@@ -186,7 +180,6 @@
 	// The rest of the form waits on the item, which is what gives the other
 	// figures their meaning.
 	const itemSettled = $derived(chosen !== null || untracked);
-	const suggestedTt = $derived(derivedTt(chosen, fields.quantity));
 
 	function reset() {
 		fields = { ...EMPTY_DRAFT };
@@ -197,18 +190,10 @@
 		candidates = [];
 		chosen = null;
 		resolvedFor = null;
-		ttEdited = false;
 		unread = [];
 		picker.clear();
 	}
 
-	// TT follows the quantity while the player has not taken the field over.
-	// It is a starting figure from what the stock was recorded at, not a
-	// claim about what the game will say.
-	$effect(() => {
-		if (ttEdited || suggestedTt === null) return;
-		if (fields.ttValue !== suggestedTt) fields.ttValue = suggestedTt;
-	});
 
 	$effect(() => {
 		if (open) return;
@@ -257,7 +242,7 @@
 	 * names, so a name matched by typing behaves like one chosen from the list. */
 	function enrich(candidate: InventoryHoldingCandidate): HoldingOption {
 		const known = holdings.find((row) => row.holdingId === candidate.holdingId);
-		return { ...candidate, unitTt: known?.unitTt ?? null, heldQty: known?.heldQty ?? null };
+		return { ...candidate, heldQty: known?.heldQty ?? null };
 	}
 
 	/** The window's own name for a field, for saying what did not read. */
@@ -321,9 +306,6 @@
 		// the query would flash the suggestion list open over the form and
 		// shut it again a moment later.
 		picker.fill(fields.itemName);
-		// The window's TT is what the game says the goods are worth, which
-		// outranks anything derived from our own records.
-		ttEdited = read.ttValue !== null;
 		if (fields.itemName === '') return;
 		await resolveTyped();
 		// A name the window gave and the resolver settled is as chosen as one
@@ -492,24 +474,8 @@
 					step="0.01"
 					align="right"
 					disabled={!itemSettled}
-					oninput={() => (ttEdited = true)}
 					bind:value={fields.ttValue}
 				/>
-				<span class="block text-right text-[10px] text-text-tertiary">
-					{#if ttEdited && suggestedTt !== null}
-						<button
-							type="button"
-							class="text-accent underline-offset-2 hover:underline"
-							onclick={() => (ttEdited = false)}
-						>
-							Use {formatPed(suggestedTt)} from stock
-						</button>
-					{:else if suggestedTt !== null}
-						from recorded stock
-					{:else}
-						&nbsp;
-					{/if}
-				</span>
 			</label>
 		</div>
 

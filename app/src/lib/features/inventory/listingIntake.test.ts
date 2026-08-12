@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
 	capturedDraft,
-	derivedTt,
 	draftIssues,
 	EMPTY_DRAFT,
 	impliedMarkupPct,
@@ -81,26 +80,6 @@ describe('listing intake', () => {
 		expect(impliedMarkupPct(10, 0)).toBeNull();
 		expect(impliedMarkupPct(null, 10)).toBeNull();
 		expect(impliedMarkupPct(10.25, 10)).toBeCloseTo(102.5, 6);
-	});
-
-	it('works TT out from the quantity and what the stock was recorded at', () => {
-		const shrapnel = {
-			kind: 'loot',
-			holdingId: 'Shrapnel',
-			name: 'Shrapnel',
-			score: 100,
-			unitTt: 0.0001,
-			heldQty: 120_000,
-		};
-		expect(derivedTt(shrapnel, 50_000)).toBeCloseTo(5, 6);
-		// Rounded to the hundredth the game displays, not carried out to the
-		// full precision of a per-unit value that was itself a division.
-		expect(derivedTt({ ...shrapnel, unitTt: 1 / 3 }, 10)).toBe(3.33);
-		// Nothing to work from is not zero: zero would read as a free sale.
-		expect(derivedTt({ ...shrapnel, unitTt: null }, 10)).toBeNull();
-		expect(derivedTt(shrapnel, null)).toBeNull();
-		expect(derivedTt(shrapnel, 0)).toBeNull();
-		expect(derivedTt(null, 10)).toBeNull();
 	});
 
 	it('previews the net a sale would leave after the fee already spent', () => {

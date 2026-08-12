@@ -383,7 +383,6 @@ export function createInventoryModel() {
 			holdingId: row.itemName,
 			name: row.itemName,
 			score: 100,
-			unitTt: row.heldQty > 0 ? row.heldTt / row.heldQty : null,
 			heldQty: row.heldQty,
 		})),
 		...equipment.map((row) => ({
@@ -392,7 +391,6 @@ export function createInventoryModel() {
 			name: row.name,
 			score: 100,
 			// A capital position is indivisible, so its whole TT is its unit.
-			unitTt: row.ttValue,
 			heldQty: 1,
 		})),
 	]);
