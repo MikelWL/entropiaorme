@@ -1283,7 +1283,8 @@ impl Api {
             // The window calls it the auction fee; the ledger has always
             // called it the listing fee. Same money.
             listing_fee: number("auction_fee"),
-            auction_days: read.get("auction_days")
+            auction_days: read
+                .get("auction_days")
                 .and_then(serde_json::Value::as_i64)
                 .into(),
             starting_bid: number("starting_bid"),

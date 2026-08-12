@@ -7475,7 +7475,10 @@ mod tests {
         assert_eq!(dated.auction_days, Some(7));
         // Listed at 14:30 local, so the deadline is that same clock time
         // seven days on, reported in UTC.
-        assert_eq!(dated.expires_at.as_deref(), Some("2026-07-27T13:30:00+00:00"));
+        assert_eq!(
+            dated.expires_at.as_deref(),
+            Some("2026-07-27T13:30:00+00:00")
+        );
 
         let undated = service
             .create_auction_listing(
@@ -7500,7 +7503,10 @@ mod tests {
             .await
             .unwrap();
         let stored = listings.iter().find(|row| row.id == dated.id).unwrap();
-        assert_eq!(stored.expires_at.as_deref(), Some("2026-07-27T13:30:00+00:00"));
+        assert_eq!(
+            stored.expires_at.as_deref(),
+            Some("2026-07-27T13:30:00+00:00")
+        );
     }
 
     /// A duration is either absent or a real number of days; zero and

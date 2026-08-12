@@ -319,7 +319,10 @@ mod tests {
         assert_eq!(presets.sale_window.bottom_offset, 40);
         assert_eq!(presets.sale_window.n_rows, None);
         assert_eq!(presets.sale_window.cells.len(), 1);
-        assert_eq!(presets.sale_window.cells[0].1.single_rect(), (20, 60, 70, 14));
+        assert_eq!(
+            presets.sale_window.cells[0].1.single_rect(),
+            (20, 60, 70, 14)
+        );
 
         assert_eq!(presets.skill.width, 700, "the override applies");
         assert_eq!(

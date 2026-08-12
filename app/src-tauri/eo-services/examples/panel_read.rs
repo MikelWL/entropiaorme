@@ -38,7 +38,8 @@ fn panel_image(saved: Option<&Path>, presets: &ScanPresets) -> Result<BgrImage, 
     // dialog opens behind a fullscreen game: the wait then looks like a
     // hang, with nothing on screen to say what it is waiting for.
     if std::env::var_os("EO_CAPTURE_TOKEN_PATH").is_none() {
-        let token = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/capture-restore-token");
+        let token =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/capture-restore-token");
         if token.is_file() {
             std::env::set_var("EO_CAPTURE_TOKEN_PATH", &token);
             eprintln!("consent: reusing {}", token.display());

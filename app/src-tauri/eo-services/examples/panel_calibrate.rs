@@ -144,7 +144,10 @@ fn prompt_corner(label: &str) -> Answer {
             dx: win_x + win_w - x,
             dy: win_y + win_h - y,
         };
-        eprintln!("      recorded {}px left and {}px up from the corner", corner.dx, corner.dy);
+        eprintln!(
+            "      recorded {}px left and {}px up from the corner",
+            corner.dx, corner.dy
+        );
         return Answer::Corner(corner);
     }
 }
@@ -256,7 +259,9 @@ fn main() {
                 (width, height, right_offset, bottom_offset)
             }
             _ => {
-                eprintln!("calibrate: the existing entry has no panel rect; run a full calibration first");
+                eprintln!(
+                    "calibrate: the existing entry has no panel rect; run a full calibration first"
+                );
                 std::process::exit(1);
             }
         }

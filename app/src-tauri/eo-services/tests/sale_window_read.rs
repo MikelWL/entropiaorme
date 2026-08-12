@@ -82,7 +82,10 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
     }
     let dylib = ort_dylib();
     if !dylib.is_file() {
-        eprintln!("bundled ONNX Runtime absent at {}; skipping", dylib.display());
+        eprintln!(
+            "bundled ONNX Runtime absent at {}; skipping",
+            dylib.display()
+        );
         return;
     }
     std::env::set_var("ORT_DYLIB_PATH", &dylib);
@@ -102,11 +105,16 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
     );
 
     let captures = truth["captures"].as_array().expect("captures array");
-    assert!(!captures.is_empty(), "the bench carries no sale-window capture");
+    assert!(
+        !captures.is_empty(),
+        "the bench carries no sale-window capture"
+    );
 
     for capture in captures {
         let id = capture["id"].as_str().expect("capture id");
-        let relative = capture["panel_screenshot"].as_str().expect("screenshot path");
+        let relative = capture["panel_screenshot"]
+            .as_str()
+            .expect("screenshot path");
         let bytes = std::fs::read(bench.join("crops").join(relative))
             .unwrap_or_else(|error| panic!("{id}: panel image unreadable: {error}"));
         let (data, h, w) = load_bgr_png(&bytes).expect("panel image decodes");
@@ -123,7 +131,9 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
             anchor: Arc::new(move || anchor.clone()),
             capture_region: Arc::new(move |_, _, _, _| Some(frame.clone())),
             read_text: Arc::new(move |crop: &BgrImage| {
-                engine_for_read.recognize_bgr(&crop.data, crop.h, crop.w).ok()
+                engine_for_read
+                    .recognize_bgr(&crop.data, crop.h, crop.w)
+                    .ok()
             }),
         });
 
@@ -148,7 +158,9 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
             anchor: Arc::new(move || anchor_for_slip.clone()),
             capture_region: Arc::new(move |_, _, _, _| Some(slipped.clone())),
             read_text: Arc::new(move |crop: &BgrImage| {
-                engine_for_slip.recognize_bgr(&crop.data, crop.h, crop.w).ok()
+                engine_for_slip
+                    .recognize_bgr(&crop.data, crop.h, crop.w)
+                    .ok()
             }),
         });
         let refused = displaced.scan_sale_window();
@@ -166,7 +178,8 @@ fn the_calibrated_rectangles_read_a_real_sale_window() {
                 Some(text) => assert_eq!(got.as_str(), Some(text), "{id}/{field}"),
                 None => {
                     let (got, want) = (
-                        got.as_f64().unwrap_or_else(|| panic!("{id}/{field}: {read}")),
+                        got.as_f64()
+                            .unwrap_or_else(|| panic!("{id}/{field}: {read}")),
                         want.as_f64().expect("numeric expectation"),
                     );
                     // Exact: these are integers and hundredths read off a

@@ -318,7 +318,10 @@ mod tests {
             result["error"],
             "The sale window has not been calibrated on this machine"
         );
-        assert_eq!(result["unread"].as_array().unwrap().len(), SALE_FIELDS.len());
+        assert_eq!(
+            result["unread"].as_array().unwrap().len(),
+            SALE_FIELDS.len()
+        );
 
         let service = SaleWindowOcrService::new(SaleWindowProviders {
             anchor: Arc::new(calibrated),
@@ -568,7 +571,9 @@ mod tests {
         let taps = Arc::new(Mutex::new(Vec::new()));
         let sink = taps.clone();
         service.set_capture_tap(Arc::new(move |panel, region, _frame| {
-            sink.lock().unwrap().push((panel.to_string(), region.clone()));
+            sink.lock()
+                .unwrap()
+                .push((panel.to_string(), region.clone()));
         }));
         service.scan_sale_window();
         {
