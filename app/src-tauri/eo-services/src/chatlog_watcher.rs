@@ -669,8 +669,13 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         });
     }
 
-    // Snapshot signal evidence before reward suppression: the same voucher
-    // can prove completion and be removed from ordinary loot.
+    // A mission-less loot tick may complete a signal quest. Snapshot its
+    // evidence before reward suppression so the same marker can prove the
+    // completion and be removed from ordinary loot. A tick with a mission
+    // completion belongs to that mission path instead, so a daily voucher
+    // cannot masquerade as a boss marker. The probe runs only after every
+    // publish below, allowing the clump to stamp into the declared stretch
+    // before the completion closes it.
     let signal_loot: Option<Vec<SignalLoot>> = if completes.is_empty() && !loot_events.is_empty() {
         shared.signal_loot_probe.get().map(|_| {
             loot_events
@@ -723,19 +728,6 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         }
     }
 
-    // The signal-loot candidates: a loot tick that carried no mission
-    // completion may complete a signal quest (the instance-boss
-    // pattern: the marker item arrives inside the boss's loot clump,
-    // with no mission-log line to route by). A tick WITH a completion
-    // is the mission machinery's, so the probe never sees it and a
-    // daily's voucher cannot masquerade as a boss's. Post-suppression,
-    // so a suppressed reward echo cannot double as a signal. Each entry
-    // carries the line's quantity: a stacked line (quantity 2) is two
-    // markers, so the probe's one-marker-one-run budget sees both.
-    // Collected here, but PROBED only after every publish below: the
-    // completion closes the declared stretch, and the clump that pays
-    // for the run must stamp into that stretch before anything can
-    // close it.
     let refund_matches = match_enhancer_shrapnel(&loot_events, &enhancer_events);
 
     // Enhancer breaks before loot finalisation.

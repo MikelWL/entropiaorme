@@ -1530,9 +1530,6 @@ export interface MarketSkippedLine {
 	reason: string;
 }
 
-/**
- * A stored informational quote for one item unit.
- */
 export interface MarketUnitPriceResult {
 	itemName: string;
 	pedPerUnit: number;

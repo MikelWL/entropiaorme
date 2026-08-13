@@ -2762,7 +2762,21 @@ fn hunting_activity_read(
     {
         let mut stmt = conn.prepare(
             "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
-                    sqc.reward_kind, sqc.reward_ped, sqc.reward_outcome \
+                    CASE \
+                      WHEN (SELECT r.outcome FROM quest_reward_reviews r \
+                            WHERE r.completion_id = sqc.id \
+                            ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1) = 'none' \
+                        THEN 'none' \
+                      WHEN (SELECT r.outcome FROM quest_reward_reviews r \
+                            WHERE r.completion_id = sqc.id \
+                            ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1) = 'confirmed' \
+                        THEN 'item' \
+                      ELSE sqc.reward_kind \
+                    END, sqc.reward_ped, \
+                    COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                              WHERE r.completion_id = sqc.id \
+                              ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                             sqc.reward_outcome) \
              FROM session_quest_completions sqc \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
         )?;
@@ -2814,6 +2828,10 @@ fn hunting_activity_read(
              JOIN session_quest_completions sqc ON sqc.id = ri.completion_id \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id \
              WHERE sqc.activity_context_id IS NOT NULL \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = sqc.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            sqc.reward_outcome) = 'confirmed' \
              GROUP BY sqc.activity_context_id, ri.item_name",
         )?;
         let mut rows = stmt.query([])?;
@@ -9629,8 +9647,8 @@ mod tests {
                     "INSERT INTO session_quest_completions \
                      (session_id, quest_id, completed_at, activity_context_id, \
                       activity_interval_id, reward_source, reward_kind, reward_ped, \
-                      expected_reward_markup_percent) \
-                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 'fixed_liquid', 4.0, 150.0)",
+                      expected_reward_markup_percent, reward_outcome) \
+                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 'fixed_liquid', 4.0, 150.0, 'confirmed')",
                     [],
                 )?;
                 conn.execute(
@@ -9834,6 +9852,69 @@ mod tests {
         assert_eq!(unclassified.mob_species, "");
         assert_eq!(unclassified.kills, 1);
         assert!(unclassified.pes.is_none(), "a tag row claims no skill");
+    }
+
+    #[tokio::test]
+    async fn hunting_activity_uses_the_latest_reward_review_outcome() {
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+        service
+            .db
+            .with_writer(|conn| {
+                let completion_id: i64 = conn.query_row(
+                    "SELECT id FROM session_quest_completions \
+                     WHERE session_id = 'hunt-a' AND quest_id = 11",
+                    [],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "UPDATE session_quest_completions \
+                     SET reward_outcome = 'unresolved', reward_kind = NULL, reward_ped = NULL \
+                     WHERE id = ?",
+                    rusqlite::params![completion_id],
+                )?;
+                conn.execute(
+                    "INSERT INTO quest_reward_reviews \
+                     (completion_id, outcome, policy, reviewed_at) \
+                     VALUES(?, 'confirmed', 'named_items', 1780301810.0)",
+                    rusqlite::params![completion_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let data = service.hunting_activity("all").await.unwrap();
+        let family = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("family row");
+        assert_eq!(family.reward_status, "item");
+        assert_eq!(family.confirmed_reward_ped, 4.0);
+        assert_eq!(family.reward_items[0].item_name, "Universal Ammo");
+
+        service
+            .db
+            .with_writer(|conn| {
+                conn.execute(
+                    "UPDATE quest_reward_reviews SET outcome = 'none', policy = 'none'",
+                    [],
+                )?;
+                conn.execute("DELETE FROM session_quest_completion_reward_items", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let data = service.hunting_activity("all").await.unwrap();
+        let family = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("family row");
+        assert_eq!(family.reward_status, "none");
+        assert_eq!(family.confirmed_reward_ped, 0.0);
+        assert!(family.reward_items.is_empty());
     }
 
     /// The period filter works at session grain: a window that excludes the

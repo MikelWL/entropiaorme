@@ -294,7 +294,7 @@ export function createQuestsModel() {
 			analyticsData = qAnalytics;
 			playlistAnalyticsData = plAnalytics;
 			rates = globalRates(overview);
-			rewardMarket = market;
+			if (market !== null) rewardMarket = market;
 			analyticsLoaded = true;
 		} catch (e) {
 			analyticsError = describeError(e, 'Failed to load quest analytics');

@@ -111,6 +111,27 @@ describe('loadData', () => {
 	});
 });
 
+describe('analytics', () => {
+	it('preserves the last market snapshot when its independent refresh fails', async () => {
+		const first = { nanocubeMarkupPct: 123, items: [] } as never;
+		mocked.getQuestAnalytics.mockResolvedValue([]);
+		mocked.getPlaylistAnalytics.mockResolvedValue([]);
+		mocked.getAnalyticsOverview.mockResolvedValue({
+			returnsBreakdown: { lootTt: 0, pes: 0, codexPes: 0, questPes: 0, ledger: {} },
+			lossesBreakdown: { trackingCost: 0, cycledBreakdown: {}, ledger: {} },
+		} as never);
+		mocked.getMarketHuntMarkups.mockResolvedValueOnce(first);
+		const model = createQuestsModel();
+
+		await model.loadAnalytics();
+		expect(model.rewardMarket).toEqual(first);
+
+		mocked.getMarketHuntMarkups.mockRejectedValueOnce(new Error('market unavailable'));
+		await model.loadAnalytics();
+		expect(model.rewardMarket).toEqual(first);
+	});
+});
+
 describe('refresh', () => {
 	it('replaces quests and playlists on success', async () => {
 		const model = createQuestsModel();

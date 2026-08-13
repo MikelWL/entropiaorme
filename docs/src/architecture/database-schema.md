@@ -78,7 +78,9 @@ reward policies plus immutable confirmed, none, or unresolved outcomes),
 `0040_quest_reward_reviews.sql` (append-only adjudication of ambiguous reward
 evidence with exact ordinary-loot reclassification), and
 `0041_ARIS_unresolved_rewards.sql` (truthful unresolved outcomes for guarded
-historical ARIS completions that had no exact voucher attribution). The
+historical ARIS completions that had no exact voucher attribution), and
+`0042_quest_run_ownership.sql` (one-to-one ownership between durable runs and
+their completions). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -455,10 +457,11 @@ primary key is `(quest_id, item_name)`; `sort_order` preserves authoring order.
 #### `quest_runs` and `quest_run_intervals`
 
 `quest_runs` records one administrative lifecycle as `in_progress`, `completed`,
-or `cancelled`, with start/completion times and its completion id. A partial
-unique index permits only one in-progress run per quest. `quest_run_intervals`
-links every declared effort interval that earned the run, including intervals
-from several sessions.
+or `cancelled`, with start/completion times and its completion id. Partial
+unique indexes permit only one in-progress run per quest and ensure a run and
+completion own at most one another; reciprocal-pair triggers reject crossed
+links once either side has been bound. `quest_run_intervals` links every declared
+effort interval that earned the run, including intervals from several sessions.
 
 #### `quest_reward_reviews` and `quest_reward_review_items`
 

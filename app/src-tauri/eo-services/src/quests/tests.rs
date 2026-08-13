@@ -18,7 +18,7 @@ use crate::db::Db;
 
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
 use super::payload::json_truthy;
-use super::QuestService;
+use super::{QuestError, QuestService};
 use crate::ped::Ped;
 
 type ServiceRig = (
@@ -307,9 +307,183 @@ async fn updates_merge_and_renormalise_the_markup() {
     assert_eq!(updated["reward_is_skill"], json!(1));
     assert_eq!(updated["expected_reward_markup_percent"], Value::Null);
 
+    // Clearing the fixed amount without naming a replacement policy must
+    // re-infer the policy from the merged reward picture.
+    let updated = svc
+        .update_quest(q1, &json!({"reward_ped": null, "reward_is_skill": false}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated["reward_policy"], json!("none"));
+
     assert_eq!(
         svc.update_quest(9999, &json!({"name": "x"})).await.unwrap(),
         None
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_completion_removes_its_run_intervals_without_foreign_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let quest = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Interval-backed daily",
+            "cooldown_hours": 24,
+        }))
+        .await
+        .unwrap(),
+    );
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('s-run', 1772366300.0, 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at, ended_at) \
+             VALUES(901, 's-run', 'quest', 'Interval-backed daily', ?, \
+                    1772366300.0, 1772366400.0)",
+            params![quest],
+        )?;
+        conn.execute(
+            "INSERT INTO session_quest_completions(id, session_id, quest_id, completed_at, reward_outcome) \
+             VALUES(902, 's-run', ?, 1772366400.0, 'none')",
+            params![quest],
+        )?;
+        conn.execute(
+            "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at, completion_id) \
+             VALUES(903, ?, 'completed', 1772366300.0, 1772366400.0, 902)",
+            params![quest],
+        )?;
+        conn.execute(
+            "UPDATE session_quest_completions SET quest_run_id = 903 WHERE id = 902",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO quest_run_intervals(run_id, interval_id) VALUES(903, 901)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.cancel_quest(quest, false).await.unwrap();
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_run_intervals").await,
+        0
+    );
+    assert_eq!(count_rows(&db, "SELECT COUNT(*) FROM quest_runs").await, 0);
+}
+
+#[tokio::test]
+async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let quest = quest_id(
+        &svc.create_quest(&json!({"name": "Ambiguous daily"}))
+            .await
+            .unwrap(),
+    );
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, ended_at, is_active) \
+             VALUES('s-review', 900.0, 1100.0, 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_contexts(id, session_id, created_at) \
+             VALUES(801, 's-review', 900.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kills(id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
+             VALUES('k-review', 's-review', 'Target', 1000.0, 801, 2.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped) \
+             VALUES('k-review', 'Universal Ammo', 5, 2.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_quest_completions \
+             (id, session_id, quest_id, completed_at, activity_context_id, reward_outcome, \
+              reward_policy_snapshot, reward_unresolved_reason, reward_evidence_json) \
+             VALUES(802, 's-review', ?, 1000.0, 801, 'unresolved', 'completion_clump', \
+                    'ambiguous clump', ?)",
+            params![
+                quest,
+                json!({
+                    "loot": [{"item_name": "Universal Ammo", "quantity": 5, "value": 2.0}],
+                    "isolated": true,
+                })
+                .to_string()
+            ],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let error = svc
+        .resolve_reward_review(802, &[], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "select at least one reward item")
+    );
+
+    let error = svc
+        .resolve_reward_review(802, &[1], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "reward selection is out of range")
+    );
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET value_ped = 3.0 WHERE kill_id = 'k-review'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let error = svc
+        .resolve_reward_review(802, &[0], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message.contains("expected one exact acquisition, found 0"))
+    );
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET value_ped = 2.0 WHERE kill_id = 'k-review'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.resolve_reward_review(802, &[0], false).await.unwrap();
+    assert!(svc.unresolved_reward_reviews().await.unwrap().is_empty());
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reviews").await,
+        1
+    );
+
+    let error = svc
+        .resolve_reward_review(802, &[0], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "completion has already been reviewed")
     );
 }
 
@@ -2006,6 +2180,43 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     assert_eq!(
         remaining_reward_items, 0,
         "cancel removes linked reward evidence"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_marker_lines_share_one_assignment_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(boss).await.unwrap();
+
+    let tick = vec![
+        json!({"item_name": "Hyperion Daily Voucher", "quantity": 1, "value": 0.0}),
+        json!({"item_name": "Hyperion Daily Voucher", "quantity": 1, "value": 0.0}),
+    ];
+    assert_eq!(
+        svc.signal_reward_filter(&tick).await.unwrap(),
+        Some(json!({"suppress_loot_indices": [0]}))
+    );
+    svc.signal_loot_check(&[
+        marker("Hyperion Daily Voucher", 1),
+        marker("Hyperion Daily Voucher", 1),
+    ])
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM session_quest_completions").await,
+        1
     );
 }
 

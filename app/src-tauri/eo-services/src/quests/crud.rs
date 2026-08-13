@@ -314,12 +314,15 @@ impl QuestService {
                 .cloned()
                 .unwrap_or(Value::Null)
         });
-        let merged_policy = normalize_reward_policy(
+        let policy_input = if data.get("reward_policy").is_some() {
             data.get("reward_policy")
-                .or_else(|| existing.get("reward_policy")),
-            Some(&merged_reward),
-            Some(&merged_skill),
-        )?;
+        } else if data.get("reward_ped").is_some_and(Value::is_null) {
+            None
+        } else {
+            existing.get("reward_policy")
+        };
+        let merged_policy =
+            normalize_reward_policy(policy_input, Some(&merged_reward), Some(&merged_skill))?;
         let reward_item_names = match data.get("reward_item_names") {
             Some(value) => Some(normalize_reward_item_names(Some(value))?),
             None => None,

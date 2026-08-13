@@ -1302,11 +1302,12 @@ mod tests {
         // tables with their three indexes + the central-inventory
         // migration's 2 subject-and-state indexes
         // + the typed-reward, durable-run, unit-price, and reward-review
-        // migrations' 6 tables and 5 indexes
-        // = 60 tables, 75 indexes, 8 triggers.
+        // migrations' 6 tables and 5 indexes + the quest-run ownership
+        // migration's 2 one-to-one indexes and 2 reciprocal-pair triggers
+        // = 60 tables, 77 indexes, 10 triggers.
         assert_eq!(count("table").await, 60);
-        assert_eq!(count("index").await, 75);
-        assert_eq!(count("trigger").await, 8);
+        assert_eq!(count("index").await, 77);
+        assert_eq!(count("trigger").await, 10);
 
         let version = db
             .with_reader(|connection| {
@@ -1319,6 +1320,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(version, "33");
+    }
+
+    #[tokio::test]
+    async fn quest_runs_and_completions_have_one_to_one_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = fresh_db(dir.path()).await;
+
+        db.with_writer(|connection| {
+            connection.execute(
+                "INSERT INTO quests(id, name) VALUES(1, 'One'), (2, 'Two')",
+                [],
+            )?;
+            connection.execute(
+                "INSERT INTO session_quest_completions(id, session_id, quest_id, completed_at) \
+                 VALUES(11, 's1', 1, 10.0), (12, 's2', 2, 20.0)",
+                [],
+            )?;
+            connection.execute(
+                "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at, completion_id) \
+                 VALUES(21, 1, 'completed', 1.0, 10.0, 11), \
+                       (22, 2, 'completed', 2.0, 20.0, 12)",
+                [],
+            )?;
+            connection.execute(
+                "UPDATE session_quest_completions SET quest_run_id = 21 WHERE id = 11",
+                [],
+            )?;
+
+            let duplicate_completion = connection
+                .execute("UPDATE quest_runs SET completion_id = 11 WHERE id = 22", [])
+                .unwrap_err();
+            assert_eq!(
+                duplicate_completion.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
+
+            let duplicate_run = connection
+                .execute(
+                    "UPDATE session_quest_completions SET quest_run_id = 21 WHERE id = 12",
+                    [],
+                )
+                .unwrap_err();
+            assert_eq!(
+                duplicate_run.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
+
+            connection.execute(
+                "UPDATE session_quest_completions SET quest_run_id = NULL WHERE id = 12",
+                [],
+            )?;
+            connection.execute("UPDATE quest_runs SET completion_id = NULL WHERE id = 22", [])?;
+            let crossed_pair = connection
+                .execute(
+                    "UPDATE session_quest_completions SET quest_run_id = 22 WHERE id = 11",
+                    [],
+                )
+                .unwrap_err();
+            assert_eq!(
+                crossed_pair.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1709,10 +1776,12 @@ mod tests {
         // context-loot and quest-reward-item tables with one index each +
         // the private-sale and stock-removal tables with three indexes +
         // the central-inventory migration's two indexes +
-        // 8 triggers (only SQLite's own bookkeeping is excluded; the
+        // the quest-run ownership migration's 2 indexes and 2 triggers + 8
+        // earlier triggers (only
+        // SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 144);
+        assert_eq!(master.len(), 148);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

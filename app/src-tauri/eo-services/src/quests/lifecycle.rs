@@ -471,6 +471,10 @@ impl QuestService {
                     )?;
                     if let Some(run_id) = run_id {
                         tx.execute(
+                            "DELETE FROM quest_run_intervals WHERE run_id = ?",
+                            rusqlite::params![run_id],
+                        )?;
+                        tx.execute(
                             "DELETE FROM quest_runs WHERE id = ?",
                             rusqlite::params![run_id],
                         )?;

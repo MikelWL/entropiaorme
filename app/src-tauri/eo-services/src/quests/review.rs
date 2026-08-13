@@ -5,7 +5,15 @@ use serde_json::{json, Value};
 
 use super::{QuestError, QuestService};
 
+enum ReviewResolution {
+    Applied,
+    Refused(String),
+}
+
+type CompletionReviewEvidence = (String, Option<i64>, f64, Option<String>, Option<String>);
+
 impl QuestService {
+    /// List unresolved completion evidence that has no append-only review.
     pub async fn unresolved_reward_reviews(&self) -> Result<Vec<Value>, QuestError> {
         Ok(self
             .db
@@ -45,24 +53,51 @@ impl QuestService {
             .await?)
     }
 
+    /// Append one terminal review of an unresolved completion, refusing
+    /// repeated reviews and any selection that cannot be reclassified to one
+    /// exact tracked acquisition.
     pub async fn resolve_reward_review(
         &self,
         completion_id: i64,
         selected_indices: &[i64],
         declare_none: bool,
     ) -> Result<(), QuestError> {
+        if completion_id <= 0 {
+            return Err(QuestError::Invalid(
+                "completion id must be positive".to_string(),
+            ));
+        }
+        if declare_none && !selected_indices.is_empty() {
+            return Err(QuestError::Invalid(
+                "a no-reward review cannot select reward items".to_string(),
+            ));
+        }
+        if !declare_none && selected_indices.is_empty() {
+            return Err(QuestError::Invalid(
+                "select at least one reward item".to_string(),
+            ));
+        }
+        let mut readable_indices = selected_indices.to_vec();
+        readable_indices.sort_unstable();
+        if readable_indices.first().is_some_and(|index| *index < 0) {
+            return Err(QuestError::Invalid(
+                "reward selection is out of range".to_string(),
+            ));
+        }
+        readable_indices.dedup();
+        if readable_indices.len() != selected_indices.len() {
+            return Err(QuestError::Invalid(
+                "reward selection contains a duplicate item".to_string(),
+            ));
+        }
+
         let now = self.now_epoch();
         let selected_indices = selected_indices.to_vec();
-        self.db
+        let resolution = self
+            .db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
-                let (session_id, context_id, completed_at, policy, evidence): (
-                    String,
-                    Option<i64>,
-                    f64,
-                    Option<String>,
-                    Option<String>,
-                ) = tx
+                let completion: Option<CompletionReviewEvidence> = tx
                     .query_row(
                         "SELECT session_id, activity_context_id, completed_at, \
                                 reward_policy_snapshot, reward_evidence_json \
@@ -79,20 +114,21 @@ impl QuestService {
                             ))
                         },
                     )
-                    .optional()?
-                    .ok_or_else(|| {
-                        rusqlite::Error::InvalidParameterName("unresolved completion not found".to_string())
-                    })?;
+                    .optional()?;
+                let Some((session_id, context_id, completed_at, policy, evidence)) = completion
+                else {
+                    return Ok(ReviewResolution::Refused(
+                        "unresolved completion not found".to_string(),
+                    ));
+                };
                 let already_reviewed: i64 = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM quest_reward_reviews WHERE completion_id = ?)",
                     rusqlite::params![completion_id],
                     |row| row.get(0),
                 )?;
                 if already_reviewed != 0 {
-                    return Err(crate::db::DbError::Sqlite(
-                        rusqlite::Error::InvalidParameterName(
-                            "completion has already been reviewed".to_string(),
-                        ),
+                    return Ok(ReviewResolution::Refused(
+                        "completion has already been reviewed".to_string(),
                     ));
                 }
 
@@ -104,39 +140,34 @@ impl QuestService {
                         rusqlite::params![completion_id, now],
                     )?;
                     tx.commit()?;
-                    return Ok(());
+                    return Ok(ReviewResolution::Applied);
                 }
-
-                if selected_indices.is_empty() {
-                    return Err(crate::db::DbError::Sqlite(
-                        rusqlite::Error::InvalidParameterName(
-                            "select at least one reward item".to_string(),
-                        ),
-                    ));
-                }
-                let context_id = context_id.ok_or_else(|| {
-                    rusqlite::Error::InvalidParameterName(
+                let Some(context_id) = context_id else {
+                    return Ok(ReviewResolution::Refused(
                         "the completion has no activity context for safe reclassification"
                             .to_string(),
-                    )
-                })?;
-                let evidence = evidence
+                    ));
+                };
+                let Some(evidence) = evidence
                     .as_deref()
                     .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-                    .ok_or_else(|| {
-                        rusqlite::Error::InvalidParameterName("reward evidence is unreadable".to_string())
-                    })?;
-                let loot = evidence
-                    .get("loot")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        rusqlite::Error::InvalidParameterName("reward evidence has no loot lines".to_string())
-                    })?;
+                else {
+                    return Ok(ReviewResolution::Refused(
+                        "reward evidence is unreadable".to_string(),
+                    ));
+                };
+                let Some(loot) = evidence.get("loot").and_then(Value::as_array) else {
+                    return Ok(ReviewResolution::Refused(
+                        "reward evidence has no loot lines".to_string(),
+                    ));
+                };
                 let mut sources = Vec::new();
                 for index in selected_indices {
-                    let candidate = loot.get(index as usize).ok_or_else(|| {
-                        rusqlite::Error::InvalidParameterName("reward selection is out of range".to_string())
-                    })?;
+                    let Some(candidate) = loot.get(index as usize) else {
+                        return Ok(ReviewResolution::Refused(
+                            "reward selection is out of range".to_string(),
+                        ));
+                    };
                     let item_name = candidate
                         .get("item_name")
                         .and_then(Value::as_str)
@@ -177,12 +208,10 @@ impl QuestService {
                         matches
                     };
                     if matches.len() != 1 {
-                        return Err(crate::db::DbError::Sqlite(
-                            rusqlite::Error::InvalidParameterName(format!(
+                        return Ok(ReviewResolution::Refused(format!(
                                 "{item_name} cannot be reclassified safely: expected one exact acquisition, found {}",
                                 matches.len()
-                            )),
-                        ));
+                            )));
                     }
                     sources.push((matches[0], item_name.to_string(), quantity, value_ped));
                 }
@@ -218,9 +247,12 @@ impl QuestService {
                 crate::session_rollup::recompute_session(&tx, &session_id)?;
                 crate::daily_rollup::refresh_session_days(&tx, &session_id)?;
                 tx.commit()?;
-                Ok(())
+                Ok(ReviewResolution::Applied)
             })
             .await?;
-        Ok(())
+        match resolution {
+            ReviewResolution::Applied => Ok(()),
+            ReviewResolution::Refused(message) => Err(QuestError::Invalid(message)),
+        }
     }
 }

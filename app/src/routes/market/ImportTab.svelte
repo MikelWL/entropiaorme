@@ -104,6 +104,7 @@
 						<span class="mb-1 block text-xs font-medium text-text-secondary">Item</span>
 						<input
 							value={model.unitItemName}
+							disabled={model.unitPriceSaving}
 							oninput={(event) => model.setUnitItemName(event.currentTarget.value)}
 							placeholder="Item name"
 							class="w-full rounded-md border border-border bg-surface/70 px-3 py-2 text-sm text-text focus:border-accent/60 focus:outline-none focus:[box-shadow:var(--shadow-glow)]"
@@ -113,6 +114,7 @@
 						<span class="mb-1 block text-xs font-medium text-text-secondary">PED per unit</span>
 						<input
 							type="number"
+							disabled={model.unitPriceSaving}
 							min="0"
 							step="0.01"
 							value={model.unitPriceInput}

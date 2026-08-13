@@ -146,7 +146,6 @@ pub struct MarketCommitResult {
     pub observed_at: f64,
 }
 
-/// A stored informational quote for one item unit.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketUnitPriceResult {

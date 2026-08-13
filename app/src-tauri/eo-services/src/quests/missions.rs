@@ -197,8 +197,8 @@ impl QuestService {
     /// UNIT of a signal item completes at most ONE quest (one marker,
     /// one run; a stacked line's quantity is that many markers); when
     /// several in-progress quests share a signal item, the
-    /// oldest-started completes first, deterministically. No reward
-    /// The marker may independently be a named reward. In that case the
+    /// oldest-started completes first, deterministically. The marker may
+    /// independently be a named reward. In that case the
     /// pre-publish filter suppresses only a whole line whose units can all be
     /// assigned safely; this post-publish probe mirrors that assignment.
     pub async fn signal_reward_filter(
@@ -217,6 +217,7 @@ impl QuestService {
             .collect();
         candidates.sort_by(signal_candidate_order);
         let mut indices = Vec::new();
+        let mut used: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for (index, item) in loot_items.iter().enumerate() {
             let name = item
                 .get("item_name")
@@ -237,10 +238,17 @@ impl QuestService {
                         .is_some_and(|signal| signal.trim().eq_ignore_ascii_case(name))
                 })
                 .collect();
-            let safely_owned = quantity as usize <= matching.len()
-                && matching
+            let offset = used.entry(name.to_ascii_lowercase()).or_default();
+            let assigned: Vec<&Value> = matching
+                .iter()
+                .skip(*offset)
+                .take(quantity as usize)
+                .copied()
+                .collect();
+            *offset += assigned.len();
+            let safely_owned = assigned.len() == quantity as usize
+                && assigned
                     .iter()
-                    .take(quantity as usize)
                     .all(|quest| signal_is_named_reward(quest, name));
             if safely_owned {
                 indices.push(index);
