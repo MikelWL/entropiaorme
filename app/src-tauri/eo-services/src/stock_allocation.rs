@@ -12,9 +12,11 @@
 //! consumes every source in proportion to what that source still has open.
 //!
 //! A source is one provenance bucket: a harvest yield tier for Tree Cutting,
-//! a mob species for Hunting. One item can hold both at once (Nanocubes
-//! recycled from boards beside Nanocubes recycled from hides), and a sale of
-//! it draws on each in proportion, crediting each activity its own share.
+//! or Hunting with an optional observed mob species. One item can hold both
+//! at once (Nanocubes recycled from boards beside Nanocubes recycled from
+//! hides), and a sale of it draws on each in proportion, crediting each
+//! activity its own share. The observed target is descriptive evidence, not
+//! a prerequisite for knowing that gameplay produced the stock.
 //!
 //! Allocation is at (provenance, context, tool) granularity, not per source
 //! event. Hunting keeps its session definition beside species so the same
@@ -35,8 +37,9 @@ const EPSILON: f64 = 1e-9;
 pub enum StockProvenance<'a> {
     /// Tree Cutting: the effective yield tier whose swings produced it.
     Harvest(HarvestYieldTier),
-    /// Hunting: the mob species whose kills produced it.
-    Hunt(&'a str),
+    /// Hunting: the activity is known even when the observed mob species is
+    /// not. Species is an optional downstream analytical dimension only.
+    Hunt(Option<&'a str>),
 }
 
 /// One source's still-open position for a canonical item.
@@ -248,7 +251,16 @@ mod tests {
 
     fn species(name: &str, quantity: f64) -> SourcePosition<'_> {
         SourcePosition {
-            provenance: Some(StockProvenance::Hunt(name)),
+            provenance: Some(StockProvenance::Hunt(Some(name))),
+            session_definition_id: None,
+            tool_name: None,
+            quantity,
+        }
+    }
+
+    fn unclassified_hunt(quantity: f64) -> SourcePosition<'static> {
+        SourcePosition {
+            provenance: Some(StockProvenance::Hunt(None)),
             session_definition_id: None,
             tool_name: None,
             quantity,
@@ -332,12 +344,16 @@ mod tests {
         let carabok = plan
             .allocations
             .iter()
-            .find(|allocation| allocation.provenance == Some(StockProvenance::Hunt("Carabok")))
+            .find(|allocation| {
+                allocation.provenance == Some(StockProvenance::Hunt(Some("Carabok")))
+            })
             .expect("carabok allocated");
         let berycled = plan
             .allocations
             .iter()
-            .find(|allocation| allocation.provenance == Some(StockProvenance::Hunt("Berycled")))
+            .find(|allocation| {
+                allocation.provenance == Some(StockProvenance::Hunt(Some("Berycled")))
+            })
             .expect("berycled allocated");
 
         assert!((carabok.quantity - 40.0).abs() < 1e-9);
@@ -352,13 +368,13 @@ mod tests {
     fn definitions_inside_one_species_are_allocated_separately() {
         let positions = [
             SourcePosition {
-                provenance: Some(StockProvenance::Hunt("Atrox")),
+                provenance: Some(StockProvenance::Hunt(Some("Atrox"))),
                 session_definition_id: Some(7),
                 tool_name: None,
                 quantity: 75.0,
             },
             SourcePosition {
-                provenance: Some(StockProvenance::Hunt("Atrox")),
+                provenance: Some(StockProvenance::Hunt(Some("Atrox"))),
                 session_definition_id: Some(9),
                 tool_name: None,
                 quantity: 25.0,
@@ -378,8 +394,30 @@ mod tests {
             .expect("second definition allocated");
         assert!((first.quantity - 30.0).abs() < 1e-9);
         assert!((second.quantity - 10.0).abs() < 1e-9);
-        assert_eq!(first.provenance, Some(StockProvenance::Hunt("Atrox")));
-        assert_eq!(second.provenance, Some(StockProvenance::Hunt("Atrox")));
+        assert_eq!(first.provenance, Some(StockProvenance::Hunt(Some("Atrox"))));
+        assert_eq!(
+            second.provenance,
+            Some(StockProvenance::Hunt(Some("Atrox")))
+        );
+    }
+
+    /// Missing target evidence never turns known Hunting loot into external
+    /// stock: activity attribution remains complete while the optional
+    /// species dimension stays empty.
+    #[test]
+    fn unclassified_hunting_stock_remains_attributable() {
+        let mut position = unclassified_hunt(1.0);
+        position.session_definition_id = Some(7);
+        let plan = allocate(&[position], 1.0, 1.0);
+
+        assert_eq!(plan.attributed_qty, 1.0);
+        assert_eq!(plan.attributed_tt, 1.0);
+        assert_eq!(plan.unattributed_qty, 0.0);
+        assert_eq!(
+            plan.allocations[0].provenance,
+            Some(StockProvenance::Hunt(None))
+        );
+        assert_eq!(plan.allocations[0].session_definition_id, Some(7));
     }
 
     /// An item holding both harvest and hunt provenance (Nanocubes recycled

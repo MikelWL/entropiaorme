@@ -3570,18 +3570,17 @@ fn insert_movement(
     use stock_allocation::StockProvenance;
     // A movement with no provenance is stock whose origin is genuinely
     // unknown; it is consumed like any other but funds no activity.
-    let source_kind = match (movement_kind, provenance) {
-        (_, None) => "unattributed",
-        ("conversion_in", _) => "conversion",
-        (_, Some(StockProvenance::Hunt(_))) => "hunt",
-        (_, Some(StockProvenance::Harvest(_))) => "harvest",
+    let source_kind = match provenance {
+        None => "unattributed",
+        Some(StockProvenance::Hunt(_)) => "hunt",
+        Some(StockProvenance::Harvest(_)) => "harvest",
     };
     let yield_tier = match provenance {
         Some(StockProvenance::Harvest(tier)) => Some(tier.as_str()),
         _ => None,
     };
     let mob_species = match provenance {
-        Some(StockProvenance::Hunt(species)) => Some(species),
+        Some(StockProvenance::Hunt(species)) => species,
         _ => None,
     };
     conn.execute(
@@ -3820,22 +3819,27 @@ fn reversal_blocker(
 ///
 /// Recorded loot is the acquisition base, so nothing here duplicates it:
 /// harvest loot arrives keyed by its event's yield tier and hunting loot by
-/// its kill's species (the two namespaces barely overlap, and an item that
-/// genuinely has both simply holds a joint pile). The movement ledger only
-/// adds what has since left, returned, or been produced by a conversion.
+/// its activity source plus optional observed species (the two namespaces
+/// barely overlap, and an item that genuinely has both simply holds a joint
+/// pile). The movement ledger only adds what has since left, returned, or
+/// been produced by a conversion.
 /// Unit TT comes from recorded loot where there is any, and otherwise from
 /// what a conversion produced, which is the only other place an item's value
 /// is known.
 ///
 /// Enhancer-shrapnel loot rows are physically held shrapnel, so they count
-/// in the position, but they are enhancer accounting rather than mob loot,
-/// so they carry no species and can never fund a species' realised markup.
+/// in the position, but they are enhancer accounting rather than hunted
+/// output. Unclassified non-shrapnel loot remains Hunting provenance: missing
+/// target evidence may limit a target drilldown, never economic attribution.
 ///
 /// The tool is part of the key so the allocation records which one produced
 /// harvested stock, even though no surface reports on tools today. Keys come
 /// back owned because the caller borrows them to build the allocation plan.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PositionKey {
+    /// The activity source independent of its optional analytical facets.
+    /// Empty means genuinely unattributed stock.
+    source_kind: String,
     /// The stored yield-tier spelling; empty when the row carries none.
     tier: String,
     /// The stored species; empty when the row carries none.
@@ -3845,6 +3849,20 @@ struct PositionKey {
     definition_id: Option<i64>,
     /// The producing tool; empty when unknown.
     tool: String,
+}
+
+/// Recover the originating activity from a movement. Current rows carry it
+/// directly in `source_kind`; older conversion rows retain it through their
+/// tier or species facet, so the normalised position key stays compatible
+/// with every previously applied schema generation.
+fn movement_activity_kind(source_kind: &str, tier: Option<&str>, species: Option<&str>) -> String {
+    if tier.is_some_and(|value| !value.is_empty()) {
+        "harvest".to_string()
+    } else if source_kind == "hunt" || species.is_some_and(|value| !value.is_empty()) {
+        "hunt".to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Movements recorded before definition provenance carry species but no
@@ -3860,6 +3878,7 @@ fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<Positi
         .collect();
     for species in species {
         let unknown_key = PositionKey {
+            source_kind: "hunt".to_string(),
             tier: String::new(),
             species: species.clone(),
             definition_id: None,
@@ -3872,7 +3891,10 @@ fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<Positi
         let definition_keys: Vec<PositionKey> = by_source
             .iter()
             .filter(|(key, quantity)| {
-                key.species == species && key.definition_id.is_some() && **quantity > STOCK_EPSILON
+                key.source_kind == "hunt"
+                    && key.species == species
+                    && key.definition_id.is_some()
+                    && **quantity > STOCK_EPSILON
             })
             .map(|(key, _)| key.clone())
             .collect();
@@ -3927,6 +3949,7 @@ fn item_positions(
             base_tt += tt_value;
             *by_source
                 .entry(PositionKey {
+                    source_kind: "harvest".to_string(),
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
@@ -3937,35 +3960,37 @@ fn item_positions(
     }
 
     {
-        // Hunted loot: species-keyed, no producing tool (a kill's loot is
-        // not one tool's produce). Enhancer-shrapnel rows join the pile with
-        // no species, per the header.
+        // Hunted loot: activity-keyed with optional species and no producing
+        // tool (a kill's loot is not one tool's produce). Enhancer shrapnel
+        // joins the physical pile as explicitly unattributed stock.
         let mut stmt = conn.prepare(
             "SELECT CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
                     ELSE '' END AS species, \
-                    s.definition_id, \
+                    li.is_enhancer_shrapnel, s.definition_id, \
                     SUM(li.quantity), SUM(li.value_ped) \
              FROM kill_loot_items AS li \
              JOIN kills AS k ON k.id = li.kill_id \
              JOIN tracking_sessions AS s ON s.id = k.session_id \
              WHERE li.item_name = ? AND li.deactivated_at IS NULL \
-             GROUP BY species, s.definition_id",
+             GROUP BY species, li.is_enhancer_shrapnel, s.definition_id",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                    row.get::<_, f64>(2)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
                     row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (species, definition_id, quantity, tt_value) in rows {
+        for (species, is_shrapnel, definition_id, quantity, tt_value) in rows {
             base_qty += quantity;
             base_tt += tt_value;
             *by_source
                 .entry(PositionKey {
+                    source_kind: if is_shrapnel { "" } else { "hunt" }.to_string(),
                     tier: String::new(),
                     species,
                     definition_id,
@@ -3979,30 +4004,36 @@ fn item_positions(
     let mut produced_tt = 0.0_f64;
     {
         let mut stmt = conn.prepare(
-            "SELECT yield_tier, mob_species, session_definition_id, tool_name, \
+            "SELECT source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
                     SUM(quantity), SUM(tt_value) \
              FROM stock_movements WHERE item_name = ? \
-             GROUP BY yield_tier, mob_species, session_definition_id, tool_name",
+             GROUP BY source_kind, yield_tier, mob_species, session_definition_id, tool_name",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
                 Ok((
-                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, f64>(4)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                     row.get::<_, f64>(5)?,
+                    row.get::<_, f64>(6)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (tier, species, definition_id, tool, quantity, tt_value) in rows {
+        for (source_kind, tier, species, definition_id, tool, quantity, tt_value) in rows {
             if quantity > 0.0 {
                 produced_qty += quantity;
                 produced_tt += tt_value;
             }
             *by_source
                 .entry(PositionKey {
+                    source_kind: movement_activity_kind(
+                        &source_kind,
+                        tier.as_deref(),
+                        species.as_deref(),
+                    ),
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
@@ -4072,6 +4103,7 @@ fn all_item_positions(
             acc.base_tt += tt_value;
             *acc.by_source
                 .entry(PositionKey {
+                    source_kind: "harvest".to_string(),
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
@@ -4088,6 +4120,7 @@ fn all_item_positions(
         // the heal has or has not done yet.
         let mut fold = |item: String,
                         species: String,
+                        is_shrapnel: bool,
                         definition_id: Option<i64>,
                         quantity: f64,
                         tt_value: f64| {
@@ -4096,6 +4129,7 @@ fn all_item_positions(
             acc.base_tt += tt_value;
             *acc.by_source
                 .entry(PositionKey {
+                    source_kind: if is_shrapnel { "" } else { "hunt" }.to_string(),
                     tier: String::new(),
                     species,
                     definition_id,
@@ -4105,13 +4139,13 @@ fn all_item_positions(
         };
         {
             let mut stmt = conn.prepare(
-                "SELECT r.item_name, r.mob_species, s.definition_id, \
+                "SELECT r.item_name, r.mob_species, r.is_enhancer_shrapnel, s.definition_id, \
                         SUM(r.quantity), SUM(r.value_ped) \
                  FROM session_loot_rollups r \
                  JOIN session_rollup_meta m ON m.session_id = r.session_id \
                       AND m.rollup_version >= ?1 \
                  JOIN tracking_sessions s ON s.id = r.session_id \
-                 GROUP BY 1, 2, 3",
+                 GROUP BY 1, 2, 3, 4",
             )?;
             let mut rows = stmt.query(rusqlite::params![crate::session_rollup::ROLLUP_VERSION])?;
             while let Some(row) = rows.next()? {
@@ -4121,6 +4155,7 @@ fn all_item_positions(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 );
             }
         }
@@ -4130,13 +4165,13 @@ fn all_item_positions(
                 "SELECT li.item_name, \
                         CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
                         ELSE '' END AS species, \
-                        s.definition_id, \
+                        li.is_enhancer_shrapnel, s.definition_id, \
                         SUM(li.quantity), SUM(li.value_ped) \
                  FROM kill_loot_items AS li \
                  JOIN kills AS k ON k.id = li.kill_id \
                  JOIN tracking_sessions AS s ON s.id = k.session_id \
                  WHERE k.session_id = ?1 AND li.deactivated_at IS NULL \
-                 GROUP BY li.item_name, species, s.definition_id",
+                 GROUP BY li.item_name, species, li.is_enhancer_shrapnel, s.definition_id",
             )?;
             for session_id in &unsettled {
                 let mut rows = stmt.query(rusqlite::params![session_id])?;
@@ -4147,6 +4182,7 @@ fn all_item_positions(
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     );
                 }
             }
@@ -4155,20 +4191,21 @@ fn all_item_positions(
 
     {
         let mut stmt = conn.prepare(
-            "SELECT item_name, yield_tier, mob_species, session_definition_id, tool_name, \
+            "SELECT item_name, source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
                     SUM(quantity), SUM(tt_value) \
              FROM stock_movements \
-             GROUP BY item_name, yield_tier, mob_species, session_definition_id, tool_name",
+             GROUP BY item_name, source_kind, yield_tier, mob_species, session_definition_id, tool_name",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let item: String = row.get(0)?;
-            let tier: Option<String> = row.get(1)?;
-            let species: Option<String> = row.get(2)?;
-            let definition_id: Option<i64> = row.get(3)?;
-            let tool: Option<String> = row.get(4)?;
-            let quantity: f64 = row.get(5)?;
-            let tt_value: f64 = row.get(6)?;
+            let source_kind: String = row.get(1)?;
+            let tier: Option<String> = row.get(2)?;
+            let species: Option<String> = row.get(3)?;
+            let definition_id: Option<i64> = row.get(4)?;
+            let tool: Option<String> = row.get(5)?;
+            let quantity: f64 = row.get(6)?;
+            let tt_value: f64 = row.get(7)?;
             let acc = items.entry(item).or_default();
             if quantity > 0.0 {
                 acc.produced_qty += quantity;
@@ -4176,6 +4213,11 @@ fn all_item_positions(
             }
             *acc.by_source
                 .entry(PositionKey {
+                    source_kind: movement_activity_kind(
+                        &source_kind,
+                        tier.as_deref(),
+                        species.as_deref(),
+                    ),
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
@@ -4206,28 +4248,28 @@ fn all_item_positions(
         .collect())
 }
 
-/// Borrow a position list into the allocation module's shape. A key
-/// carrying a tier resolves to harvest provenance and one carrying a
-/// species to hunt provenance; a key with neither is an unattributed pile.
+/// Borrow a position list into the allocation module's shape. Activity
+/// provenance is independent of the optional target facet: an unclassified
+/// hunt remains Hunting, while a key with no source is an unattributed pile.
 fn as_source_positions(
     positions: &[(PositionKey, f64)],
 ) -> Vec<stock_allocation::SourcePosition<'_>> {
     positions
         .iter()
         .map(|(key, quantity)| stock_allocation::SourcePosition {
-            provenance: if !key.tier.is_empty() {
+            provenance: if key.source_kind == "harvest" {
                 Some(stock_allocation::StockProvenance::Harvest(
                     HarvestYieldTier::from_db(&key.tier),
                 ))
-            } else if !key.species.is_empty() {
-                Some(stock_allocation::StockProvenance::Hunt(&key.species))
+            } else if key.source_kind == "hunt" {
+                Some(stock_allocation::StockProvenance::Hunt(
+                    (!key.species.is_empty()).then_some(key.species.as_str()),
+                ))
             } else {
                 None
             },
-            // Keep the session-definition key even when Shrapnel has no
-            // species provenance. The definition does not make enhancer
-            // rebate activity-attributable, but the movement must still
-            // cancel the exact stock bucket it consumed.
+            // Keep the session-definition key on every Hunting position;
+            // optional target evidence never gates the deliberate axis.
             session_definition_id: key.definition_id,
             tool_name: (!key.tool.is_empty()).then_some(key.tool.as_str()),
             quantity: *quantity,
@@ -5184,9 +5226,11 @@ impl AnalyticsService {
                         )?;
                     }
                 } else {
-                    // (tier, species, definition, tool, quantity, tt) of each original
-                    // listing movement, to be written back in reverse.
+                    // (source, tier, species, definition, tool, quantity, tt)
+                    // of each original listing movement, to be written back
+                    // in reverse without requiring an optional target label.
                     type ReturningRow = (
+                        String,
                         Option<String>,
                         Option<String>,
                         Option<i64>,
@@ -5196,7 +5240,8 @@ impl AnalyticsService {
                     );
                     let returning: Vec<ReturningRow> = {
                         let mut stmt = tx.prepare(
-                            "SELECT yield_tier, mob_species, session_definition_id, tool_name, \
+                            "SELECT source_kind, yield_tier, mob_species, \
+                                    session_definition_id, tool_name, \
                                     quantity, tt_value \
                              FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = 'listing'",
@@ -5210,20 +5255,25 @@ impl AnalyticsService {
                                     row.get(3)?,
                                     row.get(4)?,
                                     row.get(5)?,
+                                    row.get(6)?,
                                 ))
                             })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    for (tier, species, definition_id, tool, quantity, tt_value) in returning {
-                        let provenance = match (&tier, &species) {
-                            (Some(tier), _) => Some(stock_allocation::StockProvenance::Harvest(
-                                HarvestYieldTier::from_db(tier),
-                            )),
-                            (None, Some(species)) => {
-                                Some(stock_allocation::StockProvenance::Hunt(species))
+                    for (source_kind, tier, species, definition_id, tool, quantity, tt_value) in
+                        returning
+                    {
+                        let provenance = match source_kind.as_str() {
+                            "harvest" => tier.as_deref().map(|tier| {
+                                stock_allocation::StockProvenance::Harvest(
+                                    HarvestYieldTier::from_db(tier),
+                                )
+                            }),
+                            "hunt" => {
+                                Some(stock_allocation::StockProvenance::Hunt(species.as_deref()))
                             }
-                            (None, None) => None,
+                            _ => None,
                         };
                         insert_movement(
                             &tx,
@@ -6110,7 +6160,8 @@ impl AnalyticsService {
                         let mut stmt = conn.prepare(
                             "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
+                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
+                                    OR mob_species IS NOT NULL) \
                              GROUP BY yield_tier",
                         )?;
                         let rows = stmt
@@ -6171,10 +6222,13 @@ impl AnalyticsService {
                     // would credit the species side more than it supplied.
                     let contributions: Vec<(Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
-                            "SELECT mob_species, SUM(-tt_value) FROM stock_movements \
+                            "SELECT CASE WHEN source_kind = 'hunt' OR mob_species IS NOT NULL \
+                                         THEN COALESCE(mob_species, '') ELSE NULL END, \
+                                    SUM(-tt_value) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
-                             GROUP BY mob_species",
+                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
+                                    OR mob_species IS NOT NULL) \
+                             GROUP BY 1",
                         )?;
                         let rows = stmt
                             .query_map(rusqlite::params![id, realised.movement_kind], |row| {
@@ -6208,7 +6262,8 @@ impl AnalyticsService {
 
     /// Net realised markup per Hunting session definition. Movements without
     /// a definition context remain unclaimed here while retaining their
-    /// species and Overall economic truth.
+    /// Overall economic truth. Optional observed-species evidence never gates
+    /// this deliberate activity axis.
     pub async fn realised_markup_by_definition(
         &self,
     ) -> Result<Vec<RealisedDefinitionMarkup>, AnalyticsError> {
@@ -6230,7 +6285,8 @@ impl AnalyticsService {
                             "SELECT session_definition_id, SUM(-tt_value) \
                              FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (yield_tier IS NOT NULL OR mob_species IS NOT NULL) \
+                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
+                                    OR mob_species IS NOT NULL) \
                              GROUP BY session_definition_id",
                         )?;
                         let rows = stmt
@@ -10084,6 +10140,104 @@ mod tests {
             position(&after, "Animal Muscle Oil").unwrap().quantity,
             30.0
         );
+    }
+
+    /// A missing mob declaration limits only the optional Targets detail.
+    /// Inventory still recognises non-shrapnel loot as Hunting output, and a
+    /// confirmed sale reaches Overall, the unclassified target, and the
+    /// session definition that deliberately owned the play.
+    #[tokio::test]
+    async fn unclassified_hunting_sale_attributes_without_a_mob_name() {
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+        service
+            .db
+            .with_writer(|conn| {
+                conn.execute(
+                    "INSERT INTO kills(id, session_id, mob_name, mob_species, mob_maturity, \
+                         timestamp, cost_ped, enhancer_cost, loot_total_ped) \
+                     VALUES('k-unclassified', 'hunt-a', 'Unknown', '', '', \
+                            1780302100.0, 2.0, 0.0, 1.0)",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped, \
+                         is_enhancer_shrapnel) \
+                     VALUES('k-unclassified', 'MarCorp Kallous-5, E.L.M Edition (L)', \
+                            1, 1.0, 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let listing = service
+            .create_auction_listing(
+                Profession::Inventory,
+                "MarCorp Kallous-5, E.L.M Edition (L)",
+                1.0,
+                12.0,
+                Some(15.0),
+                1.04,
+                Some("2026-08-13"),
+                Some(7),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listing.attributed_qty, 1.0);
+        assert_eq!(listing.unattributed_qty, 0.0);
+        assert_eq!(listing.attributed_tt, 1.0);
+        let movement_listing_id = listing.id.clone();
+        service
+            .db
+            .with_reader(move |conn| {
+                let movement: (String, Option<String>, Option<i64>) = conn.query_row(
+                    "SELECT source_kind, mob_species, session_definition_id \
+                     FROM stock_movements WHERE ref_id = ? AND movement_kind = 'listing'",
+                    rusqlite::params![movement_listing_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(movement, ("hunt".to_string(), None, Some(7)));
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        service
+            .expire_auction_listing(&listing.id, Some("2026-08-13"))
+            .await
+            .unwrap()
+            .expect("expired");
+        let listing = service
+            .create_auction_listing(
+                Profession::Inventory,
+                "MarCorp Kallous-5, E.L.M Edition (L)",
+                1.0,
+                12.0,
+                Some(15.0),
+                1.04,
+                Some("2026-08-13"),
+                Some(7),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listing.attributed_tt, 1.0, "expiry preserved provenance");
+
+        service
+            .confirm_auction_listing(&listing.id, 15.0, 0.15, Some("2026-08-13"))
+            .await
+            .unwrap()
+            .expect("confirmed");
+
+        let species = service.realised_markup_by_species().await.unwrap();
+        assert_eq!(species.len(), 1);
+        assert_eq!(species[0].mob_species, "");
+        assert!((species[0].net_markup - 12.81).abs() < 1e-9);
+        let definitions = service.realised_markup_by_definition().await.unwrap();
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].definition_id, 7);
+        assert!((definitions[0].net_markup - 12.81).abs() < 1e-9);
     }
 
     /// A hunting conversion carries species provenance into the produced
