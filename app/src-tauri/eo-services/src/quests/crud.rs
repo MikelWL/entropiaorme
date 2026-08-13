@@ -125,11 +125,10 @@ impl QuestService {
             data.get("reward_ped"),
             data.get("reward_is_skill"),
         )?;
-        let reward_item_names = if aris_daily && data.get("reward_item_names").is_none() {
-            vec!["Hyperion Daily Voucher".to_string()]
-        } else {
-            normalize_reward_item_names(data.get("reward_item_names"))?
-        };
+        let mut reward_item_names = normalize_reward_item_names(data.get("reward_item_names"))?;
+        if aris_daily && reward_item_names.is_empty() {
+            reward_item_names.push("Hyperion Daily Voucher".to_string());
+        }
         validate_reward_policy(&reward_policy, &reward_item_names, data.get("reward_ped"))?;
         if completion_trigger == "signal_item" && signal_loot_item.is_none() {
             return Err(QuestError::Invalid(

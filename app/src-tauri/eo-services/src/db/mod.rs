@@ -1301,9 +1301,11 @@ mod tests {
         // tables with one index each + the private-sale and stock-removal
         // tables with their three indexes + the central-inventory
         // migration's 2 subject-and-state indexes
-        // = 54 tables, 70 indexes, 8 triggers.
-        assert_eq!(count("table").await, 54);
-        assert_eq!(count("index").await, 70);
+        // + the typed-reward, durable-run, unit-price, and reward-review
+        // migrations' 6 tables and 5 indexes
+        // = 60 tables, 75 indexes, 8 triggers.
+        assert_eq!(count("table").await, 60);
+        assert_eq!(count("index").await, 75);
         assert_eq!(count("trigger").await, 8);
 
         let version = db
@@ -1710,10 +1712,7 @@ mod tests {
         // 8 triggers (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(
-            master.len(),
-            (41 + 3 + 1 + 2 + 4 + 4) + (44 + 7 + 1 + 2 + 1 + 2 + 4 + 1 + 6 + 2) + 8
-        );
+        assert_eq!(master.len(), 144);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

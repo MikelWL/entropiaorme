@@ -284,7 +284,9 @@ impl QuestService {
                     quest
                         .get("signal_loot_item")
                         .and_then(Value::as_str)
-                        .is_some_and(|signal| signal.trim().eq_ignore_ascii_case(&line.item_name))
+                        .is_some_and(|signal| {
+                            signal.trim().eq_ignore_ascii_case(line.item_name.trim())
+                        })
                 })
                 .collect();
             let offset = used.entry(key).or_default();

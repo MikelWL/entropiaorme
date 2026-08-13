@@ -222,11 +222,12 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "chain_position": null, "chain_total": null, "started_at": null,
             "is_active": 1, "created_at": 1000.0, "category": null,
             "reward_description": null, "updated_at": 1000.0, "signal_loot_item": null,
+            "completion_trigger": "mission_log", "reward_policy": "none",
             "family_id": null, "cooldown_anchor": "completion", "last_started_at": null,
             "family_name": null, "family_cooldown_hours": null,
             "family_cooldown_anchor": null, "last_completed_at": null,
             "cooldown_expires_at": null, "family_cooldown_expires_at": null,
-            "mobs": [], "playlist_ids": [],
+            "mobs": [], "playlist_ids": [], "reward_item_names": [],
         })
     );
 
@@ -1056,7 +1057,9 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     )
     .await
     .unwrap();
-    svc.start_quest(qa).await.unwrap().unwrap();
+    assert!(json_truthy(
+        svc.get_quest(qa).await.unwrap().unwrap().get("started_at")
+    ));
     let iron_loot = vec![
         json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
         json!({"item_name": "Universal Ammo", "quantity": 1, "value": 2.51}),
@@ -1069,6 +1072,22 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     );
     complete_tick("Iron Challenge", iron_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('sess-def', 1772366940.0, 1)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+        session_id: "sess-abc".into(),
+    }));
+    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+        session_id: "sess-def".into(),
+    }));
     svc.start_quest(qa).await.unwrap().unwrap();
     let bare_loot = vec![json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1})];
     assert_eq!(
@@ -1169,7 +1188,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 1772366880.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
                 "Iron Challenge",
@@ -1177,7 +1196,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 1772366940.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
                 "Zero Bounty: 3 completion reward line(s) separated",
@@ -1185,7 +1204,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 1772367000.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
                 "G\u{e9}ologist Survey",
@@ -1675,6 +1694,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 2.5, "reward_is_skill": false,
                 "expected_reward_markup_percent": 150.0,
                 "total_expected_reward_ped": 7.5,
+                "recorded_completions": 2, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 2, "total_duration": 3630.5,
                 "weapon_cost": 2.7, "heal_cost": 1.5,
                 "enhancer_cost": 0.6, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1685,6 +1708,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 5.0, "reward_is_skill": true,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 5.0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 3600.0,
                 "weapon_cost": 2.1, "heal_cost": 1.5,
                 "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1695,6 +1722,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 1.25, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 1.25,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 3600.0,
                 "weapon_cost": 2.1, "heal_cost": 1.5,
                 "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1705,6 +1736,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 0, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 0, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 100.0,
                 "weapon_cost": 0, "heal_cost": 0.5,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
@@ -1715,6 +1750,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 0, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 50.0,
                 "weapon_cost": 0, "heal_cost": 0.0,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
@@ -1727,6 +1766,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 // creation, exactly as the original stores it.
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 60.0,
                 "weapon_cost": 0, "heal_cost": 0.0,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,

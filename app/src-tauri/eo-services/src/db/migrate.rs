@@ -241,7 +241,7 @@ pub(super) static MIGRATIONS: &[Migration] = &[
     Migration {
         version: 41,
         description: "ARIS unresolved rewards",
-        sql: include_str!("../../migrations/0041_aris_unresolved_rewards.sql"),
+        sql: include_str!("../../migrations/0041_ARIS_unresolved_rewards.sql"),
     },
 ];
 
@@ -496,6 +496,13 @@ mod tests {
             .expect("ledger row");
             tx.commit().expect("migration commit");
         }
+
+        connection
+            .execute(
+                "INSERT INTO quests(id, name) VALUES (1, 'Reward fixture')",
+                [],
+            )
+            .expect("quest fixture");
 
         for (session, source, ped) in [
             ("included", "tracked_loot", None),
