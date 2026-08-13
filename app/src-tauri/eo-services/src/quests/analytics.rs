@@ -58,6 +58,8 @@ impl QuestService {
                 _ => json!(0),
             };
             let linked_sessions = stats["linked_sessions"].as_i64().expect("session count");
+            let recorded = self.compute_recorded_reward_stats(quest_id).await?;
+            let recorded_items = self.compute_recorded_reward_items(quest_id).await?;
             let mut entry = Map::new();
             entry.insert("quest_id".into(), json!(quest_id));
             entry.insert("quest_name".into(), json!(quest_name));
@@ -70,12 +72,88 @@ impl QuestService {
                 "total_expected_reward_ped".into(),
                 expected_reward_total(&reward_value, reward_is_skill, markup, linked_sessions),
             );
+            for (key, value) in recorded.as_object().expect("recorded reward stats") {
+                entry.insert(key.clone(), value.clone());
+            }
+            entry.insert("recorded_reward_items".into(), Value::Array(recorded_items));
             for (key, value) in stats.as_object().expect("stats object") {
                 entry.insert(key.clone(), value.clone());
             }
             results.push(Value::Object(entry));
         }
         Ok(results)
+    }
+
+    async fn compute_recorded_reward_stats(&self, quest_id: i64) -> Result<Value, QuestError> {
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                Ok(conn.query_row(
+                    "WITH effective AS ( \
+                         SELECT c.id, c.reward_kind, c.reward_ped, \
+                                COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                                          WHERE r.completion_id = c.id \
+                                          ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                                         c.reward_outcome) AS outcome \
+                         FROM session_quest_completions c WHERE c.quest_id = ?1 \
+                     ), item_values AS ( \
+                         SELECT e.id, COALESCE(SUM(ri.value_ped), 0) AS tt \
+                         FROM effective e \
+                         LEFT JOIN session_quest_completion_reward_items ri ON ri.completion_id = e.id \
+                         GROUP BY e.id \
+                     ) \
+                     SELECT COUNT(*), \
+                            COALESCE(SUM(e.outcome = 'confirmed'), 0), \
+                            COALESCE(SUM(e.outcome = 'unresolved'), 0), \
+                            COALESCE(SUM(CASE WHEN e.outcome = 'confirmed' AND e.reward_kind IN ('fixed_liquid', 'mixed') \
+                                              THEN e.reward_ped ELSE 0 END), 0) + \
+                            COALESCE(SUM(CASE WHEN e.outcome = 'confirmed' THEN iv.tt ELSE 0 END), 0), \
+                            COALESCE(SUM(CASE WHEN e.outcome = 'confirmed' AND e.reward_kind = 'skill' \
+                                              THEN e.reward_ped ELSE 0 END), 0), \
+                            COALESCE(SUM(CASE WHEN e.outcome = 'confirmed' THEN iv.tt ELSE 0 END), 0) \
+                     FROM effective e LEFT JOIN item_values iv ON iv.id = e.id",
+                    rusqlite::params![quest_id],
+                    |row| {
+                        Ok(json!({
+                            "recorded_completions": row.get::<_, i64>(0)?,
+                            "confirmed_completions": row.get::<_, i64>(1)?,
+                            "unresolved_completions": row.get::<_, i64>(2)?,
+                            "total_recorded_reward_tt": row.get::<_, f64>(3)?,
+                            "total_recorded_reward_pes": row.get::<_, f64>(4)?,
+                            "total_recorded_item_tt": row.get::<_, f64>(5)?,
+                        }))
+                    },
+                )?)
+            })
+            .await?)
+    }
+
+    async fn compute_recorded_reward_items(&self, quest_id: i64) -> Result<Vec<Value>, QuestError> {
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT ri.item_name, SUM(ri.quantity), COALESCE(SUM(ri.value_ped), 0) \
+                     FROM session_quest_completion_reward_items ri \
+                     JOIN session_quest_completions c ON c.id = ri.completion_id \
+                     WHERE c.quest_id = ? AND COALESCE(( \
+                         SELECT r.outcome FROM quest_reward_reviews r \
+                         WHERE r.completion_id = c.id \
+                         ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), c.reward_outcome) = 'confirmed' \
+                     GROUP BY ri.item_name ORDER BY ri.item_name",
+                )?;
+                let mut rows = stmt.query(rusqlite::params![quest_id])?;
+                let mut out = Vec::new();
+                while let Some(row) = rows.next()? {
+                    out.push(json!({
+                        "item_name": row.get::<_, String>(0)?,
+                        "quantity": row.get::<_, i64>(1)?,
+                        "value_ped": row.get::<_, f64>(2)?,
+                    }));
+                }
+                Ok(out)
+            })
+            .await?)
     }
 
     /// The sessions a quest's metrics aggregate over: every session

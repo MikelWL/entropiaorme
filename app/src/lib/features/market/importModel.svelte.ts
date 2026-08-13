@@ -8,8 +8,8 @@
  * parser. The preview here is purely the user's review surface.
  */
 
-import type { MarketCommitResult, MarketPastePreview } from '$lib/api';
-import { commitMarketPaste, previewMarketPaste } from '$lib/api';
+import type { MarketCommitResult, MarketPastePreview, MarketUnitPriceResult } from '$lib/api';
+import { commitMarketPaste, previewMarketPaste, setMarketUnitPrice } from '$lib/api';
 import { describeError } from '$lib/view/errorState';
 
 export function createImportModel() {
@@ -19,6 +19,11 @@ export function createImportModel() {
 	let committing = $state(false);
 	let error = $state<string | null>(null);
 	let committed = $state<MarketCommitResult | null>(null);
+	let unitItemName = $state('Hyperion Daily Voucher');
+	let unitPriceInput = $state('');
+	let unitPriceSaving = $state(false);
+	let unitPriceSaved = $state<MarketUnitPriceResult | null>(null);
+	let unitPriceError = $state<string | null>(null);
 
 	// Monotonic token so a slow preview for superseded text cannot
 	// overwrite the newer preview (or its error) after an edit.
@@ -27,6 +32,14 @@ export function createImportModel() {
 	const canPreview = $derived(text.trim().length > 0 && !previewing && !committing);
 	const canCommit = $derived(
 		preview !== null && preview.rows.length > 0 && !previewing && !committing,
+	);
+	const parsedUnitPrice = $derived(Number(unitPriceInput));
+	const canSaveUnitPrice = $derived(
+		unitItemName.trim().length > 0 &&
+			unitPriceInput.trim().length > 0 &&
+			Number.isFinite(parsedUnitPrice) &&
+			parsedUnitPrice >= 0 &&
+			!unitPriceSaving,
 	);
 
 	function setText(value: string) {
@@ -86,6 +99,22 @@ export function createImportModel() {
 		}
 	}
 
+	async function saveUnitPrice(): Promise<boolean> {
+		if (!canSaveUnitPrice) return false;
+		unitPriceSaving = true;
+		unitPriceError = null;
+		unitPriceSaved = null;
+		try {
+			unitPriceSaved = await setMarketUnitPrice(unitItemName.trim(), parsedUnitPrice);
+			return true;
+		} catch (e) {
+			unitPriceError = describeError(e, 'Failed to store the unit price');
+			return false;
+		} finally {
+			unitPriceSaving = false;
+		}
+	}
+
 	return {
 		get text() {
 			return text;
@@ -112,6 +141,35 @@ export function createImportModel() {
 		get canCommit() {
 			return canCommit;
 		},
+		get unitItemName() {
+			return unitItemName;
+		},
+		setUnitItemName(value: string) {
+			unitItemName = value;
+			unitPriceSaved = null;
+			unitPriceError = null;
+		},
+		get unitPriceInput() {
+			return unitPriceInput;
+		},
+		setUnitPriceInput(value: string) {
+			unitPriceInput = value;
+			unitPriceSaved = null;
+			unitPriceError = null;
+		},
+		get unitPriceSaving() {
+			return unitPriceSaving;
+		},
+		get unitPriceSaved() {
+			return unitPriceSaved;
+		},
+		get unitPriceError() {
+			return unitPriceError;
+		},
+		get canSaveUnitPrice() {
+			return canSaveUnitPrice;
+		},
+		saveUnitPrice,
 		runPreview,
 		commit,
 	};

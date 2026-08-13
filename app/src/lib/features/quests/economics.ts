@@ -5,7 +5,12 @@
  * never blend) stay pinned by the colocated tests.
  */
 
-import type { AnalyticsOverview } from '$lib/api/commands.gen';
+import type {
+	AnalyticsOverview,
+	MarketHarvestData,
+	MarketHarvestItem,
+} from '$lib/api/commands.gen';
+import { projectRewardItems } from '$lib/features/analytics/huntingModel.svelte';
 import type { PlaylistAnalyticsRow, QuestAnalyticsRow } from '$lib/types';
 
 export type RewardMode = 'tt' | 'markup';
@@ -54,6 +59,12 @@ export interface QuestAnalyticsComputed {
 	rewardIsSkill: boolean;
 	expectedRewardMarkupPercent: number | null;
 	linkedSessions: number;
+	recordedCompletions: number;
+	confirmedCompletions: number;
+	unresolvedCompletions: number;
+	totalRecordedRewardTt: number;
+	totalRecordedRewardMu: number;
+	totalRecordedRewardPes: number;
 	totalCycled: number;
 	avgRawReturns: number;
 	avgCycled: number;
@@ -75,21 +86,29 @@ export function computeQuestAnalytics(
 	rows: QuestAnalyticsRow[],
 	rates: GlobalRates,
 	rewardMode: RewardMode,
+	market: MarketHarvestData | null = null,
 ): QuestAnalyticsComputed[] {
 	return rows.map((row) => {
 		const totalCycled =
 			row.totalWeaponCost + row.totalHealCost + row.totalEnhancerCost + row.totalArmourCost;
-		const totalReward = row.rewardPed * row.linkedSessions;
 		const sessions = row.linkedSessions || 1;
+		const recordedRuns = row.recordedCompletions || 1;
 		const avgCycled = totalCycled / sessions;
 		// Liquid reward: face value or with markup, depending on toggle.
 		// Skill quests contribute 0 to the liquid side regardless.
-		const avgRewardLiquidFace = row.rewardIsSkill ? 0 : totalReward / sessions;
-		const avgRewardLiquidMarkup = row.rewardIsSkill ? 0 : row.totalExpectedRewardPed / sessions;
+		const avgRewardLiquidFace = row.totalRecordedRewardTt / recordedRuns;
+		const marketByItem = new Map<string, MarketHarvestItem>(
+			market?.items.map((item) => [item.itemName, item]) ?? [],
+		);
+		const projectedItems =
+			projectRewardItems(row.recordedRewardItems, market, marketByItem, 'liquidMiddling') ?? 0;
+		const totalRecordedRewardMu =
+			row.totalRecordedRewardTt - row.totalRecordedItemTt + projectedItems;
+		const avgRewardLiquidMarkup = totalRecordedRewardMu / recordedRuns;
 		const displayLiquidReward =
 			rewardMode === 'markup' ? avgRewardLiquidMarkup : avgRewardLiquidFace;
 		// PES reward stays at face value across both modes.
-		const avgRewardPes = row.rewardIsSkill ? row.rewardPed : 0;
+		const avgRewardPes = row.totalRecordedRewardPes / recordedRuns;
 		// Liquid cycle projection (PES sources excluded: denomination-pure).
 		const avgRawReturns = avgCycled * rates.liquidReturnRate;
 		const avgNet = avgRawReturns + displayLiquidReward - avgCycled;
@@ -105,6 +124,12 @@ export function computeQuestAnalytics(
 			rewardIsSkill: row.rewardIsSkill,
 			expectedRewardMarkupPercent: row.expectedRewardMarkupPercent,
 			linkedSessions: row.linkedSessions,
+			recordedCompletions: row.recordedCompletions,
+			confirmedCompletions: row.confirmedCompletions,
+			unresolvedCompletions: row.unresolvedCompletions,
+			totalRecordedRewardTt: row.totalRecordedRewardTt,
+			totalRecordedRewardMu,
+			totalRecordedRewardPes: row.totalRecordedRewardPes,
 			totalCycled,
 			displayLiquidReward,
 			avgRewardPes,

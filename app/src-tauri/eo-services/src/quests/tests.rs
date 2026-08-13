@@ -18,7 +18,7 @@ use crate::db::Db;
 
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
 use super::payload::json_truthy;
-use super::QuestService;
+use super::{QuestError, QuestService};
 use crate::ped::Ped;
 
 type ServiceRig = (
@@ -222,11 +222,12 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "chain_position": null, "chain_total": null, "started_at": null,
             "is_active": 1, "created_at": 1000.0, "category": null,
             "reward_description": null, "updated_at": 1000.0, "signal_loot_item": null,
+            "completion_trigger": "mission_log", "reward_policy": "none",
             "family_id": null, "cooldown_anchor": "completion", "last_started_at": null,
             "family_name": null, "family_cooldown_hours": null,
             "family_cooldown_anchor": null, "last_completed_at": null,
             "cooldown_expires_at": null, "family_cooldown_expires_at": null,
-            "mobs": [], "playlist_ids": [],
+            "mobs": [], "playlist_ids": [], "reward_item_names": [],
         })
     );
 
@@ -306,9 +307,183 @@ async fn updates_merge_and_renormalise_the_markup() {
     assert_eq!(updated["reward_is_skill"], json!(1));
     assert_eq!(updated["expected_reward_markup_percent"], Value::Null);
 
+    // Clearing the fixed amount without naming a replacement policy must
+    // re-infer the policy from the merged reward picture.
+    let updated = svc
+        .update_quest(q1, &json!({"reward_ped": null, "reward_is_skill": false}))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated["reward_policy"], json!("none"));
+
     assert_eq!(
         svc.update_quest(9999, &json!({"name": "x"})).await.unwrap(),
         None
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_completion_removes_its_run_intervals_without_foreign_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let quest = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Interval-backed daily",
+            "cooldown_hours": 24,
+        }))
+        .await
+        .unwrap(),
+    );
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('s-run', 1772366300.0, 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at, ended_at) \
+             VALUES(901, 's-run', 'quest', 'Interval-backed daily', ?, \
+                    1772366300.0, 1772366400.0)",
+            params![quest],
+        )?;
+        conn.execute(
+            "INSERT INTO session_quest_completions(id, session_id, quest_id, completed_at, reward_outcome) \
+             VALUES(902, 's-run', ?, 1772366400.0, 'none')",
+            params![quest],
+        )?;
+        conn.execute(
+            "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at, completion_id) \
+             VALUES(903, ?, 'completed', 1772366300.0, 1772366400.0, 902)",
+            params![quest],
+        )?;
+        conn.execute(
+            "UPDATE session_quest_completions SET quest_run_id = 903 WHERE id = 902",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO quest_run_intervals(run_id, interval_id) VALUES(903, 901)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.cancel_quest(quest, false).await.unwrap();
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_run_intervals").await,
+        0
+    );
+    assert_eq!(count_rows(&db, "SELECT COUNT(*) FROM quest_runs").await, 0);
+}
+
+#[tokio::test]
+async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let quest = quest_id(
+        &svc.create_quest(&json!({"name": "Ambiguous daily"}))
+            .await
+            .unwrap(),
+    );
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, ended_at, is_active) \
+             VALUES('s-review', 900.0, 1100.0, 0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_contexts(id, session_id, created_at) \
+             VALUES(801, 's-review', 900.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kills(id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
+             VALUES('k-review', 's-review', 'Target', 1000.0, 801, 2.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped) \
+             VALUES('k-review', 'Universal Ammo', 5, 2.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_quest_completions \
+             (id, session_id, quest_id, completed_at, activity_context_id, reward_outcome, \
+              reward_policy_snapshot, reward_unresolved_reason, reward_evidence_json) \
+             VALUES(802, 's-review', ?, 1000.0, 801, 'unresolved', 'completion_clump', \
+                    'ambiguous clump', ?)",
+            params![
+                quest,
+                json!({
+                    "loot": [{"item_name": "Universal Ammo", "quantity": 5, "value": 2.0}],
+                    "isolated": true,
+                })
+                .to_string()
+            ],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let error = svc
+        .resolve_reward_review(802, &[], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "select at least one reward item")
+    );
+
+    let error = svc
+        .resolve_reward_review(802, &[1], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "reward selection is out of range")
+    );
+
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET value_ped = 3.0 WHERE kill_id = 'k-review'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let error = svc
+        .resolve_reward_review(802, &[0], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message.contains("expected one exact acquisition, found 0"))
+    );
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET value_ped = 2.0 WHERE kill_id = 'k-review'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    svc.resolve_reward_review(802, &[0], false).await.unwrap();
+    assert!(svc.unresolved_reward_reviews().await.unwrap().is_empty());
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reviews").await,
+        1
+    );
+
+    let error = svc
+        .resolve_reward_review(802, &[0], false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, QuestError::Invalid(message) if message == "completion has already been reviewed")
     );
 }
 
@@ -1028,6 +1203,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 mission_name: mission.to_string(),
                 loot_items: loot,
                 skill_gains: skills,
+                isolated: true,
             }])
             .await
             .unwrap();
@@ -1040,11 +1216,24 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Daily Hunt: Atrox", &[], &atrox_skills)
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": null, "suppress_skill_index": 0}))
+        Some(json!({"suppress_loot_indices": [], "suppress_skill_indices": [0]}))
     );
     complete_tick("Daily Hunt: Atrox", vec![], atrox_skills).await;
     clock.advance(60.0).unwrap();
-    svc.start_quest(qa).await.unwrap().unwrap();
+    svc.update_quest(
+        qa,
+        &json!({
+            "reward_policy": "named_items",
+            "reward_item_names": ["Universal Ammo"],
+            "reward_ped": null,
+            "reward_is_skill": false,
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(json_truthy(
+        svc.get_quest(qa).await.unwrap().unwrap().get("started_at")
+    ));
     let iron_loot = vec![
         json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
         json!({"item_name": "Universal Ammo", "quantity": 1, "value": 2.51}),
@@ -1053,10 +1242,26 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Iron Challenge", &iron_loot, &[])
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
+        Some(json!({"suppress_loot_indices": [1], "suppress_skill_indices": []}))
     );
     complete_tick("Iron Challenge", iron_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('sess-def', 1772366940.0, 1)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+        session_id: "sess-abc".into(),
+    }));
+    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+        session_id: "sess-def".into(),
+    }));
     svc.start_quest(qa).await.unwrap().unwrap();
     let bare_loot = vec![json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1})];
     assert_eq!(
@@ -1067,6 +1272,9 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     );
     complete_tick("Iron Challenge", bare_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    svc.update_quest(qe, &json!({"reward_policy": "completion_clump"}))
+        .await
+        .unwrap();
     svc.start_quest(qe).await.unwrap().unwrap();
     let bounty_loot = vec![
         json!({"item_name": "A", "value": 0.5}),
@@ -1077,7 +1285,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Zero Bounty", &bounty_loot, &[])
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
+        Some(json!({"suppress_loot_indices": [0, 1, 2], "suppress_skill_indices": []}))
     );
     complete_tick("Zero Bounty", bounty_loot, vec![]).await;
     clock.advance(60.0).unwrap();
@@ -1141,7 +1349,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 "sess-abc",
                 null,
                 "quest_completed_pes",
-                "Daily Hunt: Atrox: skill reward suppressed",
+                "Daily Hunt: Atrox: skill reward separated",
                 5.0,
                 1772366820.0
             ]),
@@ -1149,28 +1357,28 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 "sess-abc",
                 null,
                 "quest_completed",
-                "Iron Challenge: Universal Ammo (2.50 PED) suppressed",
-                2.5,
+                "Iron Challenge: 1 reward item line(s) separated",
+                0.0,
                 1772366880.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
                 "Iron Challenge",
-                2.5,
+                0.0,
                 1772366940.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
-                "Zero Bounty: B suppressed",
+                "Zero Bounty: 3 completion reward line(s) separated",
                 0.0,
                 1772367000.0
             ]),
             json!([
-                "sess-abc",
+                "sess-def",
                 null,
                 "quest_completed",
                 "G\u{e9}ologist Survey",
@@ -1192,7 +1400,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         })
         .await
         .unwrap();
-    assert_eq!(final_ledger, ["fixed-0003"]);
+    assert!(final_ledger.is_empty());
     let reward_items: Vec<(String, i64, f64)> = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
@@ -1292,7 +1500,7 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
 }
 
 #[tokio::test]
-async fn filter_ties_keep_the_first_item() {
+async fn fixed_and_zero_rewards_never_identify_loot_by_tt_proximity() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
     let tie = quest_id(
@@ -1308,8 +1516,7 @@ async fn filter_ties_keep_the_first_item() {
     svc.start_quest(tie).await.unwrap().unwrap();
     svc.start_quest(zed).await.unwrap().unwrap();
 
-    // Equal absolute differences (2.49 and 2.51 against 2.5) keep
-    // the first item, as the original's strictly-less tracking does.
+    // A fixed value is accounting, never item identity.
     assert_eq!(
         svc.quest_reward_filter(
             "Tie Quest",
@@ -1321,9 +1528,9 @@ async fn filter_ties_keep_the_first_item() {
         )
         .await
         .unwrap(),
-        Some(json!({"suppress_loot_index": 0, "suppress_skill_index": null}))
+        None
     );
-    // Equal minimum values likewise keep the first item.
+    // A no-reward policy likewise leaves every loot line ordinary.
     assert_eq!(
         svc.quest_reward_filter(
             "Zed Bounty",
@@ -1335,7 +1542,7 @@ async fn filter_ties_keep_the_first_item() {
         )
         .await
         .unwrap(),
-        Some(json!({"suppress_loot_index": 0, "suppress_skill_index": null}))
+        None
     );
 }
 
@@ -1661,6 +1868,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 2.5, "reward_is_skill": false,
                 "expected_reward_markup_percent": 150.0,
                 "total_expected_reward_ped": 7.5,
+                "recorded_completions": 2, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 2, "total_duration": 3630.5,
                 "weapon_cost": 2.7, "heal_cost": 1.5,
                 "enhancer_cost": 0.6, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1671,6 +1882,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 5.0, "reward_is_skill": true,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 5.0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 3600.0,
                 "weapon_cost": 2.1, "heal_cost": 1.5,
                 "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1681,6 +1896,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 1.25, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 1.25,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 3600.0,
                 "weapon_cost": 2.1, "heal_cost": 1.5,
                 "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
@@ -1691,6 +1910,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 0, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 0, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 100.0,
                 "weapon_cost": 0, "heal_cost": 0.5,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
@@ -1701,6 +1924,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 "category": null, "reward_ped": 0, "reward_is_skill": false,
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 50.0,
                 "weapon_cost": 0, "heal_cost": 0.0,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
@@ -1713,6 +1940,10 @@ async fn analytics_match_the_original_over_a_seeded_economy() {
                 // creation, exactly as the original stores it.
                 "expected_reward_markup_percent": null,
                 "total_expected_reward_ped": 0,
+                "recorded_completions": 1, "confirmed_completions": 0,
+                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
+                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
+                "recorded_reward_items": [],
                 "linked_sessions": 1, "total_duration": 60.0,
                 "weapon_cost": 0, "heal_cost": 0.0,
                 "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
@@ -1875,6 +2106,8 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         &svc.create_quest(&json!({
             "name": "Hyperion Boss 1",
             "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
             "cooldown_hours": 20,
         }))
         .await
@@ -1899,15 +2132,24 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     let source = db
         .with_reader(move |conn| {
             Ok(conn.query_row(
-                "SELECT reward_source, reward_ped FROM session_quest_completions \
+                "SELECT reward_source, reward_kind, reward_ped FROM session_quest_completions \
                  WHERE quest_id = ?",
                 params![boss],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
             )?)
         })
         .await
         .unwrap();
-    assert_eq!(source, ("tracked_loot".to_string(), None));
+    assert_eq!(
+        source,
+        ("tracked_loot".to_string(), "item".to_string(), None)
+    );
     let reward_item = db
         .with_reader(move |conn| {
             Ok(conn.query_row(
@@ -1938,6 +2180,43 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     assert_eq!(
         remaining_reward_items, 0,
         "cancel removes linked reward evidence"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_marker_lines_share_one_assignment_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let boss = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(boss).await.unwrap();
+
+    let tick = vec![
+        json!({"item_name": "Hyperion Daily Voucher", "quantity": 1, "value": 0.0}),
+        json!({"item_name": "Hyperion Daily Voucher", "quantity": 1, "value": 0.0}),
+    ];
+    assert_eq!(
+        svc.signal_reward_filter(&tick).await.unwrap(),
+        Some(json!({"suppress_loot_indices": [0]}))
+    );
+    svc.signal_loot_check(&[
+        marker("Hyperion Daily Voucher", 1),
+        marker("Hyperion Daily Voucher", 1),
+    ])
+    .await
+    .unwrap();
+
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM session_quest_completions").await,
+        1
     );
 }
 
@@ -2146,6 +2425,7 @@ async fn an_umbrella_line_never_completes_a_variant_quest() {
         mission_name: "ARIS - Daily Hunting 1".to_string(),
         loot_items: vec![],
         skill_gains: vec![],
+        isolated: true,
     }])
     .await
     .unwrap();
@@ -2157,66 +2437,49 @@ async fn an_umbrella_line_never_completes_a_variant_quest() {
     );
 }
 
-/// The signal/reward exclusion: a signal quest cannot carry a fixed
-/// positive reward (its reward is the tracked loot itself), on create
-/// and on the merged update picture alike. A blank signal normalises
-/// to none and lifts the exclusion.
+/// Completion evidence and reward policy are independent: a signal item may
+/// prove completion while the quest pays fixed PED or names that same item as
+/// its additional reward.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signal_quest_refuses_a_fixed_reward() {
+async fn a_signal_quest_accepts_an_independent_reward_policy() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
-    let refused = svc
+    let fixed = svc
         .create_quest(&json!({
             "name": "Boss",
             "signal_loot_item": "Hyperion Daily Voucher",
             "reward_ped": 2.0,
         }))
         .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // Blank signal is no signal: the reward is fine.
-    let plain = quest_id(
-        &svc.create_quest(&json!({
-            "name": "Daily",
-            "signal_loot_item": "  ",
-            "reward_ped": 2.0,
-        }))
-        .await
-        .unwrap(),
-    );
-
-    // Adding a signal to a rewarded quest is refused over the merge...
-    let refused = svc
-        .update_quest(plain, &json!({"signal_loot_item": "Voucher"}))
-        .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // ...and adding a reward to a signal quest likewise.
-    let boss = quest_id(
-        &svc.create_quest(&json!({
-            "name": "Boss",
-            "signal_loot_item": "Voucher",
-        }))
-        .await
-        .unwrap(),
-    );
-    let refused = svc
-        .update_quest(boss, &json!({"reward_ped": 2.0}))
-        .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // Clearing the signal lifts the exclusion in the same patch.
-    let updated = svc
-        .update_quest(boss, &json!({"signal_loot_item": null, "reward_ped": 2.0}))
-        .await
-        .unwrap()
         .unwrap();
-    assert_eq!(updated["reward_ped"], json!(2.0));
-    assert!(updated["signal_loot_item"].is_null());
+    assert_eq!(fixed["completion_trigger"], json!("signal_item"));
+    assert_eq!(fixed["reward_policy"], json!("fixed_ped"));
+
+    let named = svc
+        .create_quest(&json!({
+            "name": "Named Boss",
+            "completion_trigger": "signal_item",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
+        }))
+        .await
+        .unwrap();
+    assert_eq!(named["reward_policy"], json!("named_items"));
+    assert_eq!(
+        named["reward_item_names"],
+        json!(["Hyperion Daily Voucher"])
+    );
+
+    let invalid = svc
+        .create_quest(&json!({
+            "name": "Missing marker",
+            "completion_trigger": "signal_item",
+        }))
+        .await
+        .unwrap_err();
+    assert!(invalid.to_string().contains("requires a signal loot item"));
 }
 
 // ── Quest families: shared, anchor-aware cooldowns ──────────────────

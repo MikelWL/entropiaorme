@@ -40,6 +40,11 @@ pub(super) enum QuestMsg {
         mission_name: String,
         loot_items: Vec<Value>,
         skill_gains: Vec<Value>,
+        isolated_completion_tick: bool,
+        reply: oneshot::Sender<Option<Value>>,
+    },
+    SignalRewardFilter {
+        loot_items: Vec<Value>,
         reply: oneshot::Sender<Option<Value>>,
     },
 }
@@ -101,12 +106,25 @@ pub(super) async fn run(
                 mission_name,
                 loot_items,
                 skill_gains,
+                isolated_completion_tick,
                 reply,
             } => {
                 // A filter error surfaces as no suppression, exactly
                 // as the original contains a filter exception.
                 let result = service
-                    .quest_reward_filter(&mission_name, &loot_items, &skill_gains)
+                    .quest_reward_filter_with_context(
+                        &mission_name,
+                        &loot_items,
+                        &skill_gains,
+                        isolated_completion_tick,
+                    )
+                    .await
+                    .unwrap_or(None);
+                let _ = reply.send(result);
+            }
+            QuestMsg::SignalRewardFilter { loot_items, reply } => {
+                let result = service
+                    .signal_reward_filter(&loot_items)
                     .await
                     .unwrap_or(None);
                 let _ = reply.send(result);

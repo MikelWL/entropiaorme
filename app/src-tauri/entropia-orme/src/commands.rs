@@ -46,11 +46,11 @@ use eo_api::maps::{
 use eo_api::market::{
     MarketAuctionPacketThreshold, MarketBreakEven, MarketCommitResult, MarketContributionBatch,
     MarketHarvestData, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow,
-    MarketPastePreview,
+    MarketPastePreview, MarketUnitPriceResult,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist,
+    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -401,6 +401,21 @@ pub async fn quests_mobs(app: tauri::AppHandle) -> Result<Vec<String>, ApiError>
 #[tauri::command(rename_all = "snake_case")]
 pub async fn quests_analytics(app: tauri::AppHandle) -> Result<Vec<QuestAnalyticsRow>, ApiError> {
     facade(&app)?.quests_analytics().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_rewards_unresolved(
+    app: tauri::AppHandle,
+) -> Result<Vec<UnresolvedQuestReward>, ApiError> {
+    facade(&app)?.quest_rewards_unresolved().await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_reward_review(
+    app: tauri::AppHandle,
+    input: QuestRewardReviewInput,
+) -> Result<(), ApiError> {
+    facade(&app)?.quest_reward_review(input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -925,6 +940,17 @@ pub async fn market_paste_commit(
     text: String,
 ) -> Result<MarketCommitResult, ApiError> {
     facade(&app)?.market_paste_commit(text).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn market_unit_price_set(
+    app: tauri::AppHandle,
+    item_name: String,
+    ped_per_unit: f64,
+) -> Result<MarketUnitPriceResult, ApiError> {
+    facade(&app)?
+        .market_unit_price_set(item_name, ped_per_unit)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1745,6 +1771,8 @@ mod tests {
         "quest_delete",
         "quest_start",
         "quest_complete",
+        "quest_rewards_unresolved",
+        "quest_reward_review",
         "quest_cancel",
         "quests_mobs",
         "quests_analytics",
@@ -1803,6 +1831,7 @@ mod tests {
         "inventory_equipment_trade",
         "market_paste_preview",
         "market_paste_commit",
+        "market_unit_price_set",
         "market_overview",
         "market_contribution_batch",
         "market_auction_packet_threshold",

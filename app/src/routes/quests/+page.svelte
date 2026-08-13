@@ -10,6 +10,7 @@
 	import QuestAnalyticsView from '$lib/features/quests/QuestAnalyticsView.svelte';
 	import QuestFormModal from '$lib/features/quests/QuestFormModal.svelte';
 	import QuestListView from '$lib/features/quests/QuestListView.svelte';
+	import QuestRewardReview from '$lib/features/quests/QuestRewardReview.svelte';
 	import { createQuestsModel } from '$lib/features/quests/questsModel.svelte';
 	import { closeGuide, openGuide } from '$lib/guide/engine';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
@@ -43,7 +44,7 @@
 	});
 
 	// View toggle
-	let view: 'quests' | 'families' | 'playlists' | 'analytics' = $state('quests');
+	let view: 'quests' | 'families' | 'playlists' | 'review' | 'analytics' = $state('quests');
 
 	// Cooldown tick
 	let now = $state(Date.now());
@@ -68,7 +69,7 @@
 		const stopClock = useVisiblePoll(() => { now = Date.now(); }, { intervalMs: 1000 });
 		registerDemoApi('quests', {
 			setView: (v: string) => {
-				view = v as 'quests' | 'families' | 'playlists' | 'analytics';
+				view = v as 'quests' | 'families' | 'playlists' | 'review' | 'analytics';
 			},
 			openNewQuestModal: () => {
 				model.openNewQuest();
@@ -186,10 +187,11 @@
 			{ id: 'quests', label: 'Quests' },
 			{ id: 'families', label: 'Families' },
 			{ id: 'playlists', label: 'Playlists' },
+			{ id: 'review', label: 'Reward Review' },
 			{ id: 'analytics', label: 'Analytics' }
 		]}
 		active={view}
-		onchange={(id) => (view = id as 'quests' | 'families' | 'playlists' | 'analytics')}
+		onchange={(id) => (view = id as 'quests' | 'families' | 'playlists' | 'review' | 'analytics')}
 	/>
 
 	{#if model.loading}
@@ -200,6 +202,8 @@
 		<FamilyListView model={familyModel} questsModel={model} {now} />
 	{:else if view === 'playlists'}
 		<PlaylistListView model={playlistModel} questsModel={model} {now} />
+	{:else if view === 'review'}
+		<QuestRewardReview />
 	{:else if view === 'analytics'}
 		<QuestAnalyticsView {model} />
 	{/if}

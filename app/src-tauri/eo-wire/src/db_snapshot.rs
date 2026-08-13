@@ -135,7 +135,7 @@ pub const CATALOGUE: &[TableSpec] = &[
     TableSpec {
         name: "session_quest_completions",
         query: "SELECT session_id, quest_id, completed_at, activity_context_id, \
-                       activity_interval_id, reward_source, reward_ped, \
+                       activity_interval_id, reward_source, reward_kind, reward_ped, \
                        expected_reward_markup_percent, ledger_entry_id, quest_claim_id \
                 FROM session_quest_completions",
         order_by: &["completed_at", "rowid"],

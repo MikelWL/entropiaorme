@@ -69,7 +69,7 @@ describe('HuntingSessionActivities', () => {
 		const grid = screen.getByTestId('activity-economic-grid');
 		expect(grid.className).toContain('grid-cols-4');
 		for (const label of [
-			'Reward',
+			'Reward TT',
 			'TT Net',
 			'MU Net',
 			'Realised Net',
@@ -151,6 +151,27 @@ describe('HuntingSessionActivities', () => {
 		const nets = screen.getAllByText('+5.00');
 		expect(nets).toHaveLength(2);
 		expect(nets.filter((value) => value.classList.contains('text-positive'))).toHaveLength(1);
+	});
+
+	it('shows a separated zero-TT item reward without calling it ordinary loot', () => {
+		render(HuntingSessionActivities, {
+			props: {
+				activities: [
+					activity({
+						confirmedRewardPed: 0,
+						rewardItems: [{ itemName: 'Hyperion Daily Voucher', quantity: 20, valuePed: 0 }],
+						rewardMuPed: 40,
+						rewardStatus: 'item',
+					}),
+				],
+				marketAvailable: true,
+			},
+		});
+
+		expect(screen.getByText('Reward TT')).not.toBeNull();
+		expect(screen.getByText('0.00')).not.toBeNull();
+		expect(screen.getByText('40.00')).not.toBeNull();
+		expect(screen.queryByText('In loot')).toBeNull();
 	});
 
 	it('suppresses an unverified historical reward instead of reading current quest settings', () => {

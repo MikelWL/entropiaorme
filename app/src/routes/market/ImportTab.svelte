@@ -39,6 +39,10 @@
 	async function handleCommit() {
 		if (await model.commit()) onimported();
 	}
+
+	async function handleUnitPriceSave() {
+		await model.saveUnitPrice();
+	}
 </script>
 
 <div class="space-y-4">
@@ -84,6 +88,58 @@
 							? `, ${model.preview.skipped.length} skipped`
 							: ''}
 					</span>
+				{/if}
+			</div>
+
+			<div class="border-t border-border/70 pt-4 space-y-3">
+				<div>
+					<h2 class="text-sm font-medium text-text">Absolute item value</h2>
+					<p class="mt-1 text-sm text-text-secondary">
+						Use a PED-per-unit quote for zero-TT or unit-priced items. It remains estimated
+						market value, never realised gains.
+					</p>
+				</div>
+				<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end">
+					<label class="block">
+						<span class="mb-1 block text-xs font-medium text-text-secondary">Item</span>
+						<input
+							value={model.unitItemName}
+							disabled={model.unitPriceSaving}
+							oninput={(event) => model.setUnitItemName(event.currentTarget.value)}
+							placeholder="Item name"
+							class="w-full rounded-md border border-border bg-surface/70 px-3 py-2 text-sm text-text focus:border-accent/60 focus:outline-none focus:[box-shadow:var(--shadow-glow)]"
+						/>
+					</label>
+					<label class="block">
+						<span class="mb-1 block text-xs font-medium text-text-secondary">PED per unit</span>
+						<input
+							type="number"
+							disabled={model.unitPriceSaving}
+							min="0"
+							step="0.01"
+							value={model.unitPriceInput}
+							oninput={(event) => model.setUnitPriceInput(event.currentTarget.value)}
+							placeholder="0.00"
+							class="w-full rounded-md border border-border bg-surface/70 px-3 py-2 text-sm tabular-nums text-text focus:border-accent/60 focus:outline-none focus:[box-shadow:var(--shadow-glow)]"
+						/>
+					</label>
+					<Button
+						variant="secondary"
+						size="sm"
+						disabled={!model.canSaveUnitPrice}
+						loading={model.unitPriceSaving}
+						onclick={() => void handleUnitPriceSave()}
+					>
+						Save quote
+					</Button>
+				</div>
+				{#if model.unitPriceError}
+					<ErrorNotice message={model.unitPriceError} />
+				{:else if model.unitPriceSaved}
+					<p class="text-sm text-success">
+						Saved {model.unitPriceSaved.itemName} at {model.unitPriceSaved.pedPerUnit.toFixed(2)}
+						PED per unit.
+					</p>
 				{/if}
 			</div>
 		</div>

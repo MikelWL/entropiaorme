@@ -5,12 +5,14 @@
  * feature components; they compose over this state.
  */
 
+import type { MarketHarvestData } from '$lib/api';
 import {
 	cancelQuest,
 	completeQuest,
 	createQuest,
 	deleteQuest,
 	getAnalyticsOverview,
+	getMarketHuntMarkups,
 	getPlaylistAnalytics,
 	getPlaylists,
 	getQuestAnalytics,
@@ -32,10 +34,12 @@ import type {
 	PlaylistAnalyticsRow,
 	Quest,
 	QuestAnalyticsRow,
+	QuestCompletionTrigger,
 	QuestCooldownAnchor,
 	QuestCreateData,
 	QuestFamily,
 	QuestPlaylist,
+	QuestRewardPolicy,
 } from '$lib/types';
 import { describeError } from '$lib/view/errorState';
 import { getCooldownStatus } from './cooldown';
@@ -66,14 +70,15 @@ export interface QuestFormState {
 	reward_is_skill: boolean;
 	expected_reward_markup_percent: number | null;
 	reward_description: string;
+	completion_trigger: QuestCompletionTrigger;
+	reward_policy: QuestRewardPolicy;
+	reward_item_names: string[];
 	notes: string;
 	chain_name: string;
 	chain_position: number | null;
 	chain_total: number | null;
 	mobs: string[];
-	/** The signal loot item: set makes this a signal-completed quest
-	 * (focusing starts it; the item's arrival in a mission-less loot
-	 * pickup completes it). Exclusive with a positive reward. */
+	/** The signal loot item used by signal-item completion. */
 	signal_loot_item: string;
 	/** The family this quest is a variant of (string id), null standalone. */
 	family_id: string | null;
@@ -92,6 +97,9 @@ function defaultQuestForm(): QuestFormState {
 		reward_is_skill: false,
 		expected_reward_markup_percent: null,
 		reward_description: '',
+		completion_trigger: 'mission_log',
+		reward_policy: 'none',
+		reward_item_names: [],
 		notes: '',
 		chain_name: '',
 		chain_position: null,
@@ -136,6 +144,7 @@ export function createQuestsModel() {
 	let editingQuest = $state<Quest | null>(null);
 	let questForm = $state(defaultQuestForm());
 	let mobInput = $state('');
+	let rewardItemInput = $state('');
 	let cooldownUnit = $state<CooldownUnit>('hours');
 	let cooldownInput = $state<number | null>(null);
 	// Whether the user explicitly chose a family in the open form; until
@@ -150,6 +159,7 @@ export function createQuestsModel() {
 	let analyticsError = $state<string | null>(null);
 	let analyticsLoaded = $state(false);
 	let rates = $state<GlobalRates>({ liquidReturnRate: 0, skillProgressionRate: 0 });
+	let rewardMarket = $state<MarketHarvestData | null>(null);
 	let analyticsRewardMode = $state<RewardMode>('tt');
 
 	// ── Computed: planets from data ──
@@ -275,14 +285,16 @@ export function createQuestsModel() {
 		analyticsLoading = true;
 		analyticsError = null;
 		try {
-			const [qAnalytics, plAnalytics, overview] = await Promise.all([
+			const [qAnalytics, plAnalytics, overview, market] = await Promise.all([
 				getQuestAnalytics(),
 				getPlaylistAnalytics(),
 				getAnalyticsOverview('all'),
+				getMarketHuntMarkups().catch(() => null),
 			]);
 			analyticsData = qAnalytics;
 			playlistAnalyticsData = plAnalytics;
 			rates = globalRates(overview);
+			if (market !== null) rewardMarket = market;
 			analyticsLoaded = true;
 		} catch (e) {
 			analyticsError = describeError(e, 'Failed to load quest analytics');
@@ -393,6 +405,9 @@ export function createQuestsModel() {
 			reward_is_skill: quest.rewardIsSkill,
 			expected_reward_markup_percent: quest.expectedRewardMarkupPercent,
 			reward_description: quest.rewardDescription,
+			completion_trigger: quest.completionTrigger,
+			reward_policy: quest.rewardPolicy,
+			reward_item_names: [...quest.rewardItemNames],
 			notes: quest.notes,
 			chain_name: quest.chainName ?? '',
 			chain_position: quest.chainPosition,
@@ -415,10 +430,15 @@ export function createQuestsModel() {
 			category: questForm.category || null,
 			waypoint: questForm.waypoint || null,
 			cooldown_hours: cdHours,
-			reward_ped: questForm.reward_ped,
-			reward_is_skill: questForm.reward_is_skill,
+			reward_ped: ['fixed_ped', 'fixed_pes'].includes(questForm.reward_policy)
+				? questForm.reward_ped
+				: null,
+			reward_is_skill: questForm.reward_policy === 'fixed_pes',
+			completion_trigger: questForm.completion_trigger,
+			reward_policy: questForm.reward_policy,
+			reward_item_names: questForm.reward_item_names,
 			expected_reward_markup_percent:
-				!questForm.reward_is_skill && (questForm.reward_ped ?? 0) > 0
+				questForm.reward_policy === 'fixed_ped' && (questForm.reward_ped ?? 0) > 0
 					? questForm.expected_reward_markup_percent
 					: null,
 			reward_description: questForm.reward_description || null,
@@ -427,10 +447,10 @@ export function createQuestsModel() {
 			chain_position: questForm.chain_position,
 			chain_total: questForm.chain_total,
 			mobs: questForm.mobs,
-			// A positive reward disables the signal field in the form; a
-			// value typed before the reward never rides along disabled.
 			signal_loot_item:
-				(questForm.reward_ped ?? 0) > 0 ? null : questForm.signal_loot_item.trim() || null,
+				questForm.completion_trigger === 'signal_item'
+					? questForm.signal_loot_item.trim() || null
+					: null,
 			family_id: questForm.family_id != null ? Number(questForm.family_id) : null,
 			cooldown_anchor: questForm.cooldown_anchor,
 		};
@@ -471,6 +491,21 @@ export function createQuestsModel() {
 		questForm.mobs = questForm.mobs.filter((m) => m !== mob);
 	}
 
+	function addRewardItem() {
+		const item = rewardItemInput.trim();
+		if (
+			item &&
+			!questForm.reward_item_names.some((existing) => existing.toLowerCase() === item.toLowerCase())
+		) {
+			questForm.reward_item_names = [...questForm.reward_item_names, item];
+		}
+		rewardItemInput = '';
+	}
+
+	function removeRewardItem(item: string) {
+		questForm.reward_item_names = questForm.reward_item_names.filter((entry) => entry !== item);
+	}
+
 	function rewardMarkupInputDisabled() {
 		return (questForm.reward_ped ?? 0) <= 0;
 	}
@@ -497,6 +532,12 @@ export function createQuestsModel() {
 		},
 		get error() {
 			return error;
+		},
+		get rewardItemInput() {
+			return rewardItemInput;
+		},
+		set rewardItemInput(value: string) {
+			rewardItemInput = value;
 		},
 		set error(value: string | null) {
 			error = value;
@@ -602,6 +643,9 @@ export function createQuestsModel() {
 		get rates() {
 			return rates;
 		},
+		get rewardMarket() {
+			return rewardMarket;
+		},
 		get analyticsRewardMode() {
 			return analyticsRewardMode;
 		},
@@ -639,6 +683,8 @@ export function createQuestsModel() {
 		handleDeleteQuest,
 		addMob,
 		removeMob,
+		addRewardItem,
+		removeRewardItem,
 		rewardMarkupInputDisabled,
 	};
 }

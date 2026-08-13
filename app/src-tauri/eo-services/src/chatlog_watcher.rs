@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::NaiveDateTime;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::bus_events::{
     BusEvent, CombatPayload, EnhancerBreakPayload, EnhancerBreakTag, GlobalPayload,
@@ -52,7 +52,8 @@ const COMBAT_MESSAGE_PREFIXES: [&str; 12] = [
 
 /// The quest-reward filter: receives the mission name, the tick's loot
 /// items, and its skill gains; may return indexes to suppress.
-pub type QuestRewardFilter = Arc<dyn Fn(&str, &[Value], &[Value]) -> Option<Value> + Send + Sync>;
+pub type QuestRewardFilter =
+    Arc<dyn Fn(&str, &[Value], &[Value], bool) -> Option<Value> + Send + Sync>;
 
 /// One loot line of a mission-less tick, as the signal probe sees it:
 /// the item name plus the line's stacked quantity (one marker per
@@ -71,6 +72,7 @@ pub struct SignalLoot {
 /// work. Injected after construction (composition wires it once the
 /// quest service exists), like the quest service's own sinks.
 pub type SignalLootProbe = Arc<dyn Fn(Vec<SignalLoot>) + Send + Sync>;
+pub type SignalRewardFilter = Arc<dyn Fn(&[Value]) -> Option<Value> + Send + Sync>;
 
 /// One mission completion a flushed tick carried, handed to the
 /// post-publish completion probe with the loot and skill picture the
@@ -81,6 +83,7 @@ pub struct MissionCompletion {
     pub mission_name: String,
     pub loot_items: Vec<Value>,
     pub skill_gains: Vec<Value>,
+    pub isolated: bool,
 }
 
 /// The mission-completion probe, invoked strictly AFTER a tick's
@@ -245,6 +248,7 @@ struct Shared {
     pending_tick: AtomicBool,
     line_tap: Mutex<Option<LineTap>>,
     quest_reward_filter: Option<QuestRewardFilter>,
+    signal_reward_filter: OnceLock<SignalRewardFilter>,
     signal_loot_probe: OnceLock<SignalLootProbe>,
     mission_complete_probe: OnceLock<MissionCompleteProbe>,
 }
@@ -287,6 +291,7 @@ impl ChatlogWatcher {
                 pending_tick: AtomicBool::new(false),
                 line_tap: Mutex::new(None),
                 quest_reward_filter,
+                signal_reward_filter: OnceLock::new(),
                 signal_loot_probe: OnceLock::new(),
                 mission_complete_probe: OnceLock::new(),
             }),
@@ -298,6 +303,10 @@ impl ChatlogWatcher {
     /// the quest service exists; a second call is ignored.
     pub fn set_signal_loot_probe(&self, probe: SignalLootProbe) {
         let _ = self.shared.signal_loot_probe.set(probe);
+    }
+
+    pub fn set_signal_reward_filter(&self, filter: SignalRewardFilter) {
+        let _ = self.shared.signal_reward_filter.set(filter);
     }
 
     /// Wire the mission-completion probe. Composition calls this once,
@@ -582,6 +591,7 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         .cloned()
         .collect();
     let mut mission_completions: Vec<MissionCompletion> = Vec::with_capacity(completes.len());
+    let isolated_completion_tick = other_events.is_empty() && enhancer_events.is_empty();
     for complete in &completes {
         let mission_name = complete
             .data
@@ -611,24 +621,43 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
 
         if let Some(filter) = shared.quest_reward_filter.clone() {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                filter(&mission_name, &loot_data, &skill_data)
+                filter(
+                    &mission_name,
+                    &loot_data,
+                    &skill_data,
+                    isolated_completion_tick,
+                )
             }))
             .unwrap_or(None);
 
             if let Some(result) = result {
-                if let Some(index) = result
-                    .get("suppress_loot_index")
-                    .and_then(Value::as_i64)
-                    .filter(|i| *i >= 0 && (*i as usize) < loot_events.len())
-                {
-                    loot_events.remove(index as usize);
+                let mut loot_indices: Vec<usize> = result
+                    .get("suppress_loot_indices")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .map(|index| index as usize)
+                    .filter(|index| *index < loot_events.len())
+                    .collect();
+                loot_indices.sort_unstable();
+                loot_indices.dedup();
+                for index in loot_indices.into_iter().rev() {
+                    loot_events.remove(index);
                 }
-                if let Some(index) = result
-                    .get("suppress_skill_index")
-                    .and_then(Value::as_i64)
-                    .filter(|i| *i >= 0 && (*i as usize) < skill_events.len())
-                {
-                    skill_events.remove(index as usize);
+                let mut skill_indices: Vec<usize> = result
+                    .get("suppress_skill_indices")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .map(|index| index as usize)
+                    .filter(|index| *index < skill_events.len())
+                    .collect();
+                skill_indices.sort_unstable();
+                skill_indices.dedup();
+                for index in skill_indices.into_iter().rev() {
+                    skill_events.remove(index);
                 }
             }
         }
@@ -636,34 +665,31 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
             mission_name,
             loot_items: loot_data,
             skill_gains: skill_data,
+            isolated: isolated_completion_tick,
         });
     }
 
-    // The signal-loot candidates: a loot tick that carried no mission
-    // completion may complete a signal quest (the instance-boss
-    // pattern: the marker item arrives inside the boss's loot clump,
-    // with no mission-log line to route by). A tick WITH a completion
-    // is the mission machinery's, so the probe never sees it and a
-    // daily's voucher cannot masquerade as a boss's. Post-suppression,
-    // so a suppressed reward echo cannot double as a signal. Each entry
-    // carries the line's quantity: a stacked line (quantity 2) is two
-    // markers, so the probe's one-marker-one-run budget sees both.
-    // Collected here, but PROBED only after every publish below: the
-    // completion closes the declared stretch, and the clump that pays
-    // for the run must stamp into that stretch before anything can
-    // close it.
+    // A mission-less loot tick may complete a signal quest. Snapshot its
+    // evidence before reward suppression so the same marker can prove the
+    // completion and be removed from ordinary loot. A tick with a mission
+    // completion belongs to that mission path instead, so a daily voucher
+    // cannot masquerade as a boss marker. The probe runs only after every
+    // publish below, allowing the clump to stamp into the declared stretch
+    // before the completion closes it.
     let signal_loot: Option<Vec<SignalLoot>> = if completes.is_empty() && !loot_events.is_empty() {
         shared.signal_loot_probe.get().map(|_| {
             loot_events
                 .iter()
                 .filter_map(|e| {
-                    let item_name = e.data.get("item_name").and_then(Value::as_str)?;
-                    let quantity = e.data.get("quantity").and_then(Value::as_i64).unwrap_or(1);
-                    let value_ped = Ped(e.data.get("value").and_then(Value::as_f64).unwrap_or(0.0));
                     Some(SignalLoot {
-                        item_name: item_name.to_string(),
-                        quantity: quantity.max(1),
-                        value_ped,
+                        item_name: e.data.get("item_name")?.as_str()?.to_string(),
+                        quantity: e
+                            .data
+                            .get("quantity")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(1)
+                            .max(1),
+                        value_ped: Ped(e.data.get("value").and_then(Value::as_f64).unwrap_or(0.0)),
                     })
                 })
                 .collect()
@@ -671,6 +697,36 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
     } else {
         None
     };
+    if completes.is_empty() {
+        if let Some(filter) = shared.signal_reward_filter.get() {
+            let loot_data: Vec<Value> = loot_events
+                .iter()
+                .map(|event| {
+                    json!({
+                        "item_name": event.data.get("item_name").cloned().unwrap_or_default(),
+                        "quantity": event.data.get("quantity").cloned().unwrap_or(json!(1)),
+                        "value": event.data.get("value").cloned().unwrap_or(json!(0.0)),
+                    })
+                })
+                .collect();
+            if let Some(result) = filter(&loot_data) {
+                let mut indices: Vec<usize> = result
+                    .get("suppress_loot_indices")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .map(|index| index as usize)
+                    .filter(|index| *index < loot_events.len())
+                    .collect();
+                indices.sort_unstable();
+                indices.dedup();
+                for index in indices.into_iter().rev() {
+                    loot_events.remove(index);
+                }
+            }
+        }
+    }
 
     let refund_matches = match_enhancer_shrapnel(&loot_events, &enhancer_events);
 
@@ -971,13 +1027,13 @@ mod tests {
 
     #[test]
     fn quest_filter_suppresses_indexed_rewards() {
-        let filter: QuestRewardFilter = Arc::new(|mission, loot, skills| {
+        let filter: QuestRewardFilter = Arc::new(|mission, loot, skills, _| {
             assert_eq!(mission, "Iron Challenge");
             assert_eq!(loot.len(), 2);
             assert_eq!(skills.len(), 1);
             Some(serde_json::json!({
-                "suppress_loot_index": 1,
-                "suppress_skill_index": 0,
+                "suppress_loot_indices": [1],
+                "suppress_skill_indices": [0],
             }))
         });
         let pipeline = pipeline(Some(filter));
@@ -1127,15 +1183,15 @@ mod tests {
         // the two runs: out of range either way, nothing suppressed,
         // nothing panics in the tail thread.
         for swap in [false, true] {
-            let filter: QuestRewardFilter = Arc::new(move |_, loot, skills| {
+            let filter: QuestRewardFilter = Arc::new(move |_, loot, skills, _| {
                 let (loot_index, skill_index) = if swap {
                     (-(1 + loot.len() as i64), skills.len() as i64)
                 } else {
                     (loot.len() as i64, -(1 + skills.len() as i64))
                 };
                 Some(serde_json::json!({
-                    "suppress_loot_index": loot_index,
-                    "suppress_skill_index": skill_index,
+                    "suppress_loot_indices": [loot_index],
+                    "suppress_skill_indices": [skill_index],
                 }))
             });
             let pipeline = pipeline(Some(filter));

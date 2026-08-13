@@ -20,6 +20,16 @@ pub(super) struct RewardItemEvidence {
     pub value_ped: Ped,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct RewardCapture {
+    pub outcome: &'static str,
+    pub policy_snapshot: String,
+    pub items: Vec<RewardItemEvidence>,
+    pub unresolved_reason: Option<String>,
+    pub evidence_json: Option<String>,
+    pub had_tracked_loot: bool,
+}
+
 /// The overlay-event vocabulary the quest flows record: a started
 /// quest, a completed liquid reward, a completed skill (PES) reward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,11 +62,21 @@ impl QuestService {
         let affected = self
             .db
             .with_writer(move |conn| {
-                Ok(conn.execute(
+                let tx = conn.transaction()?;
+                let affected = tx.execute(
                     "UPDATE quests SET started_at = ?, last_started_at = ? \
-                     WHERE id = ? AND is_active = 1",
+                     WHERE id = ? AND is_active = 1 AND started_at IS NULL",
                     rusqlite::params![now, now, quest_id],
-                )?)
+                )?;
+                if affected > 0 {
+                    tx.execute(
+                        "INSERT INTO quest_runs(quest_id, status, started_at) \
+                         VALUES (?, 'in_progress', ?)",
+                        rusqlite::params![quest_id, now],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(affected)
             })
             .await?;
         if affected > 0 {
@@ -71,21 +91,18 @@ impl QuestService {
         }
     }
 
-    /// Complete a quest from an administrative/manual action. A completion
-    /// observed in a loot tick uses [`complete_quest_with_loot_evidence`]
-    /// instead so a reward already present in tracked loot is preserved as
-    /// provenance without being added a second time.
+    /// Complete a quest from an administrative/manual action. Tick-driven
+    /// completion supplies a typed reward capture instead.
     pub async fn complete_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
-        self.complete_quest_with_evidence(quest_id, false, Vec::new())
-            .await
+        self.complete_quest_with_evidence(quest_id, None).await
     }
 
-    pub(super) async fn complete_quest_with_loot_evidence(
+    pub(super) async fn complete_quest_with_reward_capture(
         &self,
         quest_id: i64,
-        reward_items: Vec<RewardItemEvidence>,
+        capture: RewardCapture,
     ) -> Result<Option<Value>, QuestError> {
-        self.complete_quest_with_evidence(quest_id, true, reward_items)
+        self.complete_quest_with_evidence(quest_id, Some(capture))
             .await
     }
 
@@ -96,14 +113,30 @@ impl QuestService {
     async fn complete_quest_with_evidence(
         &self,
         quest_id: i64,
-        completion_had_tracked_loot: bool,
-        reward_items: Vec<RewardItemEvidence>,
+        capture: Option<RewardCapture>,
     ) -> Result<Option<Value>, QuestError> {
         let Some(quest) = self.get_quest(quest_id).await? else {
             return Ok(None);
         };
         let now = self.now_epoch();
         let session_id = self.current_session();
+        if let Some(existing_session_id) = session_id.as_deref().filter(|id| !id.is_empty()) {
+            let existing_session_id = existing_session_id.to_string();
+            let already_completed = self
+                .db
+                .with_reader(move |conn| {
+                    Ok(conn.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM session_quest_completions \
+                         WHERE session_id = ? AND quest_id = ?)",
+                        rusqlite::params![existing_session_id, quest_id],
+                        |row| row.get::<_, i64>(0),
+                    )? != 0)
+                })
+                .await?;
+            if already_completed {
+                return Ok(Some(quest));
+            }
+        }
         let attribution = self
             .completion_attribution(session_id.as_deref(), quest_id)
             .await?;
@@ -115,13 +148,52 @@ impl QuestService {
         // stretch declared this is a no-op.
         self.report_stretch_closed(quest_id).await;
 
+        let policy = quest
+            .get("reward_policy")
+            .and_then(Value::as_str)
+            .unwrap_or("none");
+        let capture = capture.unwrap_or_else(|| match policy {
+            "none" => RewardCapture {
+                outcome: "none",
+                policy_snapshot: policy.to_string(),
+                items: Vec::new(),
+                unresolved_reason: None,
+                evidence_json: None,
+                had_tracked_loot: false,
+            },
+            "fixed_ped" | "fixed_pes" => RewardCapture {
+                outcome: "confirmed",
+                policy_snapshot: policy.to_string(),
+                items: Vec::new(),
+                unresolved_reason: None,
+                evidence_json: None,
+                had_tracked_loot: false,
+            },
+            _ => RewardCapture {
+                outcome: "unresolved",
+                policy_snapshot: policy.to_string(),
+                items: Vec::new(),
+                unresolved_reason: Some(
+                    "Completion was recorded without a reward-bearing chat tick".to_string(),
+                ),
+                evidence_json: None,
+                had_tracked_loot: false,
+            },
+        });
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-        let reward_is_skill = json_truthy(quest.get("reward_is_skill"));
+        let reward_is_skill = policy == "fixed_pes";
         let reward_source = match reward_ped.filter(|reward| reward.is_positive()) {
             Some(_) if reward_is_skill => "skill",
             Some(_) => "ledger",
-            None if completion_had_tracked_loot => "tracked_loot",
+            None if capture.had_tracked_loot => "tracked_loot",
             None => "none",
+        };
+        let reward_kind = match reward_source {
+            "ledger" => "fixed_liquid",
+            "skill" => "skill",
+            _ if !capture.items.is_empty() => "item",
+            "tracked_loot" => "included_in_loot",
+            _ => "none",
         };
         let expected_markup = quest
             .get("expected_reward_markup_percent")
@@ -136,10 +208,36 @@ impl QuestService {
             .unwrap_or_else(|| format!("manual-{}", self.next_id()));
         let (activity_context_id, activity_interval_id) = attribution.unzip();
         let reward_value = reward_ped.map(Ped::value);
+        let reward_outcome = capture.outcome;
+        let policy_snapshot = capture.policy_snapshot;
+        let unresolved_reason = capture.unresolved_reason;
+        let evidence_json = capture.evidence_json;
+        let reward_items = capture.items;
         let ledger_id_for_write = ledger_id.clone();
         self.db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
+                let run: Option<(i64, f64)> = {
+                    use rusqlite::OptionalExtension as _;
+                    tx.query_row(
+                        "SELECT id, started_at FROM quest_runs \
+                         WHERE quest_id = ? AND status = 'in_progress'",
+                        rusqlite::params![quest_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?
+                };
+                let (run_id, run_started_at) = match run {
+                    Some(run) => run,
+                    None => {
+                        tx.execute(
+                            "INSERT INTO quest_runs(quest_id, status, started_at) \
+                             VALUES (?, 'in_progress', ?)",
+                            rusqlite::params![quest_id, now],
+                        )?;
+                        (tx.last_insert_rowid(), now)
+                    }
+                };
                 tx.execute(
                     "UPDATE quests SET started_at = NULL WHERE id = ?",
                     rusqlite::params![quest_id],
@@ -147,9 +245,11 @@ impl QuestService {
                 let inserted = tx.execute(
                     "INSERT OR IGNORE INTO session_quest_completions \
                      (session_id, quest_id, completed_at, activity_context_id, \
-                      activity_interval_id, reward_source, reward_ped, \
-                      expected_reward_markup_percent) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                      activity_interval_id, reward_source, reward_kind, reward_ped, \
+                      expected_reward_markup_percent, reward_outcome, \
+                      reward_policy_snapshot, reward_unresolved_reason, reward_evidence_json, \
+                      quest_run_id) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         completion_key,
                         quest_id,
@@ -157,8 +257,14 @@ impl QuestService {
                         activity_context_id,
                         activity_interval_id,
                         reward_source,
+                        reward_kind,
                         reward_value,
                         expected_markup,
+                        reward_outcome,
+                        policy_snapshot,
+                        unresolved_reason,
+                        evidence_json,
+                        run_id,
                     ],
                 )?;
                 if inserted == 0 {
@@ -166,6 +272,18 @@ impl QuestService {
                     return Ok(());
                 }
                 let completion_id = tx.last_insert_rowid();
+                tx.execute(
+                    "UPDATE quest_runs SET status = 'completed', completed_at = ?, \
+                     completion_id = ? WHERE id = ?",
+                    rusqlite::params![now, completion_id, run_id],
+                )?;
+                tx.execute(
+                    "INSERT OR IGNORE INTO quest_run_intervals(run_id, interval_id) \
+                     SELECT ?, id FROM session_intervals \
+                     WHERE kind = 'quest' AND ref_id = ? \
+                       AND started_at >= ? AND started_at <= ?",
+                    rusqlite::params![run_id, quest_id, run_started_at, now],
+                )?;
                 for item in reward_items {
                     tx.execute(
                         "INSERT INTO session_quest_completion_reward_items \
@@ -274,10 +392,17 @@ impl QuestService {
         if !quest["started_at"].is_null() {
             self.db
                 .with_writer(move |conn| {
-                    conn.execute(
+                    let tx = conn.transaction()?;
+                    tx.execute(
                         "UPDATE quests SET started_at = NULL WHERE id = ? AND is_active = 1",
                         rusqlite::params![quest_id],
                     )?;
+                    tx.execute(
+                        "UPDATE quest_runs SET status = 'cancelled' \
+                         WHERE quest_id = ? AND status = 'in_progress'",
+                        rusqlite::params![quest_id],
+                    )?;
+                    tx.commit()?;
                     Ok(())
                 })
                 .await?;
@@ -318,7 +443,7 @@ impl QuestService {
                 let tx = conn.transaction()?;
                 let completion = tx
                     .query_row(
-                        "SELECT id, ledger_entry_id, quest_claim_id \
+                        "SELECT id, ledger_entry_id, quest_claim_id, quest_run_id \
                          FROM session_quest_completions \
                          WHERE quest_id = ? \
                          ORDER BY completed_at DESC, id DESC LIMIT 1",
@@ -328,16 +453,32 @@ impl QuestService {
                                 row.get::<_, i64>(0)?,
                                 row.get::<_, Option<String>>(1)?,
                                 row.get::<_, Option<i64>>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
                             ))
                         },
                     )
                     .optional()?;
-                if let Some((completion_id, _, _)) = &completion {
+                if let Some((completion_id, _, _, run_id)) = &completion {
                     tx.execute(
                         "DELETE FROM session_quest_completion_reward_items \
                          WHERE completion_id = ?",
                         rusqlite::params![completion_id],
                     )?;
+                    tx.execute(
+                        "UPDATE session_quest_completions SET quest_run_id = NULL \
+                         WHERE id = ?",
+                        rusqlite::params![completion_id],
+                    )?;
+                    if let Some(run_id) = run_id {
+                        tx.execute(
+                            "DELETE FROM quest_run_intervals WHERE run_id = ?",
+                            rusqlite::params![run_id],
+                        )?;
+                        tx.execute(
+                            "DELETE FROM quest_runs WHERE id = ?",
+                            rusqlite::params![run_id],
+                        )?;
+                    }
                     tx.execute(
                         "DELETE FROM session_quest_completions WHERE id = ?",
                         rusqlite::params![completion_id],
@@ -353,11 +494,11 @@ impl QuestService {
                 if undo_reward {
                     let linked = completion
                         .as_ref()
-                        .is_some_and(|(_, ledger, claim)| ledger.is_some() || claim.is_some());
-                    if let Some((_, Some(ledger_id), _)) = &completion {
+                        .is_some_and(|(_, ledger, claim, _)| ledger.is_some() || claim.is_some());
+                    if let Some((_, Some(ledger_id), _, _)) = &completion {
                         delete_quest_reward_entry_by_id(&tx, ledger_id)?;
                     }
-                    if let Some((_, _, Some(claim_id))) = &completion {
+                    if let Some((_, _, Some(claim_id), _)) = &completion {
                         delete_quest_claim_by_id(&tx, *claim_id)?;
                     }
                     // Completions predating immutable links retain the exact

@@ -48,11 +48,11 @@ use crate::maps::{
 use crate::market::{
     MarketAuctionPacketThreshold, MarketBreakEven, MarketCommitResult, MarketContributionBatch,
     MarketHarvestData, MarketHistoryPoint, MarketHorizon, MarketMobRankingRow, MarketOverviewRow,
-    MarketPastePreview,
+    MarketPastePreview, MarketUnitPriceResult,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist,
+    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use crate::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -430,6 +430,19 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(i64)),
             }],
             returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_rewards_unresolved",
+            args: Vec::new(),
+            returns: Some(schema(schema_for!(Vec<UnresolvedQuestReward>))),
+        },
+        CommandSpec {
+            name: "quest_reward_review",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(QuestRewardReviewInput)),
+            }],
+            returns: None,
         },
         CommandSpec {
             name: "quest_cancel",
@@ -900,6 +913,20 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(String)),
             }],
             returns: Some(schema(schema_for!(MarketCommitResult))),
+        },
+        CommandSpec {
+            name: "market_unit_price_set",
+            args: vec![
+                ArgSpec {
+                    name: "item_name",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "ped_per_unit",
+                    schema: schema(schema_for!(f64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(MarketUnitPriceResult))),
         },
         CommandSpec {
             name: "market_overview",

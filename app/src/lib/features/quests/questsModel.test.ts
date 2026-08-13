@@ -15,6 +15,7 @@ vi.mock('$lib/api', () => ({
 	getQuestAnalytics: vi.fn(),
 	getPlaylistAnalytics: vi.fn(),
 	getAnalyticsOverview: vi.fn(),
+	getMarketHuntMarkups: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -42,6 +43,9 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
+		completionTrigger: 'mission_log',
+		rewardPolicy: 'fixed_ped',
+		rewardItemNames: [],
 		cooldownAnchor: 'completion',
 		lastStartedAt: null,
 		familyId: null,
@@ -60,6 +64,7 @@ beforeEach(() => {
 	mocked.getQuests.mockResolvedValue([]);
 	mocked.getPlaylists.mockResolvedValue([]);
 	mocked.getQuestFamilies.mockResolvedValue([]);
+	mocked.getMarketHuntMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
 });
 
 describe('loadData', () => {
@@ -103,6 +108,27 @@ describe('loadData', () => {
 		expect(model.quests.length).toBeGreaterThan(0);
 		expect(model.analyticsLoaded).toBe(true);
 		expect(model.rates.liquidReturnRate).toBeGreaterThan(0);
+	});
+});
+
+describe('analytics', () => {
+	it('preserves the last market snapshot when its independent refresh fails', async () => {
+		const first = { nanocubeMarkupPct: 123, items: [] } as never;
+		mocked.getQuestAnalytics.mockResolvedValue([]);
+		mocked.getPlaylistAnalytics.mockResolvedValue([]);
+		mocked.getAnalyticsOverview.mockResolvedValue({
+			returnsBreakdown: { lootTt: 0, pes: 0, codexPes: 0, questPes: 0, ledger: {} },
+			lossesBreakdown: { trackingCost: 0, cycledBreakdown: {}, ledger: {} },
+		} as never);
+		mocked.getMarketHuntMarkups.mockResolvedValueOnce(first);
+		const model = createQuestsModel();
+
+		await model.loadAnalytics();
+		expect(model.rewardMarket).toEqual(first);
+
+		mocked.getMarketHuntMarkups.mockRejectedValueOnce(new Error('market unavailable'));
+		await model.loadAnalytics();
+		expect(model.rewardMarket).toEqual(first);
 	});
 });
 

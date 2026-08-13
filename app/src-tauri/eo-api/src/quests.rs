@@ -68,6 +68,12 @@ pub struct QuestInput {
     #[serde(default)]
     pub reward_description: Option<String>,
     #[serde(default)]
+    pub completion_trigger: Option<QuestCompletionTrigger>,
+    #[serde(default)]
+    pub reward_policy: Option<QuestRewardPolicy>,
+    #[serde(default)]
+    pub reward_item_names: Vec<String>,
+    #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
     pub chain_name: Option<String>,
@@ -80,7 +86,7 @@ pub struct QuestInput {
     /// The signal loot item, when set: the quest completes the moment
     /// this item arrives in a loot pickup carrying no mission
     /// completion (the instance-boss pattern), and declaring it starts
-    /// it directly. Mutually exclusive with a positive `reward_ped`.
+    /// it directly. Completion and reward policies are independent.
     #[serde(default)]
     pub signal_loot_item: Option<String>,
     /// The family this quest is a variant of; null (or absent) leaves
@@ -110,6 +116,7 @@ impl QuestInput {
             "reward_is_skill": self.reward_is_skill,
             "expected_reward_markup_percent": self.expected_reward_markup_percent,
             "reward_description": self.reward_description,
+            "reward_item_names": self.reward_item_names,
             "notes": self.notes,
             "chain_name": self.chain_name,
             "chain_position": self.chain_position,
@@ -118,6 +125,12 @@ impl QuestInput {
             "signal_loot_item": self.signal_loot_item,
             "family_id": self.family_id,
         });
+        if let Some(trigger) = self.completion_trigger {
+            payload["completion_trigger"] = json!(trigger.as_service_str());
+        }
+        if let Some(policy) = self.reward_policy {
+            payload["reward_policy"] = json!(policy.as_service_str());
+        }
         // The anchor column is non-nullable, so the key is sent only
         // when a value was chosen; absent keeps the stored/default
         // anchor (present-null would be a refusal, not a clear).
@@ -205,6 +218,61 @@ pub enum QuestCooldownAnchor {
     Completion,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestCompletionTrigger {
+    MissionLog,
+    SignalItem,
+}
+
+impl QuestCompletionTrigger {
+    fn as_service_str(self) -> &'static str {
+        match self {
+            Self::MissionLog => "mission_log",
+            Self::SignalItem => "signal_item",
+        }
+    }
+
+    fn from_service(value: &Value) -> Self {
+        match value.as_str() {
+            Some("signal_item") => Self::SignalItem,
+            _ => Self::MissionLog,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestRewardPolicy {
+    None,
+    FixedPed,
+    FixedPes,
+    NamedItems,
+    CompletionClump,
+}
+
+impl QuestRewardPolicy {
+    fn as_service_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::FixedPed => "fixed_ped",
+            Self::FixedPes => "fixed_pes",
+            Self::NamedItems => "named_items",
+            Self::CompletionClump => "completion_clump",
+        }
+    }
+
+    fn from_service(value: &Value) -> Self {
+        match value.as_str() {
+            Some("fixed_ped") => Self::FixedPed,
+            Some("fixed_pes") => Self::FixedPes,
+            Some("named_items") => Self::NamedItems,
+            Some("completion_clump") => Self::CompletionClump,
+            _ => Self::None,
+        }
+    }
+}
+
 impl QuestCooldownAnchor {
     fn as_service_str(self) -> &'static str {
         match self {
@@ -253,6 +321,9 @@ pub struct Quest {
     /// The signal loot item completing this quest, null for quests on
     /// the mission-log lifecycle.
     pub signal_loot_item: Nullable<String>,
+    pub completion_trigger: QuestCompletionTrigger,
+    pub reward_policy: QuestRewardPolicy,
+    pub reward_item_names: Vec<String>,
     /// When this quest's OWN cooldown timer starts.
     pub cooldown_anchor: QuestCooldownAnchor,
     /// The durable last-start instant (fractional epoch seconds); the
@@ -294,6 +365,9 @@ impl Quest {
             playlist_ids: string_id_list(&quest["playlist_ids"]),
             started_at: opt_f64(&quest["started_at"]).into(),
             signal_loot_item: opt_string(&quest["signal_loot_item"]).into(),
+            completion_trigger: QuestCompletionTrigger::from_service(&quest["completion_trigger"]),
+            reward_policy: QuestRewardPolicy::from_service(&quest["reward_policy"]),
+            reward_item_names: string_list(&quest["reward_item_names"]),
             cooldown_anchor: QuestCooldownAnchor::from_service(&quest["cooldown_anchor"]),
             last_started_at: opt_f64(&quest["last_started_at"]).into(),
             family_id: opt_i64(&quest["family_id"]).map(|id| id.to_string()).into(),
@@ -458,6 +532,13 @@ pub struct QuestAnalyticsRow {
     pub reward_is_skill: bool,
     pub expected_reward_markup_percent: Nullable<f64>,
     pub total_expected_reward_ped: f64,
+    pub recorded_completions: i64,
+    pub confirmed_completions: i64,
+    pub unresolved_completions: i64,
+    pub total_recorded_reward_tt: f64,
+    pub total_recorded_reward_pes: f64,
+    pub total_recorded_item_tt: f64,
+    pub recorded_reward_items: Vec<QuestRewardCandidate>,
     pub linked_sessions: i64,
     pub total_duration_sec: f64,
     pub total_weapon_cost: f64,
@@ -466,6 +547,61 @@ pub struct QuestAnalyticsRow {
     pub total_armour_cost: f64,
     pub total_loot_tt: f64,
     pub total_pes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestRewardCandidate {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UnresolvedQuestReward {
+    pub completion_id: i64,
+    pub quest_id: String,
+    pub quest_name: String,
+    pub completed_at: f64,
+    pub policy: Nullable<String>,
+    pub reason: Nullable<String>,
+    pub loot: Vec<QuestRewardCandidate>,
+    pub isolated: bool,
+}
+
+impl UnresolvedQuestReward {
+    fn from_service(row: &Value) -> Self {
+        Self {
+            completion_id: row["completion_id"].as_i64().unwrap_or(0),
+            quest_id: str_of(&row["quest_id"]),
+            quest_name: string_field(&row["quest_name"]),
+            completed_at: row["completed_at"].as_f64().unwrap_or(0.0),
+            policy: opt_string(&row["policy"]).into(),
+            reason: opt_string(&row["reason"]).into(),
+            loot: row["loot"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| QuestRewardCandidate {
+                    item_name: string_field(&item["item_name"]),
+                    quantity: item["quantity"].as_i64().unwrap_or(1).max(1),
+                    value_ped: item["value"].as_f64().unwrap_or(0.0).max(0.0),
+                })
+                .collect(),
+            isolated: row["isolated"].as_bool().unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestRewardReviewInput {
+    pub completion_id: i64,
+    #[serde(default)]
+    pub selected_indices: Vec<i64>,
+    #[serde(default)]
+    pub declare_none: bool,
 }
 
 impl QuestAnalyticsRow {
@@ -479,6 +615,22 @@ impl QuestAnalyticsRow {
             reward_is_skill: row["reward_is_skill"].as_bool().unwrap_or(false),
             expected_reward_markup_percent: opt_f64(&row["expected_reward_markup_percent"]).into(),
             total_expected_reward_ped: model_float(&row["total_expected_reward_ped"], 2),
+            recorded_completions: row["recorded_completions"].as_i64().unwrap_or(0),
+            confirmed_completions: row["confirmed_completions"].as_i64().unwrap_or(0),
+            unresolved_completions: row["unresolved_completions"].as_i64().unwrap_or(0),
+            total_recorded_reward_tt: model_float(&row["total_recorded_reward_tt"], 2),
+            total_recorded_reward_pes: model_float(&row["total_recorded_reward_pes"], 2),
+            total_recorded_item_tt: model_float(&row["total_recorded_item_tt"], 2),
+            recorded_reward_items: row["recorded_reward_items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| QuestRewardCandidate {
+                    item_name: string_field(&item["item_name"]),
+                    quantity: item["quantity"].as_i64().unwrap_or(1).max(1),
+                    value_ped: item["value_ped"].as_f64().unwrap_or(0.0).max(0.0),
+                })
+                .collect(),
             linked_sessions: row["linked_sessions"].as_i64().unwrap_or(0),
             total_duration_sec: model_float(&row["total_duration"], 1),
             total_weapon_cost: model_float(&row["weapon_cost"], 4),
@@ -745,6 +897,29 @@ impl Api {
             .await
             .map_err(quest_error("quest analytics read"))?;
         Ok(rows.iter().map(QuestAnalyticsRow::from_service).collect())
+    }
+
+    pub async fn quest_rewards_unresolved(&self) -> Result<Vec<UnresolvedQuestReward>, ApiError> {
+        let rows = self
+            .quests
+            .unresolved_reward_reviews()
+            .await
+            .map_err(quest_error("unresolved quest rewards read"))?;
+        Ok(rows
+            .iter()
+            .map(UnresolvedQuestReward::from_service)
+            .collect())
+    }
+
+    pub async fn quest_reward_review(&self, input: QuestRewardReviewInput) -> Result<(), ApiError> {
+        self.quests
+            .resolve_reward_review(
+                input.completion_id,
+                &input.selected_indices,
+                input.declare_none,
+            )
+            .await
+            .map_err(quest_error("quest reward review"))
     }
 
     /// All active playlists.

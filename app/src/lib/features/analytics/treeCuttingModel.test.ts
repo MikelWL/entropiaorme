@@ -62,7 +62,15 @@ function obs(
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : h === 'week' ? (weeklyVolume ?? 0) : 0,
 	}));
-	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
+	return {
+		itemName: name,
+		markupPct,
+		unitPricePed: null,
+		horizon,
+		salesPed,
+		recommendedPacketTt,
+		readings,
+	};
 }
 
 // Exercises broad and thin market opportunities together. Tier order here is

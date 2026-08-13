@@ -72,6 +72,9 @@ fn minimal(name: &str) -> QuestInput {
         reward_is_skill: false,
         expected_reward_markup_percent: None,
         reward_description: None,
+        completion_trigger: None,
+        reward_policy: None,
+        reward_item_names: Vec::new(),
         notes: None,
         chain_name: None,
         chain_position: None,
@@ -105,9 +108,9 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
     // planet/reward_is_skill defaults, null-or-empty text columns), plus
     // the ratified extensions: the `signalLootItem` key (null for
     // mission-log quests) added with signal-completed quests, and the
-    // trailing anchor + family availability keys added with quest
-    // families (a standalone quest carries the 'completion' default and
-    // nulls).
+    // typed completion/reward defaults, plus the trailing anchor and
+    // family availability keys (a standalone quest carries the
+    // mission-log, no-reward, and completion defaults plus nulls).
     let created = api.quest_create(minimal("Alpha")).await.unwrap();
     assert_eq!(
         serde_json::to_string(&created).unwrap(),
@@ -117,6 +120,8 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
          \"expectedRewardMarkupPercent\":null,\"rewardDescription\":\"\",\"notes\":\"\",\
          \"chainName\":null,\"chainPosition\":null,\"chainTotal\":null,\
          \"playlistIds\":[],\"startedAt\":null,\"signalLootItem\":null,\
+         \"completionTrigger\":\"mission_log\",\"rewardPolicy\":\"none\",\
+         \"rewardItemNames\":[],\
          \"cooldownAnchor\":\"completion\",\"lastStartedAt\":null,\"familyId\":null,\
          \"familyName\":null,\"familyCooldownDurationHours\":null,\
          \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null}"
@@ -164,6 +169,7 @@ async fn update_applies_sent_fields_and_present_null_clears() {
     let mut patch = minimal("Alpha");
     patch.notes = Some("updated".to_string());
     patch.reward_ped = None; // present-null clears the reward
+    patch.reward_policy = Some(eo_api::quests::QuestRewardPolicy::None);
     let updated = api.quest_update(1, patch).await.unwrap();
     assert_eq!(updated.notes, "updated");
     assert_eq!(updated.reward, None);
@@ -401,12 +407,20 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         serde_json::to_string(&quest_rows).unwrap(),
         "[{\"questId\":\"1\",\"questName\":\"Alpha\",\"planet\":\"Calypso\",\"category\":null,\
          \"rewardPed\":2.5,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":150.0,\
-         \"totalExpectedRewardPed\":7.5,\"linkedSessions\":2,\"totalDurationSec\":130.5,\
+         \"totalExpectedRewardPed\":7.5,\"recordedCompletions\":2,\
+         \"confirmedCompletions\":0,\"unresolvedCompletions\":0,\
+         \"totalRecordedRewardTt\":0.0,\"totalRecordedRewardPes\":0.0,\
+         \"totalRecordedItemTt\":0.0,\"recordedRewardItems\":[],\
+         \"linkedSessions\":2,\"totalDurationSec\":130.5,\
          \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
          \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75},\
          {\"questId\":\"2\",\"questName\":\"Nul\",\"planet\":\"Calypso\",\"category\":null,\
          \"rewardPed\":0.0,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":null,\
-         \"totalExpectedRewardPed\":0.0,\"linkedSessions\":1,\"totalDurationSec\":50.0,\
+         \"totalExpectedRewardPed\":0.0,\"recordedCompletions\":1,\
+         \"confirmedCompletions\":0,\"unresolvedCompletions\":0,\
+         \"totalRecordedRewardTt\":0.0,\"totalRecordedRewardPes\":0.0,\
+         \"totalRecordedItemTt\":0.0,\"recordedRewardItems\":[],\
+         \"linkedSessions\":1,\"totalDurationSec\":50.0,\
          \"totalWeaponCost\":0.0,\"totalHealCost\":0.0,\"totalEnhancerCost\":0.0,\
          \"totalArmourCost\":0.0,\"totalLootTt\":0.0,\"totalPes\":0.0}]"
     );

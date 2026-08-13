@@ -41,17 +41,29 @@
 						placeholder="e.g., A.R.C. Faction" />
 				</div>
 				<div>
-					<label class="block text-xs text-text-secondary mb-1" for="q-reward">Reward ({model.questForm.reward_is_skill ? 'PES' : 'PED'})</label>
-					<Input id="q-reward" type="number" step="0.01" min="0" bind:value={model.questForm.reward_ped} />
+					<label class="block text-xs text-text-secondary mb-1" for="q-trigger">Completion</label>
+					<Select id="q-trigger" bind:value={model.questForm.completion_trigger}>
+						<option value="mission_log">Mission log</option>
+						<option value="signal_item">Signal item</option>
+					</Select>
 				</div>
 				<div>
-					<div class="block text-xs text-text-secondary mb-1" aria-hidden="true">&nbsp;</div>
-					<label class="flex items-center gap-1.5 h-[38px] text-xs text-text-secondary cursor-pointer">
-						<input type="checkbox" bind:checked={model.questForm.reward_is_skill} class="accent-accent" />
-						Reward is PES (skills)
-					</label>
+					<label class="block text-xs text-text-secondary mb-1" for="q-reward-policy">Reward</label>
+					<Select id="q-reward-policy" bind:value={model.questForm.reward_policy}>
+						<option value="none">No separate reward</option>
+						<option value="fixed_ped">Fixed PED</option>
+						<option value="fixed_pes">Fixed PES</option>
+						<option value="named_items">Specific items</option>
+						<option value="completion_clump">Completion loot clump</option>
+					</Select>
 				</div>
-				{#if !model.questForm.reward_is_skill}
+				{#if model.questForm.reward_policy === 'fixed_ped' || model.questForm.reward_policy === 'fixed_pes'}
+					<div>
+						<label class="block text-xs text-text-secondary mb-1" for="q-reward">Amount ({model.questForm.reward_policy === 'fixed_pes' ? 'PES' : 'PED'})</label>
+						<Input id="q-reward" type="number" step="0.01" min="0" required bind:value={model.questForm.reward_ped} />
+					</div>
+				{/if}
+				{#if model.questForm.reward_policy === 'fixed_ped'}
 					<div>
 						<label class="block text-xs text-text-secondary mb-1" for="q-rmarkup">Expected Reward Markup %</label>
 						<Input
@@ -64,6 +76,30 @@
 							placeholder="e.g. 130"
 						/>
 					</div>
+				{/if}
+				{#if model.questForm.reward_policy === 'named_items'}
+					<div class="col-span-2">
+						<div class="block text-xs text-text-secondary mb-1">Reward items</div>
+						{#if model.questForm.reward_item_names.length > 0}
+							<div class="flex flex-wrap gap-1 mb-1.5">
+								{#each model.questForm.reward_item_names as item}
+									<span class="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 flex items-center gap-1">
+										{item}
+										<button type="button" class="hover:text-text cursor-pointer" aria-label="Remove {item}" onclick={() => model.removeRewardItem(item)}>&times;</button>
+									</span>
+								{/each}
+							</div>
+						{/if}
+						<div class="flex gap-2">
+							<Input type="text" bind:value={model.rewardItemInput} placeholder="e.g., Hyperion Daily Voucher"
+								class="flex-1"
+								onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); model.addRewardItem(); } }} />
+							<Button type="button" size="sm" variant="secondary" onclick={() => model.addRewardItem()}>{#snippet children()}Add{/snippet}</Button>
+						</div>
+						<p class="text-[11px] text-text-secondary/70 mt-1">Every matching line is separated from ordinary loot with its observed quantity and TT. Missing expected items remain unresolved.</p>
+					</div>
+				{:else if model.questForm.reward_policy === 'completion_clump'}
+					<p class="col-span-2 text-[11px] text-text-secondary/70">Captures every loot line accompanying an isolated NPC hand-in. A tick containing combat evidence is left unresolved instead of consuming ordinary loot.</p>
 				{/if}
 				<div class="col-span-2">
 					<label class="block text-xs text-text-secondary mb-1" for="q-rdesc">Reward Note</label>
@@ -146,26 +182,21 @@
 				</p>
 			</div>
 
-			<!-- Signal loot: set makes this a signal-completed quest (an
-				 instance boss with no mission-log presence): focusing it in
-				 the overlay starts a run, and this item's arrival in loot
-				 completes it. Exclusive with a fixed reward, because the
-				 boss's drop IS the reward and tracking already counts it. -->
+			{#if model.questForm.completion_trigger === 'signal_item'}
 			<div>
 				<label class="block text-xs text-text-secondary mb-1" for="q-signal">Signal Loot (auto-complete)</label>
 				<Input id="q-signal" type="text" bind:value={model.questForm.signal_loot_item}
-					disabled={(model.questForm.reward_ped ?? 0) > 0}
+					required
 					placeholder="e.g., Hyperion Daily Voucher" />
 				<p class="text-[11px] text-text-secondary/70 mt-1">
-					{#if (model.questForm.reward_ped ?? 0) > 0}
-						Unavailable with a fixed reward: a signal quest's reward is its loot, which tracking already counts.
-					{:else if model.questForm.signal_loot_item.trim()}
+					{#if model.questForm.signal_loot_item.trim()}
 						Completes when this item drops outside a mission completion; focusing it in the overlay starts a run.
 					{:else}
-						Optional. For repeatable runs with no mission log entry (instance bosses): name the loot item whose drop marks completion.
+						Name the item that proves completion. It may independently be selected as a reward item above.
 					{/if}
 				</p>
 			</div>
+			{/if}
 
 			<!-- Target Mobs -->
 			<div>

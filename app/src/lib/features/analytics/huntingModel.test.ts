@@ -90,7 +90,15 @@ function obs(
 		markupPct: h === horizon ? markupPct : null,
 		salesPed: h === horizon ? (salesPed ?? 0) : 0,
 	}));
-	return { itemName: name, markupPct, horizon, salesPed, recommendedPacketTt, readings };
+	return {
+		itemName: name,
+		markupPct,
+		unitPricePed: null,
+		horizon,
+		salesPed,
+		recommendedPacketTt,
+		readings,
+	};
 }
 
 beforeEach(() => {
@@ -176,6 +184,29 @@ describe('createHuntingModel', () => {
 		await model.loadData();
 
 		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(15);
+	});
+
+	it('values zero-TT reward items from an absolute PED-per-unit quote', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						activities: [
+							sessionActivity({
+								rewardItems: [{ itemName: 'Hyperion Daily Voucher', quantity: 20, valuePed: 0 }],
+							}),
+						],
+					}),
+				],
+			}),
+		);
+		mocked.getMarketHuntMarkups.mockResolvedValue({
+			nanocubeMarkupPct: 100.6,
+			items: [{ ...obs('Hyperion Daily Voucher', null, null, null), unitPricePed: 2 }],
+		});
+		const model = createHuntingModel();
+		await model.loadData();
+		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(40);
 	});
 
 	it('merges market opportunity and realised markup into target rows', async () => {

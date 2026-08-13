@@ -208,6 +208,46 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "listing instant",
         sql: include_str!("../../migrations/0034_listing_instant.sql"),
     },
+    Migration {
+        version: 35,
+        description: "quest reward kinds",
+        sql: include_str!("../../migrations/0035_quest_reward_kinds.sql"),
+    },
+    Migration {
+        version: 36,
+        description: "mixed quest reward kinds",
+        sql: include_str!("../../migrations/0036_mixed_quest_reward_kinds.sql"),
+    },
+    Migration {
+        version: 37,
+        description: "typed quest rewards",
+        sql: include_str!("../../migrations/0037_typed_quest_rewards.sql"),
+    },
+    Migration {
+        version: 38,
+        description: "quest runs",
+        sql: include_str!("../../migrations/0038_quest_runs.sql"),
+    },
+    Migration {
+        version: 39,
+        description: "market unit prices",
+        sql: include_str!("../../migrations/0039_market_unit_prices.sql"),
+    },
+    Migration {
+        version: 40,
+        description: "quest reward reviews",
+        sql: include_str!("../../migrations/0040_quest_reward_reviews.sql"),
+    },
+    Migration {
+        version: 41,
+        description: "ARIS unresolved rewards",
+        sql: include_str!("../../migrations/0041_ARIS_unresolved_rewards.sql"),
+    },
+    Migration {
+        version: 42,
+        description: "quest run ownership",
+        sql: include_str!("../../migrations/0042_quest_run_ownership.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -250,6 +290,14 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "E9CFFFB264DAC08BD6D69BDAEA80C9588597BA2EB03D8B43ABDBC02FA05813F73E82A7BD13C3B4EC77EBC6DF40C2383B",
     "F914EEACCDF305518BB4A603298140DB63FCABB01BE29A9F3F6D4B84E946F263396B0FE03A2667D91EB7A522D28F96C5",
     "3265E540D74CC0B4CFF006BA9A55FBED9B82EB501AFCD57E75F880D0AE4DB521CAB8DC7E3B94FF671D265EA19745F524",
+    "6786181F66812C5ED1EBB8F35ABD1782348FBF69C5B3E1514F599AA51EDC68DF48D83287CDD436AA1A40DB8175C0B0D8",
+    "F5DB9E2125A73C6095779380F0737FDB5536F8F42FEEFEDC2CA9ADE88094285C5B634FF654C1D533A4ED57D6FFDF612E",
+    "B6A589321ED686339F23D545962583F14E6F43C467448F2A53056A71EF1F8A12799E2D6C710C51AB428D515CEC09A6F3",
+    "6ADB01B0EB3D95B8ACF12CCA7BAF468EF5EA15D2567430E370969B206852E783F5B41B898BDB8D898DBB19A347C9AC00",
+    "61E62851FE691D20819E9B3E1CF26DE297F804235115F9E414860637415358425AC33A7DA13967E7F411E4E90BF55D2F",
+    "92A77163A9BFF7ADB0489E801FD416991DE497FEDCB870C879657FE65A71FA9DA7BDE2D7F1F842629C4C62E84A691E45",
+    "6121A2A315E98BB6FC3A479E1CF3E6FCB0CDFE885F5F19DB65166E009111B8E4EDDA1AF555A7B9EE46BDCD521ED8E7FB",
+    "9AFF2B725B0CB1EB7BAC63EAEDFE7C33A9FD7F20A4011AB0C45699860FC15B34EF04135174941CEF3CDAD033D3EC6009",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -432,6 +480,92 @@ mod tests {
                 migration.version
             );
         }
+    }
+
+    #[test]
+    fn reward_kind_migration_separates_provenance_from_economic_treatment() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..34] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+
+        connection
+            .execute(
+                "INSERT INTO quests(id, name) VALUES (1, 'Reward fixture')",
+                [],
+            )
+            .expect("quest fixture");
+
+        for (session, source, ped) in [
+            ("included", "tracked_loot", None),
+            ("item", "tracked_loot", None),
+            ("liquid", "ledger", Some(2.0)),
+            ("mixed", "ledger", Some(2.0)),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO session_quest_completions \
+                     (session_id, quest_id, reward_source, reward_ped) \
+                     VALUES (?1, 1, ?2, ?3)",
+                    rusqlite::params![session, source, ped],
+                )
+                .expect("completion");
+        }
+        connection
+            .execute(
+                "INSERT INTO session_quest_completion_reward_items \
+                 (completion_id, item_name, quantity, value_ped) \
+                 SELECT id, 'Hyperion Daily Voucher', 1, 0 \
+                 FROM session_quest_completions WHERE session_id IN ('item', 'mixed')",
+                [],
+            )
+            .expect("reward items");
+
+        run(&mut connection).expect("reward-kind migration");
+
+        let rows = connection
+            .prepare(
+                "SELECT session_id, reward_source, reward_kind \
+                 FROM session_quest_completions ORDER BY id",
+            )
+            .expect("query")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect");
+        assert_eq!(
+            rows,
+            [
+                (
+                    "included".into(),
+                    "tracked_loot".into(),
+                    "included_in_loot".into()
+                ),
+                ("item".into(), "tracked_loot".into(), "item".into()),
+                ("liquid".into(), "ledger".into(), "fixed_liquid".into()),
+                ("mixed".into(), "ledger".into(), "fixed_liquid".into()),
+            ]
+        );
     }
 
     #[test]

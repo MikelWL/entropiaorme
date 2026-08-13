@@ -58,6 +58,7 @@ beforeEach(() => {
 			{
 				itemName: 'Animal Oil Residue',
 				markupPct: 125,
+				unitPricePed: null,
 				horizon: 'week',
 				salesPed: 1_000,
 				recommendedPacketTt: 39.2,
@@ -165,6 +166,7 @@ describe('central inventory model', () => {
 				{
 					itemName: 'Animal Oil Residue',
 					markupPct: 110,
+					unitPricePed: null,
 					horizon: 'month',
 					salesPed: 100,
 					recommendedPacketTt: 98,

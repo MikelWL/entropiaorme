@@ -368,6 +368,9 @@ export function projectRewardItems(
 	return items.reduce((sum, item) => {
 		const marketItem = marketByItem.get(item.itemName);
 		if (!market || !marketItem) return sum + item.valuePed;
+		if (marketItem.unitPricePed !== null) {
+			return sum + item.quantity * marketItem.unitPricePed;
+		}
 		const opportunity = marketOpportunity(marketItem, nanocube);
 		const applied = effectiveMarkup(opportunity, nanocube, confidenceMode);
 		const markupPct = opportunity.usesNanocube || applied.floored ? 100 : applied.markupPct;
