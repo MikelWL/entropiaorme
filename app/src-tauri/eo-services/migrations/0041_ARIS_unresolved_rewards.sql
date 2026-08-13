@@ -1,5 +1,5 @@
 -- Surface historical ARIS completions whose voucher could not be attributed
--- exactly during guarded doctoring. Preserve the absence of invented evidence.
+-- exactly from the available historical evidence. Preserve the absence of invented evidence.
 
 UPDATE session_quest_completions
 SET reward_outcome = 'unresolved',
