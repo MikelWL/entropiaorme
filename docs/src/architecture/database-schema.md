@@ -732,8 +732,11 @@ activity's TT return.
 - `stock_removals` records that a quantity is no longer held when its outcome
   is unknown. It has no ledger effect, so historical loot TT remains intact.
 - `stock_movements` is the signed, provenance-aware inventory ledger. Its
-  source dimensions carry harvesting tier/tool or Hunting species/session
-  definition through transformations and into realised outcomes.
+  source kind carries Hunting independently of its optional observed species;
+  harvesting tier/tool and Hunting species/session definition remain
+  downstream analytical dimensions through transformations and into realised
+  outcomes. Missing mob evidence therefore limits target detail without
+  suppressing stock or activity attribution.
 
 Every outcome can be undone as a correction while retaining its lifecycle row
 marked as undone. A conversion undo is refused if later movements have already
