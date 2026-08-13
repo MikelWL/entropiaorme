@@ -1899,15 +1899,24 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     let source = db
         .with_reader(move |conn| {
             Ok(conn.query_row(
-                "SELECT reward_source, reward_ped FROM session_quest_completions \
+                "SELECT reward_source, reward_kind, reward_ped FROM session_quest_completions \
                  WHERE quest_id = ?",
                 params![boss],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
             )?)
         })
         .await
         .unwrap();
-    assert_eq!(source, ("tracked_loot".to_string(), None));
+    assert_eq!(
+        source,
+        ("tracked_loot".to_string(), "item".to_string(), None)
+    );
     let reward_item = db
         .with_reader(move |conn| {
             Ok(conn.query_row(

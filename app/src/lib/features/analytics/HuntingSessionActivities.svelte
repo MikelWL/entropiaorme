@@ -58,6 +58,8 @@
 				return 'In loot';
 			case 'fixed_liquid':
 				return `+${formatPed(activity.confirmedRewardPed)}`;
+			case 'item':
+				return formatPed(activity.confirmedRewardPed);
 			case 'skill':
 				return 'Skill';
 			case 'mixed':
@@ -74,6 +76,8 @@
 				return 'The completion payout is already present in tracked loot and is not added again.';
 			case 'fixed_liquid':
 				return 'A separately recorded liquid reward is linked to this completion and added exactly once.';
+			case 'item':
+				return 'The completion reward was separated from ordinary loot. Its observed TT is counted here; current market value is shown separately as Reward MU.';
 			case 'skill':
 				return 'The completion paid progression value. It remains outside PED profit.';
 			case 'mixed':
@@ -147,9 +151,9 @@
 				data-testid="activity-economic-grid"
 			>
 				<StatDisplay
-					label="Reward"
+					label="Reward TT"
 					value={rewardValue(selected)}
-					unit={selected.rewardStatus === 'fixed_liquid' ? 'PED' : ''}
+					unit={['fixed_liquid', 'item'].includes(selected.rewardStatus) ? 'PED' : ''}
 					labelSuffix={rewardTip}
 				/>
 				<StatDisplay

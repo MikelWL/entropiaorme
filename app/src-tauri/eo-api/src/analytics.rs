@@ -266,6 +266,7 @@ pub enum HuntingRewardStatus {
     None,
     IncludedInLoot,
     FixedLiquid,
+    Item,
     Skill,
     Mixed,
     Unverified,
@@ -276,6 +277,7 @@ impl HuntingRewardStatus {
         match status {
             "included_in_loot" => Self::IncludedInLoot,
             "fixed_liquid" => Self::FixedLiquid,
+            "item" => Self::Item,
             "skill" => Self::Skill,
             "mixed" => Self::Mixed,
             "unverified" => Self::Unverified,

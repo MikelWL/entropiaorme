@@ -461,13 +461,13 @@ pub struct HuntingSignatureRow {
     pub returns: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
-    /// Confirmed liquid reward recorded separately from tracked loot.
+    /// Confirmed reward TT recorded separately from ordinary loot.
     pub confirmed_reward_ped: f64,
     /// Actual reward items observed at completion. Their current market
     /// projection is resolved outside the accounting service.
     pub reward_items: Vec<HarvestLootItemRow>,
-    /// `none`, `tracked_loot`, `ledger`, `skill`, `mixed`, or
-    /// `unverified` for completions predating immutable provenance.
+    /// `none`, `included_in_loot`, `fixed_liquid`, `item`, `skill`, `mixed`,
+    /// or `unverified` for completions predating immutable treatment.
     pub reward_status: String,
     pub loot_items: Vec<HarvestLootItemRow>,
     pub variants: Vec<HuntingSignatureRow>,
@@ -2074,7 +2074,7 @@ struct SignatureAgg {
     pes: f64,
     duration_hours: f64,
     confirmed_reward_ped: f64,
-    reward_sources: std::collections::BTreeSet<String>,
+    reward_kinds: std::collections::BTreeSet<String>,
     reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
     reward_unverified: bool,
@@ -2753,7 +2753,7 @@ fn hunting_activity_read(
         }
     }
 
-    // Completion-time reward facts. A NULL source is deliberately not
+    // Completion-time reward facts. A NULL kind is deliberately not
     // valued: it names a legacy completion whose current quest definition
     // must never rewrite its history.
     let mut context_rewards: HashMap<i64, (f64, BTreeSet<String>)> = HashMap::new();
@@ -2762,7 +2762,7 @@ fn hunting_activity_read(
     {
         let mut stmt = conn.prepare(
             "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
-                    sqc.reward_source, sqc.reward_ped \
+                    sqc.reward_kind, sqc.reward_ped \
              FROM session_quest_completions sqc \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
         )?;
@@ -2771,8 +2771,8 @@ fn hunting_activity_read(
             let session_id: String = row.get(0)?;
             let quest_id: i64 = row.get(1)?;
             let context_id: Option<i64> = row.get(2)?;
-            let source: Option<String> = row.get(3)?;
-            let Some(source) = source else {
+            let kind: Option<String> = row.get(3)?;
+            let Some(kind) = kind else {
                 if let Some(session) = sessions.get(&session_id) {
                     legacy_quests
                         .entry(session.definition_id)
@@ -2787,12 +2787,12 @@ fn hunting_activity_read(
             let reward = context_rewards
                 .entry(context_id)
                 .or_insert_with(|| (0.0, BTreeSet::new()));
-            if source == "ledger" {
+            if matches!(kind.as_str(), "fixed_liquid" | "mixed") {
                 let reward_ped = row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
                 reward.0 += reward_ped;
             }
-            if source != "none" {
-                reward.1.insert(source);
+            if kind != "none" {
+                reward.1.insert(kind);
             }
         }
     }
@@ -2808,10 +2808,15 @@ fn hunting_activity_read(
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            context_reward_items.entry(row.get(0)?).or_default().insert(
-                row.get(1)?,
-                (row.get::<_, i64>(2).unwrap_or(0), as_float(row, 3)),
-            );
+            let context_id = row.get(0)?;
+            let value = as_float(row, 3);
+            context_reward_items
+                .entry(context_id)
+                .or_default()
+                .insert(row.get(1)?, (row.get::<_, i64>(2).unwrap_or(0), value));
+            let reward = context_rewards.entry(context_id).or_default();
+            reward.0 += value;
+            reward.1.insert("item".to_string());
         }
     }
 
@@ -2863,9 +2868,9 @@ fn hunting_activity_read(
             if let Some(pes) = context_pes.get(context_id) {
                 agg.pes += pes;
             }
-            if let Some((reward_ped, sources)) = context_rewards.get(context_id) {
+            if let Some((reward_ped, kinds)) = context_rewards.get(context_id) {
                 agg.confirmed_reward_ped += reward_ped;
-                agg.reward_sources.extend(sources.iter().cloned());
+                agg.reward_kinds.extend(kinds.iter().cloned());
             }
             if let Some(items) = context_reward_items.get(context_id) {
                 for (name, (quantity, value)) in items {
@@ -3072,12 +3077,14 @@ fn assemble_signatures(
         if agg.reward_unverified {
             return "unverified".to_string();
         }
-        match agg.reward_sources.len() {
+        match agg.reward_kinds.len() {
             0 => "none".to_string(),
-            1 => match agg.reward_sources.iter().next().map(String::as_str) {
-                Some("tracked_loot") => "included_in_loot".to_string(),
-                Some("ledger") => "fixed_liquid".to_string(),
+            1 => match agg.reward_kinds.iter().next().map(String::as_str) {
+                Some("included_in_loot") => "included_in_loot".to_string(),
+                Some("fixed_liquid") => "fixed_liquid".to_string(),
+                Some("item") => "item".to_string(),
                 Some("skill") => "skill".to_string(),
+                Some("mixed") => "mixed".to_string(),
                 _ => "none".to_string(),
             },
             _ => "mixed".to_string(),
@@ -9611,9 +9618,9 @@ mod tests {
                 conn.execute(
                     "INSERT INTO session_quest_completions \
                      (session_id, quest_id, completed_at, activity_context_id, \
-                      activity_interval_id, reward_source, reward_ped, \
+                      activity_interval_id, reward_source, reward_kind, reward_ped, \
                       expected_reward_markup_percent) \
-                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 4.0, 150.0)",
+                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 'fixed_liquid', 4.0, 150.0)",
                     [],
                 )?;
                 conn.execute(
@@ -9770,11 +9777,11 @@ mod tests {
         assert!((family.cycled - 7.5).abs() < 1e-9);
         assert!((family.pes - 0.8).abs() < 1e-9);
         assert_eq!(family.runs, 1);
-        assert_eq!(family.confirmed_reward_ped, 4.0);
+        assert_eq!(family.confirmed_reward_ped, 8.0);
         assert_eq!(family.reward_items.len(), 1);
         assert_eq!(family.reward_items[0].item_name, "Universal Ammo");
         assert_eq!(family.reward_items[0].value_ped, 4.0);
-        assert_eq!(family.reward_status, "fixed_liquid");
+        assert_eq!(family.reward_status, "mixed");
         assert_eq!(family.loot_items.len(), 1);
         assert_eq!(family.loot_items[0].item_name, "Animal Muscle Oil");
         assert_eq!(family.loot_items[0].quantity, 60);

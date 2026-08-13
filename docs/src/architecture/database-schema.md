@@ -66,7 +66,11 @@ removals, deliberate Shrapnel conversion gains, and the corresponding
 provenance-aware movement kinds), and `0032_inventory_hub.sql` (the equipment
 holding lifecycle and the shared loot/equipment market-listing identity), and
 `0033_listing_duration.sql` plus `0034_listing_instant.sql` (how long a listing
-runs and the instant it started, from which its expiry is derived). The
+runs and the instant it started, from which its expiry is derived), and
+`0035_quest_reward_kinds.sql` (the canonical economic treatment of each quest
+reward, kept separate from its evidence provenance), and
+`0036_mixed_quest_reward_kinds.sql` (preservation of a primary liquid or
+progression treatment when item evidence is also present). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -406,6 +410,7 @@ Records that a given quest was completed during a given session. The
 | `activity_context_id` | INTEGER | Optional reference to `session_contexts(id)`. The exact declared activity signature in force immediately before completion; indexed when present. |
 | `activity_interval_id` | INTEGER | Optional reference to `session_intervals(id)`. The declared quest stretch that earned the completion. |
 | `reward_source` | TEXT | Nullable for legacy completions; otherwise one of `none`, `tracked_loot`, `ledger`, or `skill`. |
+| `reward_kind` | TEXT | Nullable for unclassified legacy completions; otherwise the canonical primary economic treatment: `none`, `included_in_loot`, `fixed_liquid`, `item`, or `skill`. This is deliberately separate from evidence provenance; analytics reports `mixed` when item evidence accompanies another treatment. |
 | `reward_ped` | REAL | Optional immutable completion-time reward value. Liquid PED enters activity economics; skill value remains progression. |
 | `expected_reward_markup_percent` | REAL | Optional legacy completion-time snapshot. Retained for compatibility; Hunting projections do not consume it. |
 | `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |

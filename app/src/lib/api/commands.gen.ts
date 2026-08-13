@@ -982,7 +982,7 @@ export interface HuntingRealisedMarkup {
 	definitions: RealisedDefinitionMarkup[];
 }
 
-export type HuntingRewardStatus = 'none' | 'included_in_loot' | 'fixed_liquid' | 'skill' | 'mixed' | 'unverified';
+export type HuntingRewardStatus = 'none' | 'included_in_loot' | 'fixed_liquid' | 'item' | 'skill' | 'mixed' | 'unverified';
 
 /**
  * One observed species' aggregate; the unclassified bucket carries an

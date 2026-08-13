@@ -123,6 +123,13 @@ impl QuestService {
             None if completion_had_tracked_loot => "tracked_loot",
             None => "none",
         };
+        let reward_kind = match reward_source {
+            "ledger" => "fixed_liquid",
+            "skill" => "skill",
+            _ if !reward_items.is_empty() => "item",
+            "tracked_loot" => "included_in_loot",
+            _ => "none",
+        };
         let expected_markup = quest
             .get("expected_reward_markup_percent")
             .and_then(Value::as_f64);
@@ -147,9 +154,9 @@ impl QuestService {
                 let inserted = tx.execute(
                     "INSERT OR IGNORE INTO session_quest_completions \
                      (session_id, quest_id, completed_at, activity_context_id, \
-                      activity_interval_id, reward_source, reward_ped, \
+                      activity_interval_id, reward_source, reward_kind, reward_ped, \
                       expected_reward_markup_percent) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         completion_key,
                         quest_id,
@@ -157,6 +164,7 @@ impl QuestService {
                         activity_context_id,
                         activity_interval_id,
                         reward_source,
+                        reward_kind,
                         reward_value,
                         expected_markup,
                     ],
