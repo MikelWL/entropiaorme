@@ -34,6 +34,11 @@ parse, and commits it.
   It deliberately does not constrain the parcel by traded volume. The ranking
   reads the accounting tables directly; the reverse direction is forbidden
   (see the boundary below).
+- The Import tab also accepts a manual absolute PED-per-unit observation for
+  zero-TT and unit-priced items. These append to
+  `market_unit_price_observations`; reward projection multiplies the observed
+  reward quantity by the latest unit quote. The quote is informational only,
+  just like percentage markup.
 - `eo-api/src/market.rs` is the typed command family over those reads,
   consumed by the Market page (`app/src/lib/features/market/`).
 
@@ -67,8 +72,8 @@ Client-side, the flow is deliberately consent-shaped
 
 ## The accounting boundary
 
-Estimated markup is an informational data class. It never joins the
-ledger, the analytics aggregates, or any realised rate; markup becomes
+Estimated markup and absolute unit price are informational data classes. They
+never join the ledger, the accounting aggregates, or any realised rate; value becomes
 profit-and-loss only when a confirmed sale is entered in the ledger. The
 boundary is one-directional (the market layer may read accounting data;
 the accounting surfaces may never reference the market layer) and

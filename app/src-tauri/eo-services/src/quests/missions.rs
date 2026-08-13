@@ -12,12 +12,9 @@ use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
 use crate::difflib::sequence_ratio;
 use crate::ped::Ped;
 
-use super::lifecycle::{NotableEventKind, RewardItemEvidence};
+use super::lifecycle::{NotableEventKind, RewardCapture, RewardItemEvidence};
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
-
-/// Loot values this close to the reward (in PED) count as its echo.
-const REWARD_MATCH_TOLERANCE: Ped = Ped(0.02);
 
 /// Stripped from chat.log mission names before matching.
 static REPEATABLE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
@@ -201,34 +198,72 @@ impl QuestService {
     /// one run; a stacked line's quantity is that many markers); when
     /// several in-progress quests share a signal item, the
     /// oldest-started completes first, deterministically. No reward
-    /// bookkeeping and no suppression happen here: a signal quest's
-    /// reward IS the tracked loot, so completion only records the
-    /// lifecycle fact, the overlay event, and the stretch close.
+    /// The marker may independently be a named reward. In that case the
+    /// pre-publish filter suppresses only a whole line whose units can all be
+    /// assigned safely; this post-publish probe mirrors that assignment.
+    pub async fn signal_reward_filter(
+        &self,
+        loot_items: &[Value],
+    ) -> Result<Option<Value>, QuestError> {
+        let mut candidates: Vec<Value> = self
+            .get_quests(true)
+            .await?
+            .into_iter()
+            .filter(|quest| {
+                json_truthy(quest.get("started_at"))
+                    && quest.get("completion_trigger").and_then(Value::as_str)
+                        == Some("signal_item")
+            })
+            .collect();
+        candidates.sort_by(signal_candidate_order);
+        let mut indices = Vec::new();
+        for (index, item) in loot_items.iter().enumerate() {
+            let name = item
+                .get("item_name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let quantity = item
+                .get("quantity")
+                .and_then(Value::as_i64)
+                .unwrap_or(1)
+                .max(1);
+            let matching: Vec<&Value> = candidates
+                .iter()
+                .filter(|quest| {
+                    quest
+                        .get("signal_loot_item")
+                        .and_then(Value::as_str)
+                        .is_some_and(|signal| signal.trim().eq_ignore_ascii_case(name))
+                })
+                .collect();
+            let safely_owned = quantity as usize <= matching.len()
+                && matching
+                    .iter()
+                    .take(quantity as usize)
+                    .all(|quest| signal_is_named_reward(quest, name));
+            if safely_owned {
+                indices.push(index);
+            }
+        }
+        Ok((!indices.is_empty()).then(|| json!({ "suppress_loot_indices": indices })))
+    }
+
     pub async fn signal_loot_check(&self, loot: &[SignalLoot]) -> Result<(), QuestError> {
         if loot.is_empty() {
             return Ok(());
         }
-        let candidates: Vec<(i64, String, String)> = self
-            .db
-            .with_reader(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, signal_loot_item FROM quests \
-                     WHERE is_active = 1 AND started_at IS NOT NULL \
-                       AND signal_loot_item IS NOT NULL \
-                     ORDER BY started_at ASC, id ASC",
-                )?;
-                let mut rows = stmt.query([])?;
-                let mut out = Vec::new();
-                while let Some(row) = rows.next()? {
-                    out.push((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ));
-                }
-                Ok(out)
+        let mut candidates: Vec<Value> = self
+            .get_quests(true)
+            .await?
+            .into_iter()
+            .filter(|quest| {
+                json_truthy(quest.get("started_at"))
+                    && quest.get("completion_trigger").and_then(Value::as_str)
+                        == Some("signal_item")
             })
-            .await?;
+            .collect();
+        candidates.sort_by(signal_candidate_order);
         if candidates.is_empty() {
             return Ok(());
         }
@@ -238,31 +273,63 @@ impl QuestService {
         // candidate walk draws down, so a single marker never completes
         // two quests sharing it, and two markers in one tick (two runs
         // paid at once) complete two, stacked or not.
-        let mut budget: std::collections::HashMap<String, Vec<RewardItemEvidence>> =
-            std::collections::HashMap::new();
+        let mut assignments: Vec<(Value, RewardItemEvidence)> = Vec::new();
+        let mut used: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for line in loot {
             let quantity = line.quantity.max(1);
+            let key = line.item_name.trim().to_ascii_lowercase();
+            let matching: Vec<&Value> = candidates
+                .iter()
+                .filter(|quest| {
+                    quest
+                        .get("signal_loot_item")
+                        .and_then(Value::as_str)
+                        .is_some_and(|signal| signal.trim().eq_ignore_ascii_case(&line.item_name))
+                })
+                .collect();
+            let offset = used.entry(key).or_default();
+            let assigned: Vec<&Value> = matching
+                .iter()
+                .skip(*offset)
+                .take(quantity as usize)
+                .copied()
+                .collect();
+            *offset += assigned.len();
+            let named_count = assigned
+                .iter()
+                .filter(|quest| signal_is_named_reward(quest, &line.item_name))
+                .count();
+            let whole_line_safely_named = assigned.len() == quantity as usize
+                && !assigned.is_empty()
+                && named_count == assigned.len();
             let unit_value = line.value_ped * (1.0 / quantity as f64);
-            budget
-                .entry(line.item_name.trim().to_ascii_lowercase())
-                .or_default()
-                .extend((0..quantity).map(|_| RewardItemEvidence {
-                    item_name: line.item_name.trim().to_string(),
-                    quantity: 1,
-                    value_ped: unit_value,
-                }));
+            for quest in assigned {
+                let is_named = signal_is_named_reward(quest, &line.item_name);
+                if is_named && !whole_line_safely_named {
+                    continue;
+                }
+                assignments.push((
+                    quest.clone(),
+                    RewardItemEvidence {
+                        item_name: line.item_name.trim().to_string(),
+                        quantity: 1,
+                        value_ped: unit_value,
+                    },
+                ));
+            }
         }
-        for (quest_id, quest_name, signal) in candidates {
-            let key = signal.trim().to_ascii_lowercase();
-            let Some(remaining) = budget.get_mut(&key) else {
-                continue;
-            };
-            let Some(reward_item) = remaining.pop() else {
-                continue;
-            };
-            self.complete_quest_with_loot_evidence(quest_id, vec![reward_item])
+        for (quest, reward_item) in assignments {
+            let quest_id = quest["id"].as_i64().expect("quest id");
+            let quest_name = quest["name"].as_str().expect("quest name");
+            let tick_item = json!({
+                "item_name": reward_item.item_name,
+                "quantity": reward_item.quantity,
+                "value": reward_item.value_ped.value(),
+            });
+            let decision = reward_decision(&quest, &[tick_item], &[], false);
+            self.complete_quest_with_reward_capture(quest_id, decision.capture())
                 .await?;
-            self.record_notable_event(NotableEventKind::Completed, &quest_name, Ped::ZERO)
+            self.record_notable_event(NotableEventKind::Completed, quest_name, Ped::ZERO)
                 .await;
         }
         Ok(())
@@ -282,11 +349,22 @@ impl QuestService {
         loot_items: &[Value],
         skill_gains: &[Value],
     ) -> Result<Option<Value>, QuestError> {
+        self.quest_reward_filter_with_context(mission_name, loot_items, skill_gains, true)
+            .await
+    }
+
+    pub async fn quest_reward_filter_with_context(
+        &self,
+        mission_name: &str,
+        loot_items: &[Value],
+        skill_gains: &[Value],
+        isolated_completion_tick: bool,
+    ) -> Result<Option<Value>, QuestError> {
         let Some(quest) = self.match_quest_by_mission_name(mission_name, true).await? else {
             return Ok(None);
         };
-        let (result, _) = reward_suppression(&quest, loot_items, skill_gains);
-        Ok(result)
+        let decision = reward_decision(&quest, loot_items, skill_gains, isolated_completion_tick);
+        Ok(decision.suppression_json())
     }
 
     /// A flushed tick's mission completions, strictly AFTER the tick's
@@ -307,27 +385,19 @@ impl QuestService {
                 continue;
             };
             let quest_id = quest["id"].as_i64().expect("quest id");
-            let (suppression, suppressed_desc) =
-                reward_suppression(&quest, &completion.loot_items, &completion.skill_gains);
-            let reward_items = suppression
-                .as_ref()
-                .and_then(|value| value.get("suppress_loot_index"))
-                .and_then(Value::as_u64)
-                .and_then(|index| completion.loot_items.get(index as usize))
-                .and_then(reward_item_evidence)
-                .into_iter()
-                .collect();
-            if completion.loot_items.is_empty() {
-                self.complete_quest(quest_id).await?;
-            } else {
-                self.complete_quest_with_loot_evidence(quest_id, reward_items)
-                    .await?;
-            }
+            let decision = reward_decision(
+                &quest,
+                &completion.loot_items,
+                &completion.skill_gains,
+                completion.isolated,
+            );
+            self.complete_quest_with_reward_capture(quest_id, decision.capture())
+                .await?;
 
             let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
             let is_skill = json_truthy(quest.get("reward_is_skill"));
             let mut description = quest["name"].as_str().expect("quest name").to_string();
-            if let Some(suppressed) = suppressed_desc {
+            if let Some(suppressed) = decision.description {
                 description.push_str(": ");
                 description.push_str(&suppressed);
             }
@@ -341,6 +411,25 @@ impl QuestService {
         }
         Ok(())
     }
+}
+
+fn signal_candidate_order(a: &Value, b: &Value) -> std::cmp::Ordering {
+    a.get("started_at")
+        .and_then(Value::as_f64)
+        .partial_cmp(&b.get("started_at").and_then(Value::as_f64))
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a["id"].as_i64().cmp(&b["id"].as_i64()))
+}
+
+fn signal_is_named_reward(quest: &Value, item_name: &str) -> bool {
+    quest.get("reward_policy").and_then(Value::as_str) == Some("named_items")
+        && quest
+            .get("reward_item_names")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|reward| reward.trim().eq_ignore_ascii_case(item_name.trim()))
 }
 
 fn reward_item_evidence(item: &Value) -> Option<RewardItemEvidence> {
@@ -363,82 +452,145 @@ fn reward_item_evidence(item: &Value) -> Option<RewardItemEvidence> {
     })
 }
 
-/// The reward-echo decision for one completion: which loot item or
-/// skill gain (by index) duplicates the quest's configured reward, plus
-/// the overlay description of what got suppressed. Pure over the
-/// quest row and the tick's data, so the pre-publish filter and the
-/// post-publish completion check derive the SAME picture from it.
-fn reward_suppression(
+#[derive(Debug, Clone)]
+struct RewardDecision {
+    outcome: &'static str,
+    policy: String,
+    loot_indices: Vec<usize>,
+    skill_indices: Vec<usize>,
+    items: Vec<RewardItemEvidence>,
+    reason: Option<String>,
+    description: Option<String>,
+    evidence_json: String,
+}
+
+impl RewardDecision {
+    fn suppression_json(&self) -> Option<Value> {
+        (!self.loot_indices.is_empty() || !self.skill_indices.is_empty()).then(|| {
+            json!({
+                "suppress_loot_indices": self.loot_indices,
+                "suppress_skill_indices": self.skill_indices,
+            })
+        })
+    }
+
+    fn capture(&self) -> RewardCapture {
+        RewardCapture {
+            outcome: self.outcome,
+            policy_snapshot: self.policy.clone(),
+            items: self.items.clone(),
+            unresolved_reason: self.reason.clone(),
+            evidence_json: Some(self.evidence_json.clone()),
+            had_tracked_loot: !self.loot_indices.is_empty(),
+        }
+    }
+}
+
+/// One deterministic decision shared by pre-publish suppression and
+/// post-publish immutable completion persistence.
+fn reward_decision(
     quest: &Value,
     loot_items: &[Value],
     skill_gains: &[Value],
-) -> (Option<Value>, Option<String>) {
-    let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-    let is_skill = json_truthy(quest.get("reward_is_skill"));
-    let mut result = None;
-    let mut suppressed_desc: Option<String> = None;
-
-    if is_skill {
-        // The in-game skill pop-up is the same PES reward just
-        // recorded as a claim; suppress it from tracking.
-        if !skill_gains.is_empty() {
-            result = Some(json!({
-                "suppress_loot_index": null,
-                "suppress_skill_index": 0,
-            }));
-            suppressed_desc = Some("skill reward suppressed".to_string());
-        }
-    } else if let Some(reward) = reward_ped {
-        if !loot_items.is_empty() {
-            if reward.is_positive() {
-                let mut best_idx: Option<usize> = None;
-                let mut best_diff = Ped(f64::INFINITY);
-                for (index, item) in loot_items.iter().enumerate() {
-                    let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
-                    let diff = (value - reward).abs();
-                    if diff < best_diff && diff <= REWARD_MATCH_TOLERANCE {
-                        best_diff = diff;
-                        best_idx = Some(index);
-                    }
-                }
-                if let Some(best_idx) = best_idx {
-                    result = Some(json!({
-                        "suppress_loot_index": best_idx,
-                        "suppress_skill_index": null,
-                    }));
-                    let item_name = loot_items[best_idx]
-                        .get("item_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("?");
-                    suppressed_desc = Some(format!(
-                        "{item_name} ({:.2} PED) suppressed",
-                        reward.value()
-                    ));
-                }
-            } else {
-                // A non-positive reward still suppresses the
-                // cheapest item of the tick.
-                let mut min_idx = 0usize;
-                let mut min_value = Ped(f64::INFINITY);
-                for (index, item) in loot_items.iter().enumerate() {
-                    let value = Ped(item.get("value").and_then(Value::as_f64).unwrap_or(0.0));
-                    if value < min_value {
-                        min_value = value;
-                        min_idx = index;
-                    }
-                }
-                result = Some(json!({
-                    "suppress_loot_index": min_idx,
-                    "suppress_skill_index": null,
-                }));
-                let item_name = loot_items[min_idx]
-                    .get("item_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("?");
-                suppressed_desc = Some(format!("{item_name} suppressed"));
+    isolated_completion_tick: bool,
+) -> RewardDecision {
+    let policy = quest
+        .get("reward_policy")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .to_string();
+    let evidence_json = json!({
+        "loot": loot_items,
+        "skills": skill_gains,
+        "isolated": isolated_completion_tick,
+    })
+    .to_string();
+    let mut decision = RewardDecision {
+        outcome: if policy == "none" {
+            "none"
+        } else {
+            "confirmed"
+        },
+        policy: policy.clone(),
+        loot_indices: Vec::new(),
+        skill_indices: Vec::new(),
+        items: Vec::new(),
+        reason: None,
+        description: None,
+        evidence_json,
+    };
+    match policy.as_str() {
+        "none" | "fixed_ped" => {}
+        "fixed_pes" => {
+            if !skill_gains.is_empty() {
+                decision.skill_indices.push(0);
+                decision.description = Some("skill reward separated".to_string());
             }
         }
+        "named_items" => {
+            let expected: Vec<String> = quest
+                .get("reward_item_names")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|name| name.trim().to_ascii_lowercase())
+                .filter(|name| !name.is_empty())
+                .collect();
+            for (index, item) in loot_items.iter().enumerate() {
+                let name = item
+                    .get("item_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                if expected.iter().any(|expected| expected == &name) {
+                    decision.loot_indices.push(index);
+                    if let Some(item) = reward_item_evidence(item) {
+                        decision.items.push(item);
+                    }
+                }
+            }
+            let found_all = expected.iter().all(|expected| {
+                decision
+                    .items
+                    .iter()
+                    .any(|item| item.item_name.trim().eq_ignore_ascii_case(expected))
+            });
+            if expected.is_empty() || !found_all {
+                decision.outcome = "unresolved";
+                decision.loot_indices.clear();
+                decision.items.clear();
+                decision.reason =
+                    Some("One or more expected reward items were missing".to_string());
+            } else {
+                decision.description = Some(format!(
+                    "{} reward item line(s) separated",
+                    decision.items.len()
+                ));
+            }
+        }
+        "completion_clump" => {
+            if isolated_completion_tick && !loot_items.is_empty() {
+                decision.loot_indices = (0..loot_items.len()).collect();
+                decision.items = loot_items.iter().filter_map(reward_item_evidence).collect();
+                decision.description = Some(format!(
+                    "{} completion reward line(s) separated",
+                    decision.items.len()
+                ));
+            } else {
+                decision.outcome = "unresolved";
+                decision.reason = Some(if loot_items.is_empty() {
+                    "The completion carried no reward loot".to_string()
+                } else {
+                    "The completion tick also carried activity evidence".to_string()
+                });
+            }
+        }
+        _ => {
+            decision.outcome = "unresolved";
+            decision.reason = Some("The stored reward policy is unsupported".to_string());
+        }
     }
-
-    (result, suppressed_desc)
+    decision
 }

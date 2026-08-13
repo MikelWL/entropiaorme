@@ -34,6 +34,7 @@ mod missions;
 mod offers;
 mod payload;
 mod playlists;
+mod review;
 #[cfg(test)]
 mod tests;
 
@@ -63,7 +64,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::chatlog_watcher::QuestRewardFilter;
+use crate::chatlog_watcher::{QuestRewardFilter, SignalRewardFilter};
 use crate::clock::Clock;
 use crate::db::Db;
 use crate::event_bus::EventBus;
@@ -203,15 +204,40 @@ impl QuestService {
     /// exactly as the original contains a filter exception.
     pub fn watcher_filter(&self) -> QuestRewardFilter {
         let pump = self.pump.clone();
-        Arc::new(move |mission_name, loot_items, skill_gains| {
+        Arc::new(
+            move |mission_name, loot_items, skill_gains, isolated_completion_tick| {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let message = QuestMsg::RewardFilter {
+                    mission_name: mission_name.to_string(),
+                    loot_items: loot_items.to_vec(),
+                    skill_gains: skill_gains.to_vec(),
+                    isolated_completion_tick,
+                    reply: reply_tx,
+                };
+                if pump.send(message).is_err() {
+                    return None;
+                }
+                let result = if Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| reply_rx.blocking_recv())
+                } else {
+                    reply_rx.blocking_recv()
+                };
+                result.unwrap_or(None)
+            },
+        )
+    }
+
+    pub fn watcher_signal_filter(&self) -> SignalRewardFilter {
+        let pump = self.pump.clone();
+        Arc::new(move |loot_items| {
             let (reply_tx, reply_rx) = oneshot::channel();
-            let message = QuestMsg::RewardFilter {
-                mission_name: mission_name.to_string(),
-                loot_items: loot_items.to_vec(),
-                skill_gains: skill_gains.to_vec(),
-                reply: reply_tx,
-            };
-            if pump.send(message).is_err() {
+            if pump
+                .send(QuestMsg::SignalRewardFilter {
+                    loot_items: loot_items.to_vec(),
+                    reply: reply_tx,
+                })
+                .is_err()
+            {
                 return None;
             }
             let result = if Handle::try_current().is_ok() {

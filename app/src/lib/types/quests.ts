@@ -12,6 +12,7 @@ export type {
 	PlaylistItemGroup,
 	Quest,
 	QuestAnalyticsRow,
+	QuestCompletionTrigger,
 	QuestCooldownAnchor,
 	QuestFamily,
 	QuestFamilyInput as QuestFamilyCreateData,
@@ -19,4 +20,5 @@ export type {
 	QuestInput as QuestCreateData,
 	QuestInput as QuestUpdateData,
 	QuestPlaylist,
+	QuestRewardPolicy,
 } from '$lib/api/commands.gen';

@@ -70,7 +70,13 @@ runs and the instant it started, from which its expiry is derived), and
 `0035_quest_reward_kinds.sql` (the canonical economic treatment of each quest
 reward, kept separate from its evidence provenance), and
 `0036_mixed_quest_reward_kinds.sql` (preservation of a primary liquid or
-progression treatment when item evidence is also present). The
+progression treatment when item evidence is also present),
+`0037_typed_quest_rewards.sql` (independent typed completion triggers and
+reward policies plus immutable confirmed, none, or unresolved outcomes),
+`0038_quest_runs.sql` (durable quest runs and their declared effort intervals),
+`0039_market_unit_prices.sql` (informational absolute PED-per-unit quotes), and
+`0040_quest_reward_reviews.sql` (append-only adjudication of ambiguous reward
+evidence with exact ordinary-loot reclassification). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -320,6 +326,8 @@ Quest definitions, including rewards, chain position, and activation state.
 | `chain_total` | INTEGER | Optional. |
 | `started_at` | REAL | Optional. |
 | `signal_loot_item` | TEXT | Optional (migration `0020`). Null uses the mission-log lifecycle; a value names the loot item whose arrival completes a signal-driven quest. |
+| `completion_trigger` | TEXT | `mission_log` or `signal_item`; independent of the reward policy. |
+| `reward_policy` | TEXT | `none`, `fixed_ped`, `fixed_pes`, `named_items`, or `completion_clump`. |
 | `family_id` | INTEGER | Optional reference to `quest_families(id)` (migration `0021`; indexed `idx_quests_family`). Null leaves the quest standalone. |
 | `cooldown_anchor` | TEXT | Not null; defaults to `'completion'` (migration `0021`). Selects whether this quest's cooldown runs from pickup or completion. |
 | `last_started_at` | REAL | Optional durable pickup timestamp (migration `0021`), retained after `started_at` clears so pickup-anchored cooldown remains measurable. |
@@ -415,6 +423,11 @@ Records that a given quest was completed during a given session. The
 | `expected_reward_markup_percent` | REAL | Optional legacy completion-time snapshot. Retained for compatibility; Hunting projections do not consume it. |
 | `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |
 | `quest_claim_id` | INTEGER | Optional reference to the exact progression reward row in `quest_claims`. |
+| `reward_outcome` | TEXT | Immutable capture result: `confirmed`, `none`, or `unresolved`. |
+| `reward_policy_snapshot` | TEXT | The authored policy at completion time. |
+| `reward_unresolved_reason` | TEXT | Optional explanation for ambiguous or missing evidence. |
+| `reward_evidence_json` | TEXT | Optional exact completion-tick evidence used by the review surface. |
+| `quest_run_id` | INTEGER | Optional reference to the durable run that completion closed. |
 
 A `UNIQUE(session_id, quest_id)` constraint prevents duplicate completion rows.
 
@@ -431,6 +444,26 @@ item without usable market data remains at its recorded TT value.
 | `item_name` | TEXT | Not null; the observed item name. |
 | `quantity` | INTEGER | Not null and positive; the observed quantity. |
 | `value_ped` | REAL | Not null and non-negative; the completion-time TT value. |
+
+#### `quest_reward_item_rules`
+
+Quest-local item names that identify a `named_items` reward. The composite
+primary key is `(quest_id, item_name)`; `sort_order` preserves authoring order.
+
+#### `quest_runs` and `quest_run_intervals`
+
+`quest_runs` records one administrative lifecycle as `in_progress`, `completed`,
+or `cancelled`, with start/completion times and its completion id. A partial
+unique index permits only one in-progress run per quest. `quest_run_intervals`
+links every declared effort interval that earned the run, including intervals
+from several sessions.
+
+#### `quest_reward_reviews` and `quest_reward_review_items`
+
+Append-only decisions over originally unresolved completion evidence. A review
+records `confirmed` or `none`; confirmed item rows reference the exact ordinary
+loot acquisitions they reclassified, and each acquisition can be claimed only
+once. The original completion evidence remains unchanged.
 
 #### `session_quest_analytics_links`
 
@@ -750,6 +783,13 @@ per aggregation horizon).
 | `horizon` | TEXT | Not null; one of `day`, `week`, `month`, `year`, `decade`. |
 | `markup_pct` | REAL | Null where the export reported `N/A` (no sales in that horizon). |
 | `sales_ped` | REAL | Not null; TT turnover over the horizon, normalised to PED. |
+
+#### `market_unit_price_observations`
+
+Manual informational PED-per-unit quotes for zero-TT or unit-priced items.
+Each row carries the item name, non-negative unit price, observation time, and
+source. Reward MU multiplies a captured quantity by the latest unit quote;
+these rows never enter ledger or realised accounting.
 
 ### Cartography
 

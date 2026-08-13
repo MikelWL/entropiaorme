@@ -15,6 +15,7 @@ vi.mock('$lib/api', () => ({
 	getQuestAnalytics: vi.fn(),
 	getPlaylistAnalytics: vi.fn(),
 	getAnalyticsOverview: vi.fn(),
+	getMarketHuntMarkups: vi.fn(),
 }));
 
 import * as api from '$lib/api';
@@ -42,6 +43,9 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
+		completionTrigger: 'mission_log',
+		rewardPolicy: 'fixed_ped',
+		rewardItemNames: [],
 		cooldownAnchor: 'completion',
 		lastStartedAt: null,
 		familyId: null,
@@ -60,6 +64,7 @@ beforeEach(() => {
 	mocked.getQuests.mockResolvedValue([]);
 	mocked.getPlaylists.mockResolvedValue([]);
 	mocked.getQuestFamilies.mockResolvedValue([]);
+	mocked.getMarketHuntMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
 });
 
 describe('loadData', () => {

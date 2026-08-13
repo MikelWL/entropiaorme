@@ -3,7 +3,7 @@ import type { GuideSurface } from '../types';
 
 /** Quests-surface demoApi method names (declared here for documentation). */
 type QuestsDemoApi = {
-	setView(view: 'quests' | 'families' | 'playlists' | 'analytics'): void;
+	setView(view: 'quests' | 'families' | 'playlists' | 'review' | 'analytics'): void;
 	openNewQuestModal(): void;
 	closeNewQuestModal(): void;
 	closePlaylistModal(): void;
@@ -35,7 +35,7 @@ export const questsSurface: GuideSurface = {
 						kind: 'ul',
 						items: [
 							'Cooldown timers.',
-							'Automatically detecting quest start/completions, and automatically adding quest rewards to your ledger.',
+							'Automatically detecting quest starts and completions, with the configured extra reward kept separate from ordinary activity loot.',
 							'Analysing cost/reward of completing a quest or a quest playlist.',
 						],
 					},
@@ -55,7 +55,7 @@ export const questsSurface: GuideSurface = {
 						kind: 'ul',
 						items: [
 							'The name must match the in-game quest name. chat.log is read to automatically detect when a quest has been started/completed.',
-							'Set up reward value/cooldown to automatically add that reward to your ledger upon completion, and track cooldown.',
+							'Choose what proves completion, then define whether the extra reward is fixed PED, fixed PES, specific items, an isolated hand-in payout, or nothing separate.',
 							'Additional details are for your convenience.',
 						],
 					},

@@ -1028,6 +1028,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 mission_name: mission.to_string(),
                 loot_items: loot,
                 skill_gains: skills,
+                isolated: true,
             }])
             .await
             .unwrap();
@@ -1040,10 +1041,21 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Daily Hunt: Atrox", &[], &atrox_skills)
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": null, "suppress_skill_index": 0}))
+        Some(json!({"suppress_loot_indices": [], "suppress_skill_indices": [0]}))
     );
     complete_tick("Daily Hunt: Atrox", vec![], atrox_skills).await;
     clock.advance(60.0).unwrap();
+    svc.update_quest(
+        qa,
+        &json!({
+            "reward_policy": "named_items",
+            "reward_item_names": ["Universal Ammo"],
+            "reward_ped": null,
+            "reward_is_skill": false,
+        }),
+    )
+    .await
+    .unwrap();
     svc.start_quest(qa).await.unwrap().unwrap();
     let iron_loot = vec![
         json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
@@ -1053,7 +1065,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Iron Challenge", &iron_loot, &[])
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
+        Some(json!({"suppress_loot_indices": [1], "suppress_skill_indices": []}))
     );
     complete_tick("Iron Challenge", iron_loot, vec![]).await;
     clock.advance(60.0).unwrap();
@@ -1067,6 +1079,9 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
     );
     complete_tick("Iron Challenge", bare_loot, vec![]).await;
     clock.advance(60.0).unwrap();
+    svc.update_quest(qe, &json!({"reward_policy": "completion_clump"}))
+        .await
+        .unwrap();
     svc.start_quest(qe).await.unwrap().unwrap();
     let bounty_loot = vec![
         json!({"item_name": "A", "value": 0.5}),
@@ -1077,7 +1092,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         svc.quest_reward_filter("Zero Bounty", &bounty_loot, &[])
             .await
             .unwrap(),
-        Some(json!({"suppress_loot_index": 1, "suppress_skill_index": null}))
+        Some(json!({"suppress_loot_indices": [0, 1, 2], "suppress_skill_indices": []}))
     );
     complete_tick("Zero Bounty", bounty_loot, vec![]).await;
     clock.advance(60.0).unwrap();
@@ -1141,7 +1156,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 "sess-abc",
                 null,
                 "quest_completed_pes",
-                "Daily Hunt: Atrox: skill reward suppressed",
+                "Daily Hunt: Atrox: skill reward separated",
                 5.0,
                 1772366820.0
             ]),
@@ -1149,8 +1164,8 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 "sess-abc",
                 null,
                 "quest_completed",
-                "Iron Challenge: Universal Ammo (2.50 PED) suppressed",
-                2.5,
+                "Iron Challenge: 1 reward item line(s) separated",
+                0.0,
                 1772366880.0
             ]),
             json!([
@@ -1158,14 +1173,14 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
                 null,
                 "quest_completed",
                 "Iron Challenge",
-                2.5,
+                0.0,
                 1772366940.0
             ]),
             json!([
                 "sess-abc",
                 null,
                 "quest_completed",
-                "Zero Bounty: B suppressed",
+                "Zero Bounty: 3 completion reward line(s) separated",
                 0.0,
                 1772367000.0
             ]),
@@ -1192,7 +1207,7 @@ async fn the_lifecycle_walkthrough_matches_the_original() {
         })
         .await
         .unwrap();
-    assert_eq!(final_ledger, ["fixed-0003"]);
+    assert!(final_ledger.is_empty());
     let reward_items: Vec<(String, i64, f64)> = db
         .with_reader(move |conn| {
             let mut stmt = conn.prepare(
@@ -1292,7 +1307,7 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
 }
 
 #[tokio::test]
-async fn filter_ties_keep_the_first_item() {
+async fn fixed_and_zero_rewards_never_identify_loot_by_tt_proximity() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
     let tie = quest_id(
@@ -1308,8 +1323,7 @@ async fn filter_ties_keep_the_first_item() {
     svc.start_quest(tie).await.unwrap().unwrap();
     svc.start_quest(zed).await.unwrap().unwrap();
 
-    // Equal absolute differences (2.49 and 2.51 against 2.5) keep
-    // the first item, as the original's strictly-less tracking does.
+    // A fixed value is accounting, never item identity.
     assert_eq!(
         svc.quest_reward_filter(
             "Tie Quest",
@@ -1321,9 +1335,9 @@ async fn filter_ties_keep_the_first_item() {
         )
         .await
         .unwrap(),
-        Some(json!({"suppress_loot_index": 0, "suppress_skill_index": null}))
+        None
     );
-    // Equal minimum values likewise keep the first item.
+    // A no-reward policy likewise leaves every loot line ordinary.
     assert_eq!(
         svc.quest_reward_filter(
             "Zed Bounty",
@@ -1335,7 +1349,7 @@ async fn filter_ties_keep_the_first_item() {
         )
         .await
         .unwrap(),
-        Some(json!({"suppress_loot_index": 0, "suppress_skill_index": null}))
+        None
     );
 }
 
@@ -1875,6 +1889,8 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
         &svc.create_quest(&json!({
             "name": "Hyperion Boss 1",
             "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
             "cooldown_hours": 20,
         }))
         .await
@@ -2155,6 +2171,7 @@ async fn an_umbrella_line_never_completes_a_variant_quest() {
         mission_name: "ARIS - Daily Hunting 1".to_string(),
         loot_items: vec![],
         skill_gains: vec![],
+        isolated: true,
     }])
     .await
     .unwrap();
@@ -2166,66 +2183,49 @@ async fn an_umbrella_line_never_completes_a_variant_quest() {
     );
 }
 
-/// The signal/reward exclusion: a signal quest cannot carry a fixed
-/// positive reward (its reward is the tracked loot itself), on create
-/// and on the merged update picture alike. A blank signal normalises
-/// to none and lifts the exclusion.
+/// Completion evidence and reward policy are independent: a signal item may
+/// prove completion while the quest pays fixed PED or names that same item as
+/// its additional reward.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_signal_quest_refuses_a_fixed_reward() {
+async fn a_signal_quest_accepts_an_independent_reward_policy() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
-    let refused = svc
+    let fixed = svc
         .create_quest(&json!({
             "name": "Boss",
             "signal_loot_item": "Hyperion Daily Voucher",
             "reward_ped": 2.0,
         }))
         .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // Blank signal is no signal: the reward is fine.
-    let plain = quest_id(
-        &svc.create_quest(&json!({
-            "name": "Daily",
-            "signal_loot_item": "  ",
-            "reward_ped": 2.0,
-        }))
-        .await
-        .unwrap(),
-    );
-
-    // Adding a signal to a rewarded quest is refused over the merge...
-    let refused = svc
-        .update_quest(plain, &json!({"signal_loot_item": "Voucher"}))
-        .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // ...and adding a reward to a signal quest likewise.
-    let boss = quest_id(
-        &svc.create_quest(&json!({
-            "name": "Boss",
-            "signal_loot_item": "Voucher",
-        }))
-        .await
-        .unwrap(),
-    );
-    let refused = svc
-        .update_quest(boss, &json!({"reward_ped": 2.0}))
-        .await
-        .unwrap_err();
-    assert!(refused.to_string().contains("signal-completed"));
-
-    // Clearing the signal lifts the exclusion in the same patch.
-    let updated = svc
-        .update_quest(boss, &json!({"signal_loot_item": null, "reward_ped": 2.0}))
-        .await
-        .unwrap()
         .unwrap();
-    assert_eq!(updated["reward_ped"], json!(2.0));
-    assert!(updated["signal_loot_item"].is_null());
+    assert_eq!(fixed["completion_trigger"], json!("signal_item"));
+    assert_eq!(fixed["reward_policy"], json!("fixed_ped"));
+
+    let named = svc
+        .create_quest(&json!({
+            "name": "Named Boss",
+            "completion_trigger": "signal_item",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
+        }))
+        .await
+        .unwrap();
+    assert_eq!(named["reward_policy"], json!("named_items"));
+    assert_eq!(
+        named["reward_item_names"],
+        json!(["Hyperion Daily Voucher"])
+    );
+
+    let invalid = svc
+        .create_quest(&json!({
+            "name": "Missing marker",
+            "completion_trigger": "signal_item",
+        }))
+        .await
+        .unwrap_err();
+    assert!(invalid.to_string().contains("requires a signal loot item"));
 }
 
 // ── Quest families: shared, anchor-aware cooldowns ──────────────────

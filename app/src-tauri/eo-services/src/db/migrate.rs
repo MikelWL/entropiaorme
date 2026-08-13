@@ -218,6 +218,26 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "mixed quest reward kinds",
         sql: include_str!("../../migrations/0036_mixed_quest_reward_kinds.sql"),
     },
+    Migration {
+        version: 37,
+        description: "typed quest rewards",
+        sql: include_str!("../../migrations/0037_typed_quest_rewards.sql"),
+    },
+    Migration {
+        version: 38,
+        description: "quest runs",
+        sql: include_str!("../../migrations/0038_quest_runs.sql"),
+    },
+    Migration {
+        version: 39,
+        description: "market unit prices",
+        sql: include_str!("../../migrations/0039_market_unit_prices.sql"),
+    },
+    Migration {
+        version: 40,
+        description: "quest reward reviews",
+        sql: include_str!("../../migrations/0040_quest_reward_reviews.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -262,6 +282,10 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "3265E540D74CC0B4CFF006BA9A55FBED9B82EB501AFCD57E75F880D0AE4DB521CAB8DC7E3B94FF671D265EA19745F524",
     "6786181F66812C5ED1EBB8F35ABD1782348FBF69C5B3E1514F599AA51EDC68DF48D83287CDD436AA1A40DB8175C0B0D8",
     "F5DB9E2125A73C6095779380F0737FDB5536F8F42FEEFEDC2CA9ADE88094285C5B634FF654C1D533A4ED57D6FFDF612E",
+    "B6A589321ED686339F23D545962583F14E6F43C467448F2A53056A71EF1F8A12799E2D6C710C51AB428D515CEC09A6F3",
+    "6ADB01B0EB3D95B8ACF12CCA7BAF468EF5EA15D2567430E370969B206852E783F5B41B898BDB8D898DBB19A347C9AC00",
+    "61E62851FE691D20819E9B3E1CF26DE297F804235115F9E414860637415358425AC33A7DA13967E7F411E4E90BF55D2F",
+    "92A77163A9BFF7ADB0489E801FD416991DE497FEDCB870C879657FE65A71FA9DA7BDE2D7F1F842629C4C62E84A691E45",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

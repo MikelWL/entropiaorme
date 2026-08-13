@@ -16,6 +16,8 @@ import * as commands from './commands.gen';
 
 export const getQuests = commands.questsList;
 export const getQuestAnalytics = commands.questsAnalytics;
+export const getUnresolvedQuestRewards = commands.questRewardsUnresolved;
+export const reviewQuestReward = commands.questRewardReview;
 export const getPlaylistAnalytics = commands.playlistsAnalytics;
 export const getPlaylists = commands.playlistsList;
 export const createQuest = commands.questCreate;

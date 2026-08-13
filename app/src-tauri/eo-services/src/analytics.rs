@@ -2762,7 +2762,7 @@ fn hunting_activity_read(
     {
         let mut stmt = conn.prepare(
             "SELECT sqc.session_id, sqc.quest_id, sqc.activity_context_id, \
-                    sqc.reward_kind, sqc.reward_ped \
+                    sqc.reward_kind, sqc.reward_ped, sqc.reward_outcome \
              FROM session_quest_completions sqc \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id",
         )?;
@@ -2772,6 +2772,16 @@ fn hunting_activity_read(
             let quest_id: i64 = row.get(1)?;
             let context_id: Option<i64> = row.get(2)?;
             let kind: Option<String> = row.get(3)?;
+            let outcome: Option<String> = row.get(5)?;
+            if outcome.as_deref() == Some("unresolved") {
+                if let Some(session) = sessions.get(&session_id) {
+                    legacy_quests
+                        .entry(session.definition_id)
+                        .or_default()
+                        .insert(quest_id);
+                }
+                continue;
+            }
             let Some(kind) = kind else {
                 if let Some(session) = sessions.get(&session_id) {
                     legacy_quests

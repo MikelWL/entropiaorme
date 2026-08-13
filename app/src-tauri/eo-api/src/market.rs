@@ -146,6 +146,16 @@ pub struct MarketCommitResult {
     pub observed_at: f64,
 }
 
+/// A stored informational quote for one item unit.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketUnitPriceResult {
+    pub item_name: String,
+    pub ped_per_unit: f64,
+    /// Epoch seconds.
+    pub observed_at: f64,
+}
+
 /// One overview row: an item's latest readings (from the most recent
 /// submission that carried it) and when they were observed.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -234,6 +244,9 @@ pub struct MarketHarvestHorizon {
 pub struct MarketHarvestItem {
     pub item_name: String,
     pub markup_pct: Nullable<f64>,
+    /// Absolute informational quote per item unit. This is intended for
+    /// zero-TT and unit-priced items, and remains estimated market value.
+    pub unit_price_ped: Nullable<f64>,
     pub horizon: Nullable<String>,
     pub sales_ped: Nullable<f64>,
     /// Fee-efficient TT packet at the resolved direct-market markup. This
@@ -362,7 +375,9 @@ impl Api {
             .commit_paste(&text)
             .await
             .map_err(|err| match err {
-                MarketError::EmptyPaste => ApiError::bad_request(err.to_string()),
+                MarketError::EmptyPaste | MarketError::InvalidInput(_) => {
+                    ApiError::bad_request(err.to_string())
+                }
                 MarketError::Db(source) => ApiError::internal("market paste commit")(source),
             })?;
         Ok(MarketCommitResult {
@@ -370,6 +385,31 @@ impl Api {
             item_count: outcome.item_count as i64,
             skipped_count: outcome.skipped_count as i64,
             observed_at: outcome.observed_at,
+        })
+    }
+
+    /// Store an informational PED-per-unit quote for a zero-TT or
+    /// unit-priced item. This quote never enters realised accounting.
+    pub async fn market_unit_price_set(
+        &self,
+        item_name: String,
+        ped_per_unit: f64,
+    ) -> Result<MarketUnitPriceResult, ApiError> {
+        let canonical_name = item_name.trim().to_string();
+        let observed_at = self
+            .market
+            .set_unit_price(&canonical_name, ped_per_unit)
+            .await
+            .map_err(|err| match err {
+                MarketError::EmptyPaste | MarketError::InvalidInput(_) => {
+                    ApiError::bad_request(err.to_string())
+                }
+                MarketError::Db(source) => ApiError::internal("market unit price set")(source),
+            })?;
+        Ok(MarketUnitPriceResult {
+            item_name: canonical_name,
+            ped_per_unit,
+            observed_at,
         })
     }
 
@@ -575,6 +615,7 @@ fn market_items_dto(data: eo_services::market_service::HarvestMarketData) -> Mar
             .map(|item| MarketHarvestItem {
                 item_name: item.item_name,
                 markup_pct: item.markup_pct.into(),
+                unit_price_ped: item.unit_price_ped.into(),
                 horizon: item.horizon.into(),
                 sales_ped: item.sales_ped.into(),
                 recommended_packet_tt: item.recommended_packet_tt.into(),

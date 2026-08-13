@@ -55,9 +55,12 @@ export type {
 	MarketPastePreviewRow,
 	MarketReading,
 	MarketSkippedLine,
+	MarketUnitPriceResult,
 	MarketWeaponBreakEven,
 	PrivateSaleInput,
 	Profession,
+	QuestRewardCandidate,
+	QuestRewardReviewInput,
 	RealisedSpeciesMarkup,
 	RealisedTierMarkup,
 	SessionQuestLinkSuggestion,
@@ -65,6 +68,7 @@ export type {
 	StockConversionInput,
 	StockPosition,
 	StockRemovalInput,
+	UnresolvedQuestReward,
 } from './commands.gen';
 export * from './dev';
 export * from './equipment';

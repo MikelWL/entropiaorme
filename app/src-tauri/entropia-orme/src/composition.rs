@@ -1244,6 +1244,7 @@ fn compose_producers(
         watched_chatlog,
         Some(quests.watcher_filter()),
     ));
+    watcher.set_signal_reward_filter(quests.watcher_signal_filter());
 
     let skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
 

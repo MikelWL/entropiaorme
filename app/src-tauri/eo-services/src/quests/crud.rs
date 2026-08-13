@@ -22,6 +22,7 @@ const QUEST_SELECT: &str = "\
            q.notes, q.chain_name, q.chain_position, q.chain_total, \
            q.started_at, q.is_active, q.created_at, q.category, \
            q.reward_description, q.updated_at, q.signal_loot_item, \
+           q.completion_trigger, q.reward_policy, \
            q.family_id, q.cooldown_anchor, q.last_started_at, \
            f.name AS family_name, \
            f.cooldown_hours AS family_cooldown_hours, \
@@ -97,13 +98,44 @@ impl QuestService {
             "playlist_ids".into(),
             json!(self.quest_playlist_ids(quest_id).await?),
         );
+        quest.insert(
+            "reward_item_names".into(),
+            json!(self.quest_reward_item_names(quest_id).await?),
+        );
         Ok(())
     }
 
     /// Create a quest and return it.
     pub async fn create_quest(&self, data: &Value) -> Result<Value, QuestError> {
         let signal_loot_item = normalize_signal_loot_item(data.get("signal_loot_item"));
-        validate_signal_reward(signal_loot_item.as_deref(), data.get("reward_ped"))?;
+        let completion_trigger = normalize_completion_trigger(
+            data.get("completion_trigger"),
+            signal_loot_item.as_deref(),
+        )?;
+        let aris_daily = data
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.starts_with("ARIS - "));
+        let reward_policy_value = data
+            .get("reward_policy")
+            .cloned()
+            .or_else(|| aris_daily.then(|| json!("named_items")));
+        let reward_policy = normalize_reward_policy(
+            reward_policy_value.as_ref(),
+            data.get("reward_ped"),
+            data.get("reward_is_skill"),
+        )?;
+        let reward_item_names = if aris_daily && data.get("reward_item_names").is_none() {
+            vec!["Hyperion Daily Voucher".to_string()]
+        } else {
+            normalize_reward_item_names(data.get("reward_item_names"))?
+        };
+        validate_reward_policy(&reward_policy, &reward_item_names, data.get("reward_ped"))?;
+        if completion_trigger == "signal_item" && signal_loot_item.is_none() {
+            return Err(QuestError::Invalid(
+                "Signal-item completion requires a signal loot item".to_string(),
+            ));
+        }
         let markup = normalize_expected_reward_markup(
             data.get("reward_ped"),
             data.get("reward_is_skill"),
@@ -154,6 +186,8 @@ impl QuestService {
             value_to_sql(data.get("category").unwrap_or(&Value::Null)),
             value_to_sql(data.get("reward_description").unwrap_or(&Value::Null)),
             value_to_sql(&json!(signal_loot_item)),
+            value_to_sql(&json!(completion_trigger)),
+            value_to_sql(&json!(reward_policy)),
             value_to_sql(&json!(family_id)),
             value_to_sql(&json!(cooldown_anchor)),
         ];
@@ -176,14 +210,16 @@ impl QuestService {
                      reward_ped, reward_is_skill, expected_reward_markup_percent, \
                      notes, chain_name, chain_position, chain_total, \
                      category, reward_description, signal_loot_item, \
+                     completion_trigger, reward_policy, \
                      family_id, cooldown_anchor) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params_from_iter(params),
                 )?;
                 let quest_id = tx.last_insert_rowid();
                 if let Some(mobs) = &mobs {
                     set_quest_mobs(&tx, quest_id, mobs)?;
                 }
+                set_quest_reward_items(&tx, quest_id, &reward_item_names)?;
                 tx.commit()?;
                 Ok(quest_id)
             })
@@ -205,7 +241,7 @@ impl QuestService {
             return Ok(None);
         };
 
-        const ALLOWED: [&str; 14] = [
+        const ALLOWED: [&str; 16] = [
             "name",
             "planet",
             "waypoint",
@@ -220,6 +256,8 @@ impl QuestService {
             "reward_description",
             "expected_reward_markup_percent",
             "signal_loot_item",
+            "completion_trigger",
+            "reward_policy",
         ];
         let mut updates: Vec<(&str, Value)> = Vec::new();
         for key in ALLOWED {
@@ -255,22 +293,53 @@ impl QuestService {
             updates.push(("cooldown_anchor", json!(anchor.as_str())));
         }
 
-        // The signal/reward exclusion holds over the MERGED picture, so
-        // neither adding a signal to a rewarded quest nor adding a reward
-        // to a signal quest can slip through a partial patch.
-        {
-            let merged_signal = match data.get("signal_loot_item") {
-                Some(value) => normalize_signal_loot_item(Some(value)),
-                None => existing
-                    .get("signal_loot_item")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-            };
-            let merged_reward = data
-                .get("reward_ped")
+        let merged_signal = match data.get("signal_loot_item") {
+            Some(value) => normalize_signal_loot_item(Some(value)),
+            None => existing
+                .get("signal_loot_item")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        };
+        let merged_trigger = normalize_completion_trigger(
+            data.get("completion_trigger")
+                .or_else(|| existing.get("completion_trigger")),
+            merged_signal.as_deref(),
+        )?;
+        let merged_reward = data
+            .get("reward_ped")
+            .cloned()
+            .unwrap_or_else(|| existing.get("reward_ped").cloned().unwrap_or(Value::Null));
+        let merged_skill = data.get("reward_is_skill").cloned().unwrap_or_else(|| {
+            existing
+                .get("reward_is_skill")
                 .cloned()
-                .unwrap_or_else(|| existing.get("reward_ped").cloned().unwrap_or(Value::Null));
-            validate_signal_reward(merged_signal.as_deref(), Some(&merged_reward))?;
+                .unwrap_or(Value::Null)
+        });
+        let merged_policy = normalize_reward_policy(
+            data.get("reward_policy")
+                .or_else(|| existing.get("reward_policy")),
+            Some(&merged_reward),
+            Some(&merged_skill),
+        )?;
+        let reward_item_names = match data.get("reward_item_names") {
+            Some(value) => Some(normalize_reward_item_names(Some(value))?),
+            None => None,
+        };
+        let effective_items = reward_item_names.as_ref().cloned().unwrap_or_else(|| {
+            existing
+                .get("reward_item_names")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        });
+        validate_reward_policy(&merged_policy, &effective_items, Some(&merged_reward))?;
+        if merged_trigger == "signal_item" && merged_signal.is_none() {
+            return Err(QuestError::Invalid(
+                "Signal-item completion requires a signal loot item".to_string(),
+            ));
         }
 
         // A change to any reward field re-normalises the stored markup
@@ -342,6 +411,9 @@ impl QuestService {
                 }
                 if let Some(mobs) = &mobs {
                     set_quest_mobs(&tx, quest_id, mobs)?;
+                }
+                if let Some(items) = &reward_item_names {
+                    set_quest_reward_items(&tx, quest_id, items)?;
                 }
                 tx.commit()?;
                 Ok(())
@@ -418,6 +490,22 @@ impl QuestService {
                     }
                 }
                 Ok(out)
+            })
+            .await?)
+    }
+
+    async fn quest_reward_item_names(&self, quest_id: i64) -> Result<Vec<String>, QuestError> {
+        Ok(self
+            .db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT item_name FROM quest_reward_item_rules \
+                     WHERE quest_id = ? ORDER BY sort_order, item_name",
+                )?;
+                let names = stmt
+                    .query_map(rusqlite::params![quest_id], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(names)
             })
             .await?)
     }
@@ -498,6 +586,14 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
         json!(row.get_unwrap::<_, Option<String>>("signal_loot_item")),
     );
     quest.insert(
+        "completion_trigger".into(),
+        json!(row.get_unwrap::<_, String>("completion_trigger")),
+    );
+    quest.insert(
+        "reward_policy".into(),
+        json!(row.get_unwrap::<_, String>("reward_policy")),
+    );
+    quest.insert(
         "family_id".into(),
         json!(row.get_unwrap::<_, Option<i64>>("family_id")),
     );
@@ -551,21 +647,91 @@ fn normalize_signal_loot_item(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A signal-completed quest cannot also carry a fixed PED reward: its
-/// reward arrives as tracked loot (the signal clump), so a ledger write
-/// on completion would count the same PED twice.
-fn validate_signal_reward(
-    signal: Option<&str>,
+fn normalize_completion_trigger(
+    value: Option<&Value>,
+    signal_item: Option<&str>,
+) -> Result<String, QuestError> {
+    let trigger = value
+        .and_then(Value::as_str)
+        .unwrap_or(if signal_item.is_some() {
+            "signal_item"
+        } else {
+            "mission_log"
+        });
+    match trigger {
+        "mission_log" | "signal_item" => Ok(trigger.to_string()),
+        _ => Err(QuestError::Invalid(format!(
+            "Unknown completion trigger: {trigger}"
+        ))),
+    }
+}
+
+fn normalize_reward_policy(
+    value: Option<&Value>,
+    reward_ped: Option<&Value>,
+    reward_is_skill: Option<&Value>,
+) -> Result<String, QuestError> {
+    let inferred = if reward_ped
+        .and_then(Value::as_f64)
+        .is_some_and(|reward| reward > 0.0)
+    {
+        if json_truthy(reward_is_skill) {
+            "fixed_pes"
+        } else {
+            "fixed_ped"
+        }
+    } else {
+        "none"
+    };
+    let policy = value.and_then(Value::as_str).unwrap_or(inferred);
+    match policy {
+        "none" | "fixed_ped" | "fixed_pes" | "named_items" | "completion_clump" => {
+            Ok(policy.to_string())
+        }
+        _ => Err(QuestError::Invalid(format!(
+            "Unknown quest reward policy: {policy}"
+        ))),
+    }
+}
+
+fn normalize_reward_item_names(value: Option<&Value>) -> Result<Vec<String>, QuestError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let items = value.as_array().ok_or_else(|| {
+        QuestError::Invalid("reward_item_names must be a list of item names".to_string())
+    })?;
+    let mut names = Vec::new();
+    for item in items {
+        let name = item
+            .as_str()
+            .ok_or_else(|| QuestError::Invalid("reward item names must be strings".to_string()))?;
+        let name = name.trim();
+        if !name.is_empty()
+            && !names
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(name))
+        {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn validate_reward_policy(
+    policy: &str,
+    item_names: &[String],
     reward_ped: Option<&Value>,
 ) -> Result<(), QuestError> {
-    let rewarded = reward_ped
-        .and_then(Value::as_f64)
-        .is_some_and(|reward| reward > 0.0);
-    if signal.is_some() && rewarded {
+    let amount = reward_ped.and_then(Value::as_f64).unwrap_or(0.0);
+    if matches!(policy, "fixed_ped" | "fixed_pes") && amount <= 0.0 {
         return Err(QuestError::Invalid(
-            "A signal-completed quest cannot carry a fixed reward: its reward is the loot \
-             itself, which tracking already counts"
-                .to_string(),
+            "A fixed quest reward requires a positive amount".to_string(),
+        ));
+    }
+    if policy == "named_items" && item_names.is_empty() {
+        return Err(QuestError::Invalid(
+            "A named-item reward requires at least one item".to_string(),
         ));
     }
     Ok(())
@@ -607,6 +773,25 @@ fn set_quest_mobs(
                 rusqlite::params![quest_id, mob],
             )?;
         }
+    }
+    Ok(())
+}
+
+fn set_quest_reward_items(
+    conn: &rusqlite::Connection,
+    quest_id: i64,
+    items: &[String],
+) -> Result<(), DbError> {
+    conn.execute(
+        "DELETE FROM quest_reward_item_rules WHERE quest_id = ?",
+        rusqlite::params![quest_id],
+    )?;
+    for (sort_order, item) in items.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO quest_reward_item_rules(quest_id, item_name, sort_order) \
+             VALUES (?, ?, ?)",
+            rusqlite::params![quest_id, item, sort_order as i64],
+        )?;
     }
     Ok(())
 }

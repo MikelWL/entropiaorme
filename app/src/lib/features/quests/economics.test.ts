@@ -23,6 +23,13 @@ function questRow(overrides: Partial<QuestAnalyticsRow> = {}): QuestAnalyticsRow
 		rewardIsSkill: false,
 		expectedRewardMarkupPercent: 130,
 		totalExpectedRewardPed: 5.2,
+		recordedCompletions: 2,
+		confirmedCompletions: 2,
+		unresolvedCompletions: 0,
+		totalRecordedRewardTt: 4,
+		totalRecordedRewardPes: 0,
+		totalRecordedItemTt: 0,
+		recordedRewardItems: [],
 		linkedSessions: 2,
 		totalDurationSec: 3600,
 		totalWeaponCost: 60,
@@ -105,12 +112,11 @@ describe('computeQuestAnalytics: liquid quests', () => {
 		expect(row.returnRate).toBeCloseTo(0.94, 12);
 	});
 
-	it('shows the markup-applied reward in markup mode and passes the markup through', () => {
+	it('does not revalue a fixed liquid reward from mutable configured markup', () => {
 		const [row] = computeQuestAnalytics([questRow()], RATES, 'markup');
-		// 5.2 expected total over 2 sessions.
-		expect(row.displayLiquidReward).toBeCloseTo(2.6, 12);
-		expect(row.avgNet).toBeCloseTo(-2.4, 12);
-		expect(row.returnRate).toBeCloseTo(0.952, 12);
+		expect(row.displayLiquidReward).toBeCloseTo(2, 12);
+		expect(row.avgNet).toBeCloseTo(-3, 12);
+		expect(row.returnRate).toBeCloseTo(0.94, 12);
 		expect(row.rewardMarkupPercent).toBe(130);
 	});
 
@@ -122,6 +128,39 @@ describe('computeQuestAnalytics: liquid quests', () => {
 			expect(row.avgPesNet).toBeCloseTo(2.5, 12);
 		}
 	});
+
+	it('projects twenty zero-TT vouchers to forty PED from a two-PED unit quote', () => {
+		const [row] = computeQuestAnalytics(
+			[
+				questRow({
+					recordedCompletions: 20,
+					confirmedCompletions: 20,
+					totalRecordedRewardTt: 0,
+					totalRecordedItemTt: 0,
+					recordedRewardItems: [{ itemName: 'Hyperion Daily Voucher', quantity: 20, valuePed: 0 }],
+				}),
+			],
+			RATES,
+			'markup',
+			{
+				nanocubeMarkupPct: null,
+				items: [
+					{
+						itemName: 'Hyperion Daily Voucher',
+						markupPct: null,
+						unitPricePed: 2,
+						horizon: null,
+						salesPed: null,
+						recommendedPacketTt: null,
+						readings: [],
+					},
+				],
+			},
+		);
+		expect(row.totalRecordedRewardTt).toBe(0);
+		expect(row.totalRecordedRewardMu).toBe(40);
+		expect(row.displayLiquidReward).toBe(2);
+	});
 });
 
 describe('computeQuestAnalytics: skill quests never blend into liquid', () => {
@@ -130,6 +169,12 @@ describe('computeQuestAnalytics: skill quests never blend into liquid', () => {
 		rewardIsSkill: true,
 		expectedRewardMarkupPercent: null,
 		totalExpectedRewardPed: 10,
+		recordedCompletions: 4,
+		confirmedCompletions: 4,
+		totalRecordedRewardTt: 0,
+		totalRecordedItemTt: 0,
+		recordedRewardItems: [],
+		totalRecordedRewardPes: 20,
 		linkedSessions: 4,
 		totalWeaponCost: 200,
 		totalHealCost: 0,
@@ -179,10 +224,23 @@ describe('computeQuestAnalytics: division guards', () => {
 	});
 
 	it('falls back to one session when linkedSessions is zero', () => {
-		const [row] = computeQuestAnalytics([questRow({ linkedSessions: 0 })], RATES, 'tt');
+		const [row] = computeQuestAnalytics(
+			[
+				questRow({
+					linkedSessions: 0,
+					recordedCompletions: 0,
+					confirmedCompletions: 0,
+					totalRecordedRewardTt: 0,
+					totalRecordedItemTt: 0,
+					recordedRewardItems: [],
+				}),
+			],
+			RATES,
+			'tt',
+		);
 		// totalCycled / 1, not division by zero.
 		expect(row.avgCycled).toBeCloseTo(100, 12);
-		// Face reward total is rewardPed * 0 sessions.
+		// No recorded completions means no historical reward.
 		expect(row.displayLiquidReward).toBe(0);
 		expect(Number.isFinite(row.avgNet)).toBe(true);
 	});

@@ -33,6 +33,8 @@ pub enum MarketError {
     /// The paste yielded no usable rows, so there is nothing to commit.
     #[error("the paste contained no readable market rows")]
     EmptyPaste,
+    #[error("{0}")]
+    InvalidInput(String),
     #[error(transparent)]
     Db(#[from] DbError),
 }
@@ -147,6 +149,9 @@ pub struct HarvestHorizonReading {
 pub struct HarvestItemMarkup {
     pub item_name: String,
     pub markup_pct: Option<f64>,
+    /// Absolute informational quote for one item unit. Mutually independent
+    /// from percentage-of-TT markup and never enters realised accounting.
+    pub unit_price_ped: Option<f64>,
     /// The horizon that supplied the reading ("week" | "month" | "year"),
     /// None when uncovered.
     pub horizon: Option<String>,
@@ -189,6 +194,38 @@ impl MarketService {
     /// the review-before-accept flow).
     pub fn preview(&self, text: &str) -> MarketPasteParse {
         parse_market_paste(text)
+    }
+
+    pub async fn set_unit_price(
+        &self,
+        item_name: &str,
+        ped_per_unit: f64,
+    ) -> Result<f64, MarketError> {
+        let item_name = item_name.trim();
+        if item_name.is_empty() {
+            return Err(MarketError::InvalidInput(
+                "item_name must not be empty".to_string(),
+            ));
+        }
+        if !ped_per_unit.is_finite() || ped_per_unit < 0.0 {
+            return Err(MarketError::InvalidInput(
+                "ped_per_unit must be a finite, non-negative value".to_string(),
+            ));
+        }
+        let item_name = item_name.to_string();
+        let observed_at = naive_to_epoch(self.clock.now());
+        self.db
+            .with_writer(move |connection| {
+                connection.execute(
+                    "INSERT INTO market_unit_price_observations \
+                     (item_name, ped_per_unit, observed_at, source) \
+                     VALUES (?, ?, ?, 'manual')",
+                    rusqlite::params![item_name, ped_per_unit, observed_at],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(observed_at)
     }
 
     /// Parse and commit a paste as one submission. The text is
@@ -510,7 +547,9 @@ impl MarketService {
                  CROSS JOIN kills k \
                  CROSS JOIN kill_loot_items li \
                  WHERE k.session_id = u.id AND li.kill_id = k.id \
-                   AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0) \
+                   AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
+                 UNION \
+                 SELECT ri.item_name FROM session_quest_completion_reward_items ri) \
              ORDER BY item_name"
         ))
         .await
@@ -587,6 +626,19 @@ impl MarketService {
 
                 let nanocube_markup_pct = resolve("Nanocube").map(|(markup, _, _)| markup);
 
+                let mut unit_prices = std::collections::HashMap::new();
+                let mut unit_stmt = connection.prepare(
+                    "SELECT p.item_name, p.ped_per_unit \
+                     FROM market_unit_price_observations p \
+                     WHERE p.id = (SELECT p2.id FROM market_unit_price_observations p2 \
+                                   WHERE p2.item_name = p.item_name \
+                                   ORDER BY p2.observed_at DESC, p2.id DESC LIMIT 1)",
+                )?;
+                let mut unit_rows = unit_stmt.query([])?;
+                while let Some(row) = unit_rows.next()? {
+                    unit_prices.insert(row.get::<_, String>(0)?, row.get::<_, f64>(1)?);
+                }
+
                 // The activity's active looted item set (name-ordered).
                 let mut item_stmt = connection.prepare(&item_set_sql)?;
                 let names = item_stmt
@@ -601,9 +653,11 @@ impl MarketService {
                             Some((m, h, s)) => (Some(m), Some(h), Some(s)),
                             None => (None, None, None),
                         };
+                        let unit_price_ped = unit_prices.get(&name).copied();
                         HarvestItemMarkup {
                             item_name: name,
                             markup_pct,
+                            unit_price_ped,
                             horizon,
                             sales_ped,
                             recommended_packet_tt: markup_pct.and_then(|markup| {

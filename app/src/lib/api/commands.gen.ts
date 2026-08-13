@@ -1424,6 +1424,8 @@ export interface MarketHarvestHorizon {
 export interface MarketHarvestItem {
 	itemName: string;
 	markupPct: number | null;
+	/** Absolute informational quote per item unit. This is intended for zero-TT and unit-priced items, and remains estimated market value. */
+	unitPricePed: number | null;
 	horizon: string | null;
 	salesPed: number | null;
 	/** Fee-efficient TT packet at the resolved direct-market markup. This deliberately excludes turnover: capacity is a separate market signal. */
@@ -1526,6 +1528,16 @@ export interface MarketSkippedLine {
 	lineNumber: number;
 	content: string;
 	reason: string;
+}
+
+/**
+ * A stored informational quote for one item unit.
+ */
+export interface MarketUnitPriceResult {
+	itemName: string;
+	pedPerUnit: number;
+	/** Epoch seconds. */
+	observedAt: number;
 }
 
 /**
@@ -2084,6 +2096,9 @@ export interface Quest {
 	startedAt: number | null;
 	/** The signal loot item completing this quest, null for quests on the mission-log lifecycle. */
 	signalLootItem: string | null;
+	completionTrigger: QuestCompletionTrigger;
+	rewardPolicy: QuestRewardPolicy;
+	rewardItemNames: string[];
 	/** When this quest's OWN cooldown timer starts. */
 	cooldownAnchor: QuestCooldownAnchor;
 	/** The durable last-start instant (fractional epoch seconds); the pickup anchor's base fact, surviving completion and cancel. */
@@ -2111,6 +2126,13 @@ export interface QuestAnalyticsRow {
 	rewardIsSkill: boolean;
 	expectedRewardMarkupPercent: number | null;
 	totalExpectedRewardPed: number;
+	recordedCompletions: number;
+	confirmedCompletions: number;
+	unresolvedCompletions: number;
+	totalRecordedRewardTt: number;
+	totalRecordedRewardPes: number;
+	totalRecordedItemTt: number;
+	recordedRewardItems: QuestRewardCandidate[];
 	linkedSessions: number;
 	totalDurationSec: number;
 	totalWeaponCost: number;
@@ -2120,6 +2142,8 @@ export interface QuestAnalyticsRow {
 	totalLootTt: number;
 	totalPes: number;
 }
+
+export type QuestCompletionTrigger = 'mission_log' | 'signal_item';
 
 /**
  * When a cooldown timer starts: `pickup` runs it from the last
@@ -2185,12 +2209,15 @@ export interface QuestInput {
 	reward_is_skill?: boolean;
 	expected_reward_markup_percent?: number | null;
 	reward_description?: string | null;
+	completion_trigger?: QuestCompletionTrigger | null;
+	reward_policy?: QuestRewardPolicy | null;
+	reward_item_names?: string[];
 	notes?: string | null;
 	chain_name?: string | null;
 	chain_position?: number | null;
 	chain_total?: number | null;
 	mobs?: string[];
-	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and declaring it starts it directly. Mutually exclusive with a positive `reward_ped`. */
+	/** The signal loot item, when set: the quest completes the moment this item arrives in a loot pickup carrying no mission completion (the instance-boss pattern), and declaring it starts it directly. Completion and reward policies are independent. */
 	signal_loot_item?: string | null;
 	/** The family this quest is a variant of; null (or absent) leaves it standalone. Sent explicitly by the form so a cleared select detaches; the service refuses an id that names no active family. */
 	family_id?: number | null;
@@ -2221,6 +2248,20 @@ export interface QuestPlaylist {
 	immediateQuestIds: string[];
 	longHorizonQuestIds: string[];
 	items: PlaylistItem[];
+}
+
+export interface QuestRewardCandidate {
+	itemName: string;
+	quantity: number;
+	valuePed: number;
+}
+
+export type QuestRewardPolicy = 'none' | 'fixed_ped' | 'fixed_pes' | 'named_items' | 'completion_clump';
+
+export interface QuestRewardReviewInput {
+	completionId: number;
+	selectedIndices?: number[];
+	declareNone?: boolean;
 }
 
 export type RadarCalibrationStatus = 'idle' | 'awaitCentre' | 'awaitNorthEdge';
@@ -2951,6 +2992,17 @@ export interface UndoResult {
 	undone_page?: number | null;
 }
 
+export interface UnresolvedQuestReward {
+	completionId: number;
+	questId: string;
+	questName: string;
+	completedAt: number;
+	policy: string | null;
+	reason: string | null;
+	loot: QuestRewardCandidate[];
+	isolated: boolean;
+}
+
 /**
  * One active-session warning.
  */
@@ -3115,6 +3167,14 @@ export async function questStart(questId: number): Promise<Quest> {
 
 export async function questComplete(questId: number): Promise<Quest> {
 	return invokeCommand('quest_complete', { quest_id: questId });
+}
+
+export async function questRewardsUnresolved(): Promise<UnresolvedQuestReward[]> {
+	return invokeCommand('quest_rewards_unresolved', {});
+}
+
+export async function questRewardReview(input: QuestRewardReviewInput): Promise<void> {
+	return invokeCommand('quest_reward_review', { input });
 }
 
 export async function questCancel(questId: number, undoReward: boolean): Promise<Quest> {
@@ -3347,6 +3407,10 @@ export async function marketPastePreview(text: string): Promise<MarketPastePrevi
 
 export async function marketPasteCommit(text: string): Promise<MarketCommitResult> {
 	return invokeCommand('market_paste_commit', { text });
+}
+
+export async function marketUnitPriceSet(itemName: string, pedPerUnit: number): Promise<MarketUnitPriceResult> {
+	return invokeCommand('market_unit_price_set', { item_name: itemName, ped_per_unit: pedPerUnit });
 }
 
 export async function marketOverview(): Promise<MarketOverviewRow[]> {

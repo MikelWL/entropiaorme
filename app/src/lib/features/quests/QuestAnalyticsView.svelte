@@ -14,7 +14,12 @@
 	let { model }: { model: QuestsModel } = $props();
 
 	const computedAnalytics = $derived(
-		computeQuestAnalytics(model.analyticsData, model.rates, model.analyticsRewardMode)
+		computeQuestAnalytics(
+			model.analyticsData,
+			model.rates,
+			model.analyticsRewardMode,
+			model.rewardMarket
+		)
 	);
 	const computedPlaylistAnalytics = $derived(
 		computePlaylistAnalytics(model.playlistAnalyticsData, model.rates, model.analyticsRewardMode)
@@ -48,13 +53,24 @@
 	const analyticsColumns = $derived.by((): ColumnDef<QuestAnalyticsComputed>[] => {
 		const columns: ColumnDef<QuestAnalyticsComputed>[] = [
 			{ key: 'questName', label: 'Quest', sortable: true },
-			{ key: 'linkedSessions', label: 'Sessions', align: 'right', sortable: true },
-			{ key: 'displayLiquidReward', label: 'Reward', align: 'right', sortable: true },
+			{ key: 'recordedCompletions', label: 'Runs', align: 'right', sortable: true },
+			{ key: 'totalRecordedRewardTt', label: 'Reward TT', align: 'right', sortable: true },
 			{ key: 'avgCycled', label: 'Avg Cycled', align: 'right', sortable: true }
 		];
 		if (model.analyticsRewardMode === 'markup') {
-			columns.push({ key: 'rewardMarkupPercent', label: 'Markup', align: 'right', sortable: true });
+			columns.splice(3, 0, {
+				key: 'totalRecordedRewardMu',
+				label: 'Reward MU',
+				align: 'right',
+				sortable: true
+			});
 		}
+		columns.splice(model.analyticsRewardMode === 'markup' ? 4 : 3, 0, {
+			key: 'unresolvedCompletions',
+			label: 'Unresolved',
+			align: 'right',
+			sortable: true
+		});
 		columns.push(
 			{ key: 'avgNet', label: 'Avg Net', align: 'right', sortable: true },
 			{ key: 'returnRate', label: 'Rate', align: 'right', sortable: true }
@@ -96,8 +112,8 @@
 			<h3 class="text-sm font-medium text-text-secondary">Single Quest Analytics</h3>
 			<SegmentedControl
 				options={[
-					{ id: 'tt', label: 'TT Only' },
-					{ id: 'markup', label: 'With Reward Markup' }
+					{ id: 'tt', label: 'Reward TT' },
+					{ id: 'markup', label: 'Reward TT + MU' }
 				]}
 				active={model.analyticsRewardMode}
 				onchange={(id) => (model.analyticsRewardMode = id as RewardMode)}
@@ -106,13 +122,17 @@
 		{#snippet analyticsCell({ column, value, row }: { column: { key: string }; value: unknown; row: QuestAnalyticsComputed })}
 			{#if column.key === 'questName'}
 				<span class="font-medium">{value}</span>
-			{:else if column.key === 'displayLiquidReward'}
+			{:else if column.key === 'totalRecordedRewardTt'}
 				<div class="flex flex-col items-end leading-tight">
 					<span class="tabular-nums">{formatPed(Number(value))}</span>
-					{#if row.avgRewardPes > 0}
-						<span class="text-[11px] text-accent">+{formatPed(row.avgRewardPes)} PES</span>
+					{#if row.totalRecordedRewardPes > 0}
+						<span class="text-[11px] text-accent">+{formatPed(row.totalRecordedRewardPes)} PES</span>
 					{/if}
 				</div>
+			{:else if column.key === 'totalRecordedRewardMu'}
+				<span class="tabular-nums text-accent">{formatPed(Number(value))}</span>
+			{:else if column.key === 'unresolvedCompletions'}
+				<span class="tabular-nums {Number(value) > 0 ? 'text-warning' : 'text-text-tertiary'}">{value}</span>
 			{:else if column.key === 'avgCycled'}
 				<span class="tabular-nums">{formatPed(Number(value))}</span>
 			{:else if column.key === 'avgNet'}
