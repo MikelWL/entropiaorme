@@ -76,7 +76,9 @@ reward policies plus immutable confirmed, none, or unresolved outcomes),
 `0038_quest_runs.sql` (durable quest runs and their declared effort intervals),
 `0039_market_unit_prices.sql` (informational absolute PED-per-unit quotes), and
 `0040_quest_reward_reviews.sql` (append-only adjudication of ambiguous reward
-evidence with exact ordinary-loot reclassification). The
+evidence with exact ordinary-loot reclassification), and
+`0041_aris_unresolved_rewards.sql` (truthful unresolved outcomes for guarded
+historical ARIS completions that had no exact voucher attribution). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
