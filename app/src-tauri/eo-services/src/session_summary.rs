@@ -497,7 +497,19 @@ pub fn heal_summaries(conn: &rusqlite::Connection) -> Result<(), DbError> {
             "SELECT s.id FROM tracking_sessions s \
              LEFT JOIN session_summaries ss ON ss.session_id = s.id \
              WHERE s.ended_at IS NOT NULL \
-             AND (ss.session_id IS NULL OR ss.summary_version < ?)",
+             AND (ss.summary_version < ?1 OR (ss.session_id IS NULL \
+               AND s.ended_at > s.started_at \
+               AND (COALESCE(s.armour_cost, 0) > 0 \
+                 OR COALESCE(s.heal_cost, 0) > 0 \
+                 OR COALESCE(s.dangling_cost, 0) > 0 \
+                 OR EXISTS (SELECT 1 FROM kills k \
+                            WHERE k.session_id = s.id AND k.enhancer_cost > 0) \
+                 OR EXISTS (SELECT 1 FROM kills k JOIN kill_tool_stats ts ON ts.kill_id = k.id \
+                            WHERE k.session_id = s.id \
+                              AND COALESCE(ts.cost_per_shot, 0) \
+                                  * COALESCE(ts.shots_fired, 0) > 0) \
+                 OR EXISTS (SELECT 1 FROM harvest_events h \
+                            WHERE h.session_id = s.id AND h.cost_ped > 0))))",
         )?;
         let rows = stmt.query_map(rusqlite::params![SUMMARY_VERSION], |row| {
             row.get::<_, String>(0)

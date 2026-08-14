@@ -421,7 +421,10 @@ impl MarketService {
     /// observation. Reading the accounting tables here is the sanctioned
     /// direction of the market boundary; nothing flows back.
     pub async fn mob_ranking(&self, horizon: MarketHorizon) -> Result<Vec<MobRankingRow>, DbError> {
-        self.db
+        let started = std::time::Instant::now();
+        self.db.with_writer(crate::session_rollup::heal).await?;
+        let result = self
+            .db
             .with_reader(move |connection| {
                 // The latest markup observation per item on the horizon.
                 let mut markup_stmt = connection.prepare(
@@ -442,24 +445,22 @@ impl MarketService {
                 // The per-species, per-item composition over active loot
                 // (enhancer-shrapnel returns are enhancer accounting, not
                 // loot composition).
-                let mut comp_stmt = connection.prepare(
-                    "SELECT k.mob_species, li.item_name, SUM(li.value_ped) \
-                     FROM kill_loot_items li \
-                     JOIN kills k ON k.id = li.kill_id \
-                     WHERE li.deactivated_at IS NULL \
-                       AND li.is_enhancer_shrapnel = 0 \
-                       AND k.mob_species != '' \
-                     GROUP BY k.mob_species, li.item_name",
-                )?;
+                let loot = crate::session_rollup::effective_hunting_loot_cells(connection, None)?;
                 let mut ranking: std::collections::BTreeMap<String, MobRankingRow> =
                     std::collections::BTreeMap::new();
                 let mut weighted: std::collections::HashMap<String, f64> =
                     std::collections::HashMap::new();
-                let mut rows = comp_stmt.query([])?;
-                while let Some(row) = rows.next()? {
-                    let species: String = row.get(0)?;
-                    let item: String = row.get(1)?;
-                    let tt: f64 = row.get(2)?;
+                let mut composition: std::collections::BTreeMap<(String, String), f64> =
+                    std::collections::BTreeMap::new();
+                for cell in loot
+                    .into_iter()
+                    .filter(|cell| !cell.is_enhancer_shrapnel && !cell.mob_species.is_empty())
+                {
+                    *composition
+                        .entry((cell.mob_species, cell.item_name))
+                        .or_insert(0.0) += cell.value_ped;
+                }
+                for ((species, item), tt) in composition {
                     let entry = ranking
                         .entry(species.clone())
                         .or_insert_with(|| MobRankingRow {
@@ -496,7 +497,15 @@ impl MarketService {
                 });
                 Ok(result)
             })
-            .await
+            .await?;
+        tracing::debug!(
+            target: "eo::performance",
+            operation = "market.mob_ranking",
+            elapsed_us = started.elapsed().as_micros() as u64,
+            result_count = result.len(),
+            "analytical read complete"
+        );
+        Ok(result)
     }
 
     /// The estimated market signals for every active harvest-looted
@@ -511,12 +520,20 @@ impl MarketService {
     /// sanctioned direction of the market boundary; nothing flows back,
     /// and no realised figure is computed.
     pub async fn harvest_markups(&self) -> Result<HarvestMarketData, DbError> {
-        self.activity_markups(
-            "SELECT DISTINCT item_name FROM harvest_loot_items \
-             WHERE deactivated_at IS NULL ORDER BY item_name"
-                .to_string(),
-        )
-        .await
+        let names = self
+            .db
+            .with_reader(|connection| {
+                let mut stmt = connection.prepare(
+                    "SELECT DISTINCT item_name FROM harvest_loot_items \
+                     WHERE deactivated_at IS NULL ORDER BY item_name",
+                )?;
+                let names = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(names)
+            })
+            .await?;
+        self.activity_markups(names).await
     }
 
     /// The estimated market signals for every active hunting-looted item,
@@ -525,41 +542,43 @@ impl MarketService {
     /// shrapnel returns are enhancer accounting, not mob loot, and are
     /// excluded from the item set.
     pub async fn hunt_markups(&self) -> Result<HarvestMarketData, DbError> {
-        // Hybrid item universe: settled sessions answer from their loot
-        // cells, the rest raw. The raw arm names its join order (CROSS
-        // JOIN from the unsettled ids through the session and kill
-        // indexes) because letting the planner drive from the loot table
-        // would re-scan the whole history this read exists to avoid.
+        let started = std::time::Instant::now();
         self.db.with_writer(crate::session_rollup::heal).await?;
-        let version = crate::session_rollup::ROLLUP_VERSION;
-        self.activity_markups(format!(
-            "SELECT DISTINCT item_name FROM ( \
-                 SELECT r.item_name FROM session_loot_rollups r \
-                 JOIN session_rollup_meta m ON m.session_id = r.session_id \
-                      AND m.rollup_version >= {version} \
-                 WHERE r.is_enhancer_shrapnel = 0 \
-                 UNION \
-                 SELECT li.item_name \
-                 FROM (SELECT t.id FROM tracking_sessions t \
-                       LEFT JOIN session_rollup_meta m2 \
-                              ON m2.session_id = t.id AND m2.rollup_version >= {version} \
-                       WHERE m2.session_id IS NULL) u \
-                 CROSS JOIN kills k \
-                 CROSS JOIN kill_loot_items li \
-                 WHERE k.session_id = u.id AND li.kill_id = k.id \
-                   AND li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
-                 UNION \
-                 SELECT ri.item_name FROM session_quest_completion_reward_items ri) \
-             ORDER BY item_name"
-        ))
-        .await
+        let names = self
+            .db
+            .with_reader(|connection| {
+                let mut names: std::collections::BTreeSet<String> =
+                    crate::session_rollup::effective_hunting_loot_cells(connection, None)?
+                        .into_iter()
+                        .filter(|cell| !cell.is_enhancer_shrapnel)
+                        .map(|cell| cell.item_name)
+                        .collect();
+                let mut stmt = connection.prepare(
+                    "SELECT DISTINCT item_name FROM session_quest_completion_reward_items",
+                )?;
+                let reward_names = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                names.extend(reward_names);
+                Ok(names.into_iter().collect())
+            })
+            .await?;
+        let result = self.activity_markups(names).await?;
+        tracing::debug!(
+            target: "eo::performance",
+            operation = "market.hunt_markups",
+            elapsed_us = started.elapsed().as_micros() as u64,
+            result_count = result.items.len(),
+            "analytical read complete"
+        );
+        Ok(result)
     }
 
     /// The shared markup read over one activity's item universe. The
-    /// `item_set_sql` names the activity's active loot items; everything
+    /// supplied names are the activity's active loot items; everything
     /// else (latest observations, horizon fallback, nanocube floor) is
     /// identical between activities on purpose.
-    async fn activity_markups(&self, item_set_sql: String) -> Result<HarvestMarketData, DbError> {
+    async fn activity_markups(&self, names: Vec<String>) -> Result<HarvestMarketData, DbError> {
         self.db
             .with_reader(move |connection| {
                 // Per item, the (markup, sales) at the latest submission for
@@ -639,11 +658,6 @@ impl MarketService {
                     unit_prices.insert(row.get::<_, String>(0)?, row.get::<_, f64>(1)?);
                 }
 
-                // The activity's active looted item set (name-ordered).
-                let mut item_stmt = connection.prepare(&item_set_sql)?;
-                let names = item_stmt
-                    .query_map([], |row| row.get::<_, String>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
                 let items = names
                     .into_iter()
                     .map(|name| {
@@ -858,12 +872,15 @@ Carabok Leg Fur\t0\tN/A\t0.000 PEC\tN/A\t0.000 PEC\tN/A\t0.000 PEC\t109.380%\t6.
         let (runtime, service, _clock) = rig(dir.path());
         // Seed loot composition: Carabok drops 100 PED of Hide (observed)
         // and 100 PED of Leg Fur (unobserved); Atrox drops 50 PED of an
-        // item with no observation at all. Foreign keys are declarative
-        // in this schema, so kills can seed without sessions.
+        // item with no observation at all. The effective loot boundary is
+        // session-owned, matching production tracking and orphan recovery.
         runtime
             .block_on(service.db.with_writer(|connection| {
                 connection.execute_batch(
-                    "INSERT INTO kills (id, session_id, mob_species, timestamp) VALUES \
+                    "INSERT INTO tracking_sessions \
+                         (id, started_at, ended_at, is_active) \
+                     VALUES ('s1', 0, 1, 0); \
+                     INSERT INTO kills (id, session_id, mob_species, timestamp) VALUES \
                        ('k1', 's1', 'Carabok', 0), ('k2', 's1', 'Atrox', 0), \
                        ('k3', 's1', '', 0); \
                      INSERT INTO kill_loot_items (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) VALUES \

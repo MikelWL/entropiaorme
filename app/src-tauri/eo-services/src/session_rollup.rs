@@ -162,6 +162,88 @@ pub fn unsettled_sessions(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<S
     rows.collect::<rusqlite::Result<Vec<_>>>()
 }
 
+/// One effective hunted-loot cell. Settled sessions come from the maintained
+/// projection; only explicitly unsettled sessions come from raw facts, scoped
+/// by session id. This is the single read boundary for consumers whose grain
+/// is no finer than session, definition, species, shrapnel class and item.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EffectiveHuntingLootCell {
+    pub session_id: String,
+    pub definition_id: Option<i64>,
+    pub mob_species: String,
+    pub is_enhancer_shrapnel: bool,
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
+}
+
+const SETTLED_HUNTING_LOOT_SQL: &str = "SELECT r.session_id, s.definition_id, r.mob_species, \
+            r.is_enhancer_shrapnel, r.item_name, r.quantity, r.value_ped \
+     FROM session_loot_rollups r \
+     JOIN session_rollup_meta m ON m.session_id = r.session_id \
+          AND m.rollup_version >= ?2 \
+     JOIN tracking_sessions s ON s.id = r.session_id \
+     WHERE (?1 IS NULL OR s.started_at >= ?1)";
+
+const UNSETTLED_HUNTING_LOOT_SQL: &str = "SELECT s.definition_id, \
+            CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
+                 ELSE '' END, \
+            li.is_enhancer_shrapnel, li.item_name, \
+            SUM(li.quantity), COALESCE(SUM(li.value_ped), 0) \
+     FROM tracking_sessions s CROSS JOIN kills k CROSS JOIN kill_loot_items li \
+     WHERE s.id = ?1 AND k.session_id = s.id AND li.kill_id = k.id \
+       AND (?2 IS NULL OR s.started_at >= ?2) \
+       AND li.deactivated_at IS NULL \
+     GROUP BY s.definition_id, 2, li.is_enhancer_shrapnel, li.item_name";
+
+/// Read effective hunted-loot cells for sessions starting inside the optional
+/// period boundary. A fully settled request does not even prepare a statement
+/// against the raw fact tables, which makes the access path authorisable in
+/// tests rather than merely fast by convention.
+pub(crate) fn effective_hunting_loot_cells(
+    conn: &rusqlite::Connection,
+    epoch_start: Option<f64>,
+) -> rusqlite::Result<Vec<EffectiveHuntingLootCell>> {
+    let mut cells = Vec::new();
+    {
+        let mut stmt = conn.prepare(SETTLED_HUNTING_LOOT_SQL)?;
+        let mut rows = stmt.query(rusqlite::params![epoch_start, ROLLUP_VERSION])?;
+        while let Some(row) = rows.next()? {
+            cells.push(EffectiveHuntingLootCell {
+                session_id: row.get(0)?,
+                definition_id: row.get(1)?,
+                mob_species: row.get(2)?,
+                is_enhancer_shrapnel: row.get(3)?,
+                item_name: row.get(4)?,
+                quantity: row.get::<_, i64>(5).unwrap_or(0),
+                value_ped: row.get::<_, f64>(6).unwrap_or(0.0),
+            });
+        }
+    }
+
+    let unsettled = unsettled_sessions(conn)?;
+    if unsettled.is_empty() {
+        return Ok(cells);
+    }
+
+    let mut stmt = conn.prepare(UNSETTLED_HUNTING_LOOT_SQL)?;
+    for session_id in unsettled {
+        let mut rows = stmt.query(rusqlite::params![session_id, epoch_start])?;
+        while let Some(row) = rows.next()? {
+            cells.push(EffectiveHuntingLootCell {
+                session_id: session_id.clone(),
+                definition_id: row.get(0)?,
+                mob_species: row.get(1)?,
+                is_enhancer_shrapnel: row.get(2)?,
+                item_name: row.get(3)?,
+                quantity: row.get::<_, i64>(4).unwrap_or(0),
+                value_ped: row.get::<_, f64>(5).unwrap_or(0.0),
+            });
+        }
+    }
+    Ok(cells)
+}
+
 /// Bring the rollups current: settle every ended session still served
 /// raw. The first call after the migration backfills the whole history;
 /// steady-state calls find nothing to do beyond the marker scan. Callers
@@ -312,6 +394,7 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
 mod tests {
     use super::*;
     use crate::db::Db;
+    use std::collections::BTreeMap;
 
     async fn open_db() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -476,5 +559,173 @@ mod tests {
         })
         .await
         .expect("writer");
+    }
+
+    type CellKey = (String, String, String, bool);
+    type CellValue = (Option<i64>, i64, i64);
+
+    fn cell_map(cells: Vec<EffectiveHuntingLootCell>) -> BTreeMap<CellKey, CellValue> {
+        cells
+            .into_iter()
+            .map(|cell| {
+                (
+                    (
+                        cell.session_id,
+                        cell.mob_species,
+                        cell.item_name,
+                        cell.is_enhancer_shrapnel,
+                    ),
+                    (
+                        cell.definition_id,
+                        cell.quantity,
+                        (cell.value_ped * 10_000.0).round() as i64,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn effective_loot_cells_match_raw_and_settled_with_a_live_edge() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(conn, "ended", true);
+            seed_session(conn, "live", false);
+            seed_kill(conn, "ended-kill", "ended", "Atrox");
+            seed_kill(conn, "live-kill", "live", "Daikiba");
+
+            let raw = cell_map(effective_hunting_loot_cells(conn, None)?);
+            heal(conn)?;
+            let mixed = cell_map(effective_hunting_loot_cells(conn, None)?);
+            assert_eq!(raw, mixed);
+
+            // A raw edit to the settled session cannot leak through the live
+            // edge. The live session remains immediate; the ended session
+            // changes only after its ordinary invalidation/recompute seam.
+            conn.execute(
+                "UPDATE kill_loot_items SET value_ped = 99.0 WHERE kill_id = 'ended-kill'",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE kill_loot_items SET value_ped = 4.0 WHERE kill_id = 'live-kill' \
+                 AND item_name = 'Animal Hide'",
+                [],
+            )?;
+            let after_raw_edits = cell_map(effective_hunting_loot_cells(conn, None)?);
+            assert_eq!(
+                after_raw_edits[&(
+                    "ended".to_string(),
+                    "Atrox".to_string(),
+                    "Animal Hide".to_string(),
+                    false,
+                )]
+                    .2,
+                17_500
+            );
+            assert_eq!(
+                after_raw_edits[&(
+                    "live".to_string(),
+                    "Daikiba".to_string(),
+                    "Animal Hide".to_string(),
+                    false,
+                )]
+                    .2,
+                40_000
+            );
+
+            recompute_session(conn, "ended")?;
+            let recomputed = cell_map(effective_hunting_loot_cells(conn, None)?);
+            assert_eq!(
+                recomputed[&(
+                    "ended".to_string(),
+                    "Atrox".to_string(),
+                    "Animal Hide".to_string(),
+                    false,
+                )]
+                    .2,
+                990_000
+            );
+            Ok(())
+        })
+        .await
+        .expect("writer");
+    }
+
+    #[tokio::test]
+    async fn effective_loot_query_plans_are_projection_bounded_and_session_scoped() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(conn, "ended", true);
+            seed_session(conn, "live", false);
+            seed_kill(conn, "ended-kill", "ended", "Atrox");
+            seed_kill(conn, "live-kill", "live", "Daikiba");
+            heal(conn)?;
+
+            let plan = |sql: &str, params: &[&dyn rusqlite::ToSql]| {
+                let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+                let rows = stmt.query_map(params, |row| row.get::<_, String>(3))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            };
+            let settled = plan(
+                SETTLED_HUNTING_LOOT_SQL,
+                &[&Option::<f64>::None, &ROLLUP_VERSION],
+            )?;
+            // SQLite may prefer a table scan for this two-row fixture. The
+            // invariant here is that the settled leg is projection-only; the
+            // representative-database benchmark records the large-table plan.
+            assert!(settled
+                .iter()
+                .any(|step| step.contains("SCAN r") || step.contains("SEARCH r")));
+            assert!(settled.iter().all(|step| {
+                !step.contains("kill_loot_items")
+                    && !step.contains("SCAN k")
+                    && !step.contains("SCAN li")
+            }));
+
+            let live_id = "live";
+            let raw = plan(
+                UNSETTLED_HUNTING_LOOT_SQL,
+                &[&live_id, &Option::<f64>::None],
+            )?;
+            assert!(raw.iter().any(|step| step.contains("idx_kill_session")));
+            assert!(raw
+                .iter()
+                .any(|step| step.contains("idx_kill_loot_items_kill_id")));
+            assert!(raw
+                .iter()
+                .all(|step| !step.contains("SCAN k") && !step.contains("SCAN li")));
+            Ok(())
+        })
+        .await
+        .expect("writer");
+    }
+
+    #[test]
+    fn raw_hunting_loot_reads_stay_behind_the_effective_boundary() {
+        let analytics = include_str!("analytics.rs");
+        let positions = analytics
+            .split_once("fn all_item_positions(")
+            .expect("position reader")
+            .1
+            .split_once("fn as_source_positions(")
+            .expect("position reader end")
+            .0;
+        assert!(!positions.contains("kill_loot_items"));
+        assert!(!positions.contains("FROM kills"));
+        assert!(positions.contains("EffectiveHuntingLootCell"));
+
+        let market = include_str!("market_service.rs")
+            .split_once("#[cfg(test)]")
+            .expect("market production/test boundary")
+            .0;
+        assert!(!market.contains("kill_loot_items"));
+        assert!(!market.contains("FROM kills"));
+
+        let boundary = include_str!("session_rollup.rs")
+            .split_once("#[cfg(test)]")
+            .expect("production/test boundary")
+            .0;
+        assert!(boundary.contains("FROM tracking_sessions s CROSS JOIN kills k"));
+        assert!(boundary.contains("WHERE s.id = ?1 AND k.session_id = s.id"));
     }
 }

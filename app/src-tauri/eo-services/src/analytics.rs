@@ -2210,7 +2210,7 @@ fn hunting_sessions(
             });
         }
     }
-    {
+    if !unsettled.is_empty() {
         let mut stmt = conn.prepare(
             "SELECT k.context_id, \
                     COALESCE(k.mob_species, ''), COALESCE(k.mob_maturity, ''), \
@@ -2296,7 +2296,7 @@ fn hunting_sessions(
             });
         }
     }
-    {
+    if !unsettled.is_empty() {
         let mut stmt = conn.prepare(
             "SELECT context_id, COALESCE(SUM(ped_value), 0) FROM skill_gains \
              WHERE session_id = ?1 AND ped_value IS NOT NULL GROUP BY 1",
@@ -2386,6 +2386,8 @@ fn hunting_activity_read(
         }
     }
 
+    let effective_loot = crate::session_rollup::effective_hunting_loot_cells(conn, epoch_start)?;
+
     // ── Targets: species and maturity, kill grain ──
     #[derive(Default)]
     struct MaturityAgg {
@@ -2410,74 +2412,57 @@ fn hunting_activity_read(
     // The unclassified bucket keeps its own composition: the loot is real
     // and only its attribution is missing, and dropping it would make the
     // Overall MU numerator exclude cost the denominator still carries.
-    let mut species_items: HashMap<String, Vec<HarvestLootItemRow>> = HashMap::new();
+    let mut species_item_cells: HashMap<String, BTreeMap<String, (i64, f64)>> = HashMap::new();
+    let mut definition_item_cells: HashMap<Option<i64>, BTreeMap<String, (i64, f64)>> =
+        HashMap::new();
+    for cell in effective_loot
+        .iter()
+        .filter(|cell| !cell.is_enhancer_shrapnel && sessions.contains_key(&cell.session_id))
     {
-        let mut stmt = conn.prepare(
-            "SELECT COALESCE(k.mob_species, ''), li.item_name, SUM(li.quantity), \
-                    COALESCE(SUM(li.value_ped), 0) \
-             FROM kill_loot_items li \
-             JOIN kills k ON k.id = li.kill_id \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             WHERE li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
-             GROUP BY 1, li.item_name",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let species: String = row.get(0)?;
-            species_items
-                .entry(species)
-                .or_default()
-                .push(HarvestLootItemRow {
-                    item_name: row.get(1)?,
-                    quantity: row.get::<_, i64>(2).unwrap_or(0),
-                    value_ped: round2(as_float(row, 3)),
-                });
-        }
-        for items in species_items.values_mut() {
-            items.sort_by(|a, b| {
-                b.value_ped
-                    .partial_cmp(&a.value_ped)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(a.item_name.cmp(&b.item_name))
-            });
-        }
+        let species = species_item_cells
+            .entry(cell.mob_species.clone())
+            .or_default()
+            .entry(cell.item_name.clone())
+            .or_insert((0, 0.0));
+        species.0 += cell.quantity;
+        species.1 += cell.value_ped;
+        let definition = definition_item_cells
+            .entry(cell.definition_id)
+            .or_default()
+            .entry(cell.item_name.clone())
+            .or_insert((0, 0.0));
+        definition.0 += cell.quantity;
+        definition.1 += cell.value_ped;
     }
+    let into_items = |cells: BTreeMap<String, (i64, f64)>| {
+        let mut items: Vec<HarvestLootItemRow> = cells
+            .into_iter()
+            .map(|(item_name, (quantity, value_ped))| HarvestLootItemRow {
+                item_name,
+                quantity,
+                value_ped: round2(value_ped),
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            b.value_ped
+                .partial_cmp(&a.value_ped)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.item_name.cmp(&b.item_name))
+        });
+        items
+    };
+    let mut species_items: HashMap<String, Vec<HarvestLootItemRow>> = species_item_cells
+        .into_iter()
+        .map(|(species, cells)| (species, into_items(cells)))
+        .collect();
 
     // The same loot evidence projected through the user-designated axis.
     // Definitions can grow to hundreds of items, so this is one set-based
     // pass for every row rather than a per-definition query.
-    let mut definition_items: HashMap<Option<i64>, Vec<HarvestLootItemRow>> = HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT s.definition_id, li.item_name, SUM(li.quantity), \
-                    COALESCE(SUM(li.value_ped), 0) \
-             FROM kill_loot_items li \
-             JOIN kills k ON k.id = li.kill_id \
-             JOIN tracking_sessions s ON s.id = k.session_id \
-             JOIN hunting_session_scope scope ON scope.id = k.session_id \
-             WHERE li.deactivated_at IS NULL AND li.is_enhancer_shrapnel = 0 \
-             GROUP BY s.definition_id, li.item_name",
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            definition_items
-                .entry(row.get(0)?)
-                .or_default()
-                .push(HarvestLootItemRow {
-                    item_name: row.get(1)?,
-                    quantity: row.get::<_, i64>(2).unwrap_or(0),
-                    value_ped: round2(as_float(row, 3)),
-                });
-        }
-        for items in definition_items.values_mut() {
-            items.sort_by(|a, b| {
-                b.value_ped
-                    .partial_cmp(&a.value_ped)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(a.item_name.cmp(&b.item_name))
-            });
-        }
-    }
+    let mut definition_items: HashMap<Option<i64>, Vec<HarvestLootItemRow>> = definition_item_cells
+        .into_iter()
+        .map(|(definition, cells)| (definition, into_items(cells)))
+        .collect();
 
     // Species PES through session dominance: skill gains carry no per-kill
     // attribution, so a species may claim a session's skill total only when
@@ -2728,7 +2713,7 @@ fn hunting_activity_read(
             );
         }
     }
-    {
+    if !unsettled.is_empty() {
         let mut stmt = conn.prepare(
             "SELECT k.context_id, li.item_name, SUM(li.quantity), \
                     COALESCE(SUM(li.value_ped), 0) \
@@ -3326,12 +3311,21 @@ impl AnalyticsService {
         &self,
         period: &str,
     ) -> Result<HuntingActivityData, AnalyticsError> {
+        let started = std::time::Instant::now();
         // Settle any ended sessions still served raw (a no-op in steady
         // state), the same heal-before-read the Overview runs on the
         // daily rollups; the read itself stays correct either way.
         self.db.with_writer(crate::session_rollup::heal).await?;
         let now = naive_to_epoch(self.clock.now());
-        Ok(hunting_activity_impl(&self.db, period_epoch(period, now)).await?)
+        let result = hunting_activity_impl(&self.db, period_epoch(period, now)).await?;
+        tracing::debug!(
+            target: "eo::performance",
+            operation = "analytics.hunting_activity",
+            elapsed_us = started.elapsed().as_micros() as u64,
+            result_count = result.definitions.len() + result.species.len(),
+            "analytical read complete"
+        );
+        Ok(result)
     }
 
     /// The whole-ledger summary for a named period (`30d` / `90d` / `1y`,
@@ -4071,6 +4065,7 @@ type ItemPosition = (Vec<(PositionKey, f64)>, f64);
 /// this batch form exists to avoid.
 fn all_item_positions(
     conn: &rusqlite::Connection,
+    hunting_loot: &[crate::session_rollup::EffectiveHuntingLootCell],
 ) -> rusqlite::Result<std::collections::HashMap<String, ItemPosition>> {
     use std::collections::{BTreeMap, HashMap};
     #[derive(Default)]
@@ -4114,10 +4109,9 @@ fn all_item_positions(
     }
 
     {
-        // Hunted loot, hybrid: settled sessions fold from their loot cells
-        // (species pre-folded for shrapnel at settlement), every other
-        // session aggregates raw scoped to its own id. Correct whatever
-        // the heal has or has not done yet.
+        // Hunted loot arrives through the single effective-cell boundary:
+        // settled sessions are projected and only explicitly unsettled
+        // sessions can contribute scoped raw cells.
         let mut fold = |item: String,
                         species: String,
                         is_shrapnel: bool,
@@ -4137,55 +4131,15 @@ fn all_item_positions(
                 })
                 .or_insert(0.0) += quantity;
         };
-        {
-            let mut stmt = conn.prepare(
-                "SELECT r.item_name, r.mob_species, r.is_enhancer_shrapnel, s.definition_id, \
-                        SUM(r.quantity), SUM(r.value_ped) \
-                 FROM session_loot_rollups r \
-                 JOIN session_rollup_meta m ON m.session_id = r.session_id \
-                      AND m.rollup_version >= ?1 \
-                 JOIN tracking_sessions s ON s.id = r.session_id \
-                 GROUP BY 1, 2, 3, 4",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![crate::session_rollup::ROLLUP_VERSION])?;
-            while let Some(row) = rows.next()? {
-                fold(
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                );
-            }
-        }
-        {
-            let unsettled = crate::session_rollup::unsettled_sessions(conn)?;
-            let mut stmt = conn.prepare(
-                "SELECT li.item_name, \
-                        CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
-                        ELSE '' END AS species, \
-                        li.is_enhancer_shrapnel, s.definition_id, \
-                        SUM(li.quantity), SUM(li.value_ped) \
-                 FROM kill_loot_items AS li \
-                 JOIN kills AS k ON k.id = li.kill_id \
-                 JOIN tracking_sessions AS s ON s.id = k.session_id \
-                 WHERE k.session_id = ?1 AND li.deactivated_at IS NULL \
-                 GROUP BY li.item_name, species, li.is_enhancer_shrapnel, s.definition_id",
-            )?;
-            for session_id in &unsettled {
-                let mut rows = stmt.query(rusqlite::params![session_id])?;
-                while let Some(row) = rows.next()? {
-                    fold(
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    );
-                }
-            }
+        for cell in hunting_loot {
+            fold(
+                cell.item_name.clone(),
+                cell.mob_species.clone(),
+                cell.is_enhancer_shrapnel,
+                cell.definition_id,
+                cell.quantity as f64,
+                cell.value_ped,
+            );
         }
     }
 
@@ -4611,11 +4565,12 @@ impl AnalyticsService {
         &self,
         profession: Profession,
     ) -> Result<Vec<StockPositionRow>, AnalyticsError> {
+        let started = std::time::Instant::now();
         // The hunted arm of the position arithmetic folds settled
         // sessions' loot cells; settle any backlog first (steady-state
         // no-op, and the read is correct either way).
         self.db.with_writer(crate::session_rollup::heal).await?;
-        Ok(self
+        let rows = self
             .db
             .with_reader(move |conn| {
                 // The item universe each activity's stock panel lists: what
@@ -4626,18 +4581,21 @@ impl AnalyticsService {
                 // tab lists it is scoped, so a jointly produced pile shows
                 // the same, true figures on both tabs. Legacy movements with
                 // no owning record are harvest-era by construction.
-                let base_sql = match profession {
-                    Profession::Harvesting => {
-                        "SELECT item_name FROM harvest_loot_items WHERE deactivated_at IS NULL"
-                    }
-                    Profession::Hunting => {
-                        "SELECT item_name FROM kill_loot_items WHERE deactivated_at IS NULL"
-                    }
-                    Profession::Inventory => {
-                        "SELECT item_name FROM harvest_loot_items WHERE deactivated_at IS NULL \
-                         UNION SELECT item_name FROM kill_loot_items WHERE deactivated_at IS NULL"
-                    }
-                };
+                let hunting_loot = crate::session_rollup::effective_hunting_loot_cells(conn, None)?;
+                let mut items = std::collections::BTreeSet::new();
+                if matches!(profession, Profession::Harvesting | Profession::Inventory) {
+                    let mut stmt = conn.prepare(
+                        "SELECT DISTINCT item_name FROM harvest_loot_items \
+                         WHERE deactivated_at IS NULL",
+                    )?;
+                    let names = stmt
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    items.extend(names);
+                }
+                if matches!(profession, Profession::Hunting | Profession::Inventory) {
+                    items.extend(hunting_loot.iter().map(|cell| cell.item_name.clone()));
+                }
                 let movement_scope = match profession {
                     Profession::Harvesting => {
                         "WHERE EXISTS (SELECT 1 FROM auction_listings al \
@@ -4654,28 +4612,21 @@ impl AnalyticsService {
                     }
                     Profession::Inventory => "WHERE ?1 = 'inventory'",
                 };
-                let sql = format!(
-                    "{base_sql} \
-                     UNION \
-                     SELECT m.item_name FROM stock_movements m \
-                     {movement_scope}"
-                );
-                let mut items: Vec<String> = Vec::new();
-                {
-                    let mut stmt = conn.prepare(&sql)?;
-                    let names = stmt
-                        .query_map(rusqlite::params![profession.as_str()], |row| {
-                            row.get::<_, String>(0)
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    items.extend(names);
-                }
+                let sql =
+                    format!("SELECT DISTINCT m.item_name FROM stock_movements m {movement_scope}");
+                let mut stmt = conn.prepare(&sql)?;
+                let movement_names = stmt
+                    .query_map(rusqlite::params![profession.as_str()], |row| {
+                        row.get::<_, String>(0)
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                items.extend(movement_names);
 
                 // The whole inventory in three passes, then per-item lookups:
                 // a per-item read here would re-scan the loot tables once per
                 // item, which is the O(items x rows) shape this list used to
                 // take its load time from.
-                let all_positions = all_item_positions(conn)?;
+                let all_positions = all_item_positions(conn, &hunting_loot)?;
                 let listed_by_item: std::collections::HashMap<String, f64> = {
                     let mut stmt = conn.prepare(
                         "SELECT item_name, COALESCE(SUM(quantity), 0) FROM auction_listings \
@@ -4721,7 +4672,15 @@ impl AnalyticsService {
                 });
                 Ok(rows)
             })
-            .await?)
+            .await?;
+        tracing::debug!(
+            target: "eo::performance",
+            operation = "analytics.stock_positions",
+            elapsed_us = started.elapsed().as_micros() as u64,
+            result_count = rows.len(),
+            "analytical read complete"
+        );
+        Ok(rows)
     }
 
     /// One activity's auction listings, unresolved first and newest within
@@ -10024,7 +9983,8 @@ mod tests {
     /// settlement-equivalence assertion above.
     async fn all_positions_for_test(db: &crate::db::Db) -> Vec<FlatPositionRow> {
         db.with_reader(|conn| {
-            let map = all_item_positions(conn)?;
+            let hunting_loot = crate::session_rollup::effective_hunting_loot_cells(conn, None)?;
+            let map = all_item_positions(conn, &hunting_loot)?;
             let mut rows: Vec<FlatPositionRow> = map
                 .into_iter()
                 .map(|(item, (positions, unit_tt))| {

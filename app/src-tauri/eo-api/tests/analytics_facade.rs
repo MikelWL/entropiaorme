@@ -18,6 +18,7 @@ use eo_api::analytics::{
     AuctionConfirmInput, AuctionExpireInput, AuctionListingInput, InventorySellInput,
     LedgerEntryInput, LedgerPresetInput, Profession,
 };
+use eo_api::market::MarketHorizon;
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -28,13 +29,19 @@ mod common;
 /// The composed facade over a fresh migrated database and an empty
 /// catalogue snapshot (analytics is catalogue-independent).
 async fn analytics_api(dir: &Path) -> Api {
-    let snapshot = dir.join("snapshot");
-    std::fs::create_dir_all(&snapshot).unwrap();
     let data_dir = dir.join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
     let db = Db::open(&data_dir.join("entropia_orme.db"))
         .await
         .expect("migrated database");
+    analytics_api_with_db(dir, db).await
+}
+
+async fn analytics_api_with_db(dir: &Path, db: Db) -> Api {
+    let snapshot = dir.join("snapshot");
+    std::fs::create_dir_all(&snapshot).unwrap();
+    let data_dir = dir.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
     let game_data = Arc::new(GameDataStore::new(&snapshot).expect("empty game-data store"));
     let clock = Arc::new(RealClock::new());
     let handles = common::producer_handles(&db, &data_dir, tokio::runtime::Handle::current()).await;
@@ -58,6 +65,64 @@ async fn analytics_api(dir: &Path) -> Api {
         None,
         None,
     )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settled_hunting_facades_cannot_read_raw_fact_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let db = Db::open_with_denied_reader_tables(
+        &data_dir.join("entropia_orme.db"),
+        &["kills", "kill_loot_items", "skill_gains"],
+    )
+    .await
+    .expect("guarded database");
+    db.with_writer(|connection| {
+        connection.execute_batch(
+            "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active) \
+             VALUES ('settled', 1000.0, 2000.0, 0); \
+             INSERT INTO kills \
+                 (id, session_id, timestamp, mob_name, mob_species, mob_maturity, \
+                  cost_ped, enhancer_cost, loot_total_ped) \
+             VALUES ('kill', 'settled', 1500.0, 'Atrox Young', 'Atrox', 'Young', \
+                     1.0, 0.1, 2.0); \
+             INSERT INTO kill_loot_items \
+                 (kill_id, item_name, quantity, value_ped, is_enhancer_shrapnel) \
+             VALUES ('kill', 'Animal Hide', 2, 2.0, 0); \
+             INSERT INTO kill_tool_stats \
+                 (kill_id, tool_name, shots_fired, cost_per_shot) \
+             VALUES ('kill', 'Test Rifle', 10, 0.1); \
+             INSERT INTO skill_gains \
+                 (session_id, timestamp, skill_name, amount, ped_value) \
+             VALUES ('settled', 1600.0, 'Rifle', 0.1, 0.01);",
+        )?;
+        eo_services::session_rollup::heal(connection)?;
+        eo_services::session_summary::write_session_summary(connection, "settled")?;
+        Ok(())
+    })
+    .await
+    .expect("settled fixture");
+
+    let api = analytics_api_with_db(dir.path(), db).await;
+    assert_eq!(
+        api.analytics_hunting_activity("all")
+            .await
+            .unwrap()
+            .overall
+            .returns,
+        2.0
+    );
+    assert_eq!(
+        api.activity_stock(Profession::Hunting).await.unwrap()[0].item_name,
+        "Animal Hide"
+    );
+    assert_eq!(api.market_hunt_markups().await.unwrap().items.len(), 1);
+    assert_eq!(
+        api.market_mob_ranking(MarketHorizon::Week).await.unwrap()[0].mob_species,
+        "Atrox"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

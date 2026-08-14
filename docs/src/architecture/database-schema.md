@@ -941,6 +941,11 @@ Per-session aggregates that back the character/prospect path and, since the
 read-model work, the Activity and session-list reads as well. This is a derived
 cache rather than a source of truth: a row is filled when a session ends and is
 lazily rebuilt on read when missing or below the current `summary_version`.
+The steady-state healer prequalifies a missing row from indexed session-owned
+cost evidence before running the full summary computation. Ended sessions with
+no positive duration or cycled cost therefore remain correctly absent without
+repeating raw-fact aggregation on every analytical read; a stale-version row is
+still recomputed unconditionally so version invalidation cannot be skipped.
 
 The base columns are created by the baseline; the read columns below the
 `computed_at` row are added by migration `0003`, the harvest columns by
@@ -1051,8 +1056,8 @@ tables and every day is re-verified once after it completes.
 Per-session activity rollups (migrations `0026` and `0029`;
 `eo-services/src/session_rollup.rs`),
 the session-grain sibling of the daily projection: the read model behind the
-Hunting analytics aggregate, the stock position arithmetic's hunted arm, and
-the hunting market item universe. An ended session's events settle into cells
+Hunting analytics aggregate, the stock position arithmetic's hunted arm, the
+hunting market item universe, and the Market Mobs composition. An ended session's events settle into cells
 at the finest grain any of those consumers folds (kill cells by context,
 species, and maturity; active loot cells by species, shrapnel flag, and item,
 with the species pre-folded to the empty string for shrapnel rows; item
@@ -1061,6 +1066,14 @@ O(cells) work however long the raw history grows. Like the daily rollups this
 is a rebuildable projection: cells write
 eagerly in the mutating transaction (session stop, orphan recovery, the loot
 edit flip, session delete) and heal lazily before an activity read.
+
+`session_rollup.rs` owns the typed effective hunted-loot boundary shared by
+these consumers. A fully settled read selects only `session_loot_rollups` and
+does not prepare statements against `kills` or `kill_loot_items`. When a live,
+invalidated, or below-version session exists, the same boundary adds raw cells
+for that named session through the session and kill indexes. The activity
+context projection remains separate because its ownership grain is finer than
+species and item composition.
 
 | Table | Cell key | Sums |
 | --- | --- | --- |
@@ -1074,7 +1087,9 @@ edit flip, session delete) and heal lazily before an activity read.
 The settlement marker: a session listed at the current `ROLLUP_VERSION` is
 served from its cells, and every other session (the live one, a freshly
 edited one, a stale version) is served from the raw tables scoped to its own
-id, so a reader is correct regardless of heal timing.
+id, so a reader is correct regardless of heal timing. The raw statement is
+prepared only when this unsettled set is non-empty; settled reads cannot fall
+back to lifetime fact-table scans.
 
 | Column | Type | Notes |
 | --- | --- | --- |

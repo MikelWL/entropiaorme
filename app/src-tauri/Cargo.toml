@@ -102,7 +102,7 @@ html-escape = "0.2"
 # seam, which sits behind a narrow handle so the driver stays swappable.
 # Pinned to the 0.39 minor; `bundled` compiles a private SQLite so the graph
 # carries exactly one copy (the `links` key permits no second).
-rusqlite = { version = "~0.39", features = ["bundled"] }
+rusqlite = { version = "~0.39", features = ["bundled", "hooks"] }
 # SHA-384 for the migration ledger's checksum column (the accounting the
 # database seam validates on every open).
 sha2 = "0.10"
