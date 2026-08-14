@@ -22,14 +22,23 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use eo_api::analytics::Profession;
+use eo_api::market::MarketHorizon;
 use eo_api::Api;
 use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
+use serde::Serialize;
 
 mod common;
 
 const WARMUPS: usize = 3;
-const SAMPLES: usize = 15;
+const SAMPLES: usize = 30;
+
+fn wire_bytes(value: &impl Serialize) -> usize {
+    serde_json::to_vec(value)
+        .expect("serialisable facade result")
+        .len()
+}
 
 fn median(sorted: &[f64]) -> f64 {
     let n = sorted.len();
@@ -76,6 +85,7 @@ fn facade_fixture_bench() {
     let db = runtime
         .block_on(Db::open(&db_path))
         .expect("migrated fixture database");
+    let bench_db = db.clone();
     let game_data =
         Arc::new(GameDataStore::new(&dir.path().join("empty")).expect("empty game-data store"));
     let clock = Arc::new(eo_services::clock::RealClock::new());
@@ -106,7 +116,9 @@ fn facade_fixture_bench() {
     );
 
     let mut rows: Vec<(String, f64, f64, f64, f64)> = Vec::new();
+    let mut payloads: Vec<(String, usize)> = Vec::new();
     let mut backfill_ms = 0.0;
+    let mut first_hunting_ms = 0.0;
     runtime.block_on(async {
         // The cold first Overview read (the rollup backfill, when the
         // fixture predates the read model), a one-off outside the
@@ -114,6 +126,11 @@ fn facade_fixture_bench() {
         let started = Instant::now();
         api.analytics_overview("all").await.expect("first overview");
         backfill_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let started = Instant::now();
+        api.analytics_hunting_activity("all")
+            .await
+            .expect("first hunting activity");
+        first_hunting_ms = started.elapsed().as_secs_f64() * 1000.0;
 
         macro_rules! bench {
             ($label:expr, $call:expr) => {{
@@ -142,6 +159,40 @@ fn facade_fixture_bench() {
         bench!("overview_90d", api.analytics_overview("90d"));
         bench!("overview_1y", api.analytics_overview("1y"));
         bench!("hunting", api.analytics_hunting());
+        bench!(
+            "session_rollup_heal",
+            bench_db.with_writer(eo_services::session_rollup::heal)
+        );
+        bench!(
+            "session_summary_heal",
+            bench_db.with_writer(|connection| {
+                eo_services::session_summary::heal_summaries(connection)
+            })
+        );
+        bench!(
+            "hunting_activity_all",
+            api.analytics_hunting_activity("all")
+        );
+        bench!("hunting_markups", api.market_hunt_markups());
+        bench!("hunting_stock", api.activity_stock(Profession::Hunting));
+        bench!(
+            "hunting_auction_listings",
+            api.auction_listings(Profession::Hunting)
+        );
+        bench!("hunting_realised_markup", api.hunting_realised_markup());
+        bench!("hunting_tab_bundle", async {
+            tokio::try_join!(
+                api.analytics_hunting_activity("all"),
+                api.market_hunt_markups(),
+                api.activity_stock(Profession::Hunting),
+                api.auction_listings(Profession::Hunting),
+                api.hunting_realised_markup(),
+            )
+        });
+        bench!(
+            "market_mobs_week",
+            api.market_mob_ranking(MarketHorizon::Week)
+        );
         bench!("harvest", api.analytics_harvest("all"));
         bench!("session_list", api.tracking_sessions(None, None, None));
         bench!("ledger_page", api.ledger_list(None, None));
@@ -157,17 +208,51 @@ fn facade_fixture_bench() {
         } else {
             eprintln!("fixture has no sessions; session_detail skipped");
         }
+
+        let (activity, markups, stock, listings, realised) = tokio::try_join!(
+            api.analytics_hunting_activity("all"),
+            api.market_hunt_markups(),
+            api.activity_stock(Profession::Hunting),
+            api.auction_listings(Profession::Hunting),
+            api.hunting_realised_markup(),
+        )
+        .expect("hunting tab payloads");
+        payloads.extend([
+            ("hunting_activity_all".to_string(), wire_bytes(&activity)),
+            ("hunting_markups".to_string(), wire_bytes(&markups)),
+            ("hunting_stock".to_string(), wire_bytes(&stock)),
+            (
+                "hunting_auction_listings".to_string(),
+                wire_bytes(&listings),
+            ),
+            ("hunting_realised_markup".to_string(), wire_bytes(&realised)),
+        ]);
+        payloads.push((
+            "hunting_tab_bundle".to_string(),
+            payloads.iter().map(|(_, bytes)| bytes).sum(),
+        ));
+        let mobs = api
+            .market_mob_ranking(MarketHorizon::Week)
+            .await
+            .expect("market mobs payload");
+        payloads.push(("market_mobs_week".to_string(), wire_bytes(&mobs)));
     });
 
     println!("\ntyped-facade fixture bench (read path over a real-scale database copy)");
     println!(
         "{SAMPLES} samples per operation after {WARMUPS} warm-ups; fixture: {fixture}\n\
-         first-overview (cold, incl. any rollup backfill): {backfill_ms:.1} ms\n"
+         first-overview (cold, incl. any rollup backfill): {backfill_ms:.1} ms\n\
+         first-hunting (cold process, incl. any projection heal): {first_hunting_ms:.1} ms\n"
     );
     println!("| Operation | p50 ms | p95 ms | min ms | max ms |");
     println!("| --- | --- | --- | --- | --- |");
     for (id, p50, p95v, min, max) in &rows {
         println!("| `{id}` | {p50:.4} | {p95v:.4} | {min:.4} | {max:.4} |");
+    }
+    println!("\n| Payload | JSON bytes |");
+    println!("| --- | ---: |");
+    for (id, bytes) in &payloads {
+        println!("| `{id}` | {bytes} |");
     }
     println!();
 }

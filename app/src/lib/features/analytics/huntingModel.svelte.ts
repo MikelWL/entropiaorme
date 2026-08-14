@@ -116,6 +116,8 @@ export function createHuntingModel() {
 
 	async function loadData(period: string = 'all') {
 		const epoch = ++loadEpoch;
+		const navigationStarted = performance.now();
+		let backendCompleted = navigationStarted;
 		loading = true;
 		error = null;
 		try {
@@ -127,6 +129,7 @@ export function createHuntingModel() {
 				getHuntingRealisedMarkup().catch(() => ({ species: [], definitions: [] })),
 			]);
 			if (epoch !== loadEpoch) return;
+			backendCompleted = performance.now();
 			data = activity;
 			market = markets;
 			realisedBySpecies = new Map(realised.species.map((row) => [row.mobSpecies, row.netMarkup]));
@@ -137,7 +140,18 @@ export function createHuntingModel() {
 			if (epoch !== loadEpoch) return;
 			error = describeError(e, 'Failed to load hunting data');
 		} finally {
-			if (epoch === loadEpoch) loading = false;
+			if (epoch === loadEpoch) {
+				loading = false;
+				if (typeof requestAnimationFrame === 'function') {
+					requestAnimationFrame(() => {
+						console.debug('analytics.hunting.first_paint', {
+							backendMs: Number((backendCompleted - navigationStarted).toFixed(2)),
+							paintMs: Number((performance.now() - navigationStarted).toFixed(2)),
+							resultCount: (data?.definitions.length ?? 0) + (data?.species.length ?? 0),
+						});
+					});
+				}
+			}
 		}
 	}
 

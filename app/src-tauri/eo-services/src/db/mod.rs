@@ -329,7 +329,32 @@ impl Db {
         adopt_or_refuse(&mut write_connection)?;
         reconcile_baseline_columns(&mut write_connection)?;
         migrate::run(&mut write_connection)?;
-        let core = SyncCore::start(path, write_connection)?;
+        let core = SyncCore::start(path, write_connection, None)?;
+        Ok(Db {
+            core,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Open a database whose reader connections reject reads from the named
+    /// tables. This is an integration-test seam for structural access-path
+    /// proofs; projection builders still run on the ordinary writer.
+    #[doc(hidden)]
+    pub async fn open_with_denied_reader_tables(
+        path: &Path,
+        tables: &[&str],
+    ) -> Result<Db, DbError> {
+        let mut write_connection = pool::open_configured(path)?;
+        adopt_or_refuse(&mut write_connection)?;
+        reconcile_baseline_columns(&mut write_connection)?;
+        migrate::run(&mut write_connection)?;
+        let denied = std::sync::Arc::new(
+            tables
+                .iter()
+                .map(|table| (*table).to_string())
+                .collect::<std::collections::HashSet<_>>(),
+        );
+        let core = SyncCore::start(path, write_connection, Some(denied))?;
         Ok(Db {
             core,
             path: path.to_path_buf(),

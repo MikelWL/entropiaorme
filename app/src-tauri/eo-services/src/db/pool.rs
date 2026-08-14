@@ -18,6 +18,7 @@
 //! runs to completion on the worker, so a submitted write is never
 //! half-abandoned.
 
+use std::collections::HashSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::mpsc;
@@ -81,6 +82,29 @@ pub(super) fn open_configured(path: &Path) -> Result<Connection, DbError> {
     Ok(connection)
 }
 
+/// Apply a read-table denylist to one configured reader connection. The
+/// production path supplies no denylist; facade integration tests use this
+/// seam to prove settled requests never prepare protected raw-fact reads.
+fn apply_reader_denylist(
+    connection: &Connection,
+    denied_tables: Option<Arc<HashSet<String>>>,
+) -> Result<(), DbError> {
+    let Some(denied_tables) = denied_tables else {
+        return Ok(());
+    };
+    connection.authorizer(Some(
+        move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
+            rusqlite::hooks::AuthAction::Read { table_name, .. }
+                if denied_tables.contains(table_name) =>
+            {
+                rusqlite::hooks::Authorization::Deny
+            }
+            _ => rusqlite::hooks::Authorization::Allow,
+        },
+    ))?;
+    Ok(())
+}
+
 /// The handle over the writer thread and the reader-thread pool.
 /// Cloning shares the running threads (a clone is a handle, never a
 /// second core); the last handle's drop closes the job channels and
@@ -138,7 +162,11 @@ impl SyncCore {
     /// Stand the core up over an already-opened, already-migrated write
     /// connection (the caller migrates first so no reader can observe a
     /// pre-migration database), opening the reader connections here.
-    pub(super) fn start(path: &Path, write_connection: Connection) -> Result<SyncCore, DbError> {
+    pub(super) fn start(
+        path: &Path,
+        write_connection: Connection,
+        denied_reader_tables: Option<Arc<HashSet<String>>>,
+    ) -> Result<SyncCore, DbError> {
         let (writer_tx, writer_rx) = mpsc::channel::<Job>();
         let (reader_tx, reader_rx) = mpsc::channel::<Job>();
         let reader_rx = Arc::new(Mutex::new(reader_rx));
@@ -153,6 +181,7 @@ impl SyncCore {
         );
         for index in 0..READER_POOL_SIZE {
             let connection = open_configured(path)?;
+            apply_reader_denylist(&connection, denied_reader_tables.clone())?;
             let queue = reader_rx.clone();
             threads.push(
                 std::thread::Builder::new()
