@@ -4,7 +4,6 @@
 //! boundary. The service owns persistence and reconciliation; this
 //! facade maps domain outcomes into the generated frontend contract.
 
-use eo_services::config_service::load_config_readonly;
 use eo_services::protection::{
     ObservationOutcome as ServiceObservationOutcome, ObservationSource as ServiceObservationSource,
     ProtectionEconomyKind as ServiceEconomyKind, ProtectionError,
@@ -324,11 +323,6 @@ impl Api {
     }
 
     pub fn protection_trade_terminal_scan(&self) -> Result<ProtectionScanResult, ApiError> {
-        let config = load_config_readonly(&self.data_dir)
-            .map_err(ApiError::internal("Trade Terminal scan config"))?;
-        if !config.repair_ocr_enabled {
-            return Err(ApiError::bad_request("Terminal OCR is disabled"));
-        }
         let value = self.repair_ocr.scan_trade_terminal_value();
         Ok(ProtectionScanResult {
             value_ped: value
