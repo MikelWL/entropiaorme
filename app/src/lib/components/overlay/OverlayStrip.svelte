@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { TrackingLive, TrackingStatus } from '$lib/api';
+	import type { ProtectionOverview, TrackingLive, TrackingStatus } from '$lib/api';
 	import { overlayStats, scopedStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
 	import { statsScope } from '$lib/statsScope.svelte';
@@ -28,6 +28,9 @@
 		armourCostOpen = false,
 		armourCostError = null,
 		armourSessionId = null,
+		protection = null,
+		protectionSaving = false,
+		protectionError = null,
 		mobMenuOpen = false,
 		definitionMenuOpen = false,
 		trifectaMenuOpen = false,
@@ -52,7 +55,8 @@
 		onBoostCommit = noop,
 		onActivitiesTrigger = noop,
 		onTrifectaTrigger = noop,
-		onArmourCostToggle = noop
+		onArmourCostToggle = noop,
+		onProtectionSelect = noop
 	}: {
 		data: TrackingLive;
 		status?: TrackingStatus | null;
@@ -70,6 +74,9 @@
 		armourCostOpen?: boolean;
 		armourCostError?: string | null;
 		armourSessionId?: string | null;
+		protection?: ProtectionOverview | null;
+		protectionSaving?: boolean;
+		protectionError?: string | null;
 		mobMenuOpen?: boolean;
 		definitionMenuOpen?: boolean;
 		trifectaMenuOpen?: boolean;
@@ -95,6 +102,7 @@
 		onActivitiesTrigger?: (anchor: HTMLElement) => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
+		onProtectionSelect?: (id: string) => void | Promise<void>;
 	} = $props();
 
 	// The Activities menu's anchor: the section, which survives the chip
@@ -134,6 +142,9 @@
 			: data.currentActivity === 'hunting'
 				? 'Hunting'
 				: null
+	);
+	const activeProtection = $derived(
+		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
 
 	function formatElapsed(seconds: number): string {
@@ -460,6 +471,36 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Armour cost (standalone, user-initiated) -->
+		{#if protection && protection.loadouts.length > 0}
+			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
+				<span class="facet-label">Protection</span>
+				{#if protection.loadouts.length === 1}
+					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Protection recorded from now on">
+						{activeProtection?.name ?? protection.loadouts[0].name}
+					</div>
+				{:else}
+					<div class="flex items-center gap-1">
+						{#each protection.loadouts as loadout (loadout.id)}
+							<button
+								type="button"
+								class="facet-chip max-w-[130px] {loadout.id === protection.activeLoadoutId ? 'facet-chip-open' : ''}"
+								disabled={protectionSaving}
+								aria-pressed={loadout.id === protection.activeLoadoutId}
+								title={`Record ${loadout.name} from now on`}
+								onclick={() => onProtectionSelect(loadout.id)}
+							>
+								<span class="truncate">{loadout.name}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+				{#if protectionError}
+					<div class="mt-1 max-w-[180px] text-[10px] leading-tight text-orange-300/90">{protectionError}</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Armour cost (standalone, user-initiated) -->
 		<div

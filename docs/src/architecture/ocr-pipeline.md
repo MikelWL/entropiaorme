@@ -4,7 +4,8 @@ EntropiaOrme reads a player's skill levels directly from the in-game skills
 panel: the user captures the panel page by page, the application recognises
 the text in each cell, and the recognised values are resolved into a map of
 canonical skill name to level. The same recogniser also serves on-demand
-repair-cost, auction sale-window, and map-coordinate reads. This page traces
+repair-cost, Trade Terminal value, auction sale-window, and map-coordinate
+reads. This page traces
 the shared machinery and the skill-panel journey stage by stage.
 
 The pipeline runs in-process in the native Rust spine, and the Rust
@@ -44,19 +45,20 @@ The model weights ship inside the installer and the recogniser operates fully
 offline from a cold start: there is no network access at any point of the read
 path.
 
-Four consumers share the recogniser:
+Five consumers share the recogniser:
 
 | Consumer | Input | Output |
 | --- | --- | --- |
 | Skill-panel scan | A captured panel sliced into per-cell crops | A `name → level` map |
 | Repair-cost read | A single small numeric region on the repair terminal | A parsed PED cost |
+| Trade Terminal value read | The total TT value shown for seven armour pieces or seven plates | A reviewable PED value for a limited-set observation |
 | Sale-window read | One calibrated auction panel sliced into independently validated fields | A reviewable listing draft |
 | Map-coordinate read | A calibrated minimap region read line by line | Parsed longitude, latitude, and optional altitude |
 
-This page focuses on the skill-panel scan; the repair-cost read
+This page focuses on the skill-panel scan; the repair-cost and Trade Terminal reads
 (`app/src-tauri/eo-services/src/repair_ocr.rs`) reuses the same recogniser
 for a single on-demand number and is summarised under
-[The shared repair-cost read](#the-shared-repair-cost-read). The auction reader
+[The shared repair and Trade Terminal reads](#the-shared-repair-and-trade-terminal-reads). The auction reader
 (`app/src-tauri/eo-services/src/sale_window_ocr.rs`) is described under
 [The auction sale-window read](#the-auction-sale-window-read). The coordinate
 reader (`app/src-tauri/eo-services/src/coord_capture.rs`) adds explicit grammar
@@ -321,7 +323,7 @@ The rationale for pinning equivalence to this recorded corpus, rather than
 chasing a moving accuracy target, is recorded in
 [ADR-0008: OCR equivalence frozen to the corpus](../adr/0008-ocr-equivalence-frozen.md).
 
-## The shared repair-cost read
+## The shared repair and Trade Terminal reads
 
 The repair-cost read reuses the recogniser for a single number rather than a
 panel. Given the repair terminal's region (derived from the live game window),
@@ -333,6 +335,21 @@ not found, invalid region, capture failure, engine unavailable) surfaces a
 distinct error while still returning a zeroed cost, so the caller's contract is
 preserved. It shares the capture and recognition seams with the skill scan but
 holds no multi-page state machine.
+
+The limited-protection read uses the same one-number service against the Trade
+Terminal total. The player places either all seven armour pieces or all seven
+plates in the terminal, without selling them, and reviews the recognised value
+before confirming it. Successive confirmed readings measure consumed TT; the
+protection service, not OCR, applies the configured average markup and decides
+whether the result can be booked or must remain pending.
+
+Both rectangles use the live game window's bottom-right docking convention.
+The repair rectangle has a shipped fallback. The Trade Terminal rectangle is
+the total-value field itself, loaded from the calibrated `trade_terminal`
+geometry entry; until that entry exists, capture uses an explicitly provisional
+fallback and the result carries `calibrated = false`. The review surface exposes
+that state and permits manual entry, so placeholder coordinates cannot
+masquerade as trusted evidence.
 
 ## The auction sale-window read
 

@@ -16,11 +16,15 @@
 		activateActivity,
 		deactivateActivity,
 		updateSettings,
+		getProtectionOverview,
+		selectProtectionLoadout,
 		type TrackingLive,
 		type TrackingStatus,
 		type TrackingSnapshot,
-		type ManualMobSuggestion
+		type ManualMobSuggestion,
+		type ProtectionOverview
 	} from '$lib/api';
+	import { inDevelopment } from '$lib/inDevelopment';
 	import { tick, untrack } from 'svelte';
 	import { useVisiblePoll, windowGeometryPoll } from '$lib/realtime/useVisiblePoll';
 	import { createSnapshotStore } from '$lib/realtime/snapshotStore.svelte';
@@ -94,6 +98,9 @@
 	let trifectaSaving = $state(false);
 	let trifectaError = $state<string | null>(null);
 	let overlayMenuLaunchError = $state<string | null>(null);
+	let protection = $state<ProtectionOverview | null>(null);
+	let protectionSaving = $state(false);
+	let protectionError = $state<string | null>(null);
 
 	let data = $state<TrackingLive>({ status: 'idle' });
 	let status = $state<TrackingStatus | null>(null);
@@ -200,6 +207,30 @@
 		deactivateSegment: (label) => deactivateActivity('segment', null, label),
 		refresh: () => snapshot.hydrate()
 	});
+
+	async function refreshProtection(): Promise<void> {
+		if (!inDevelopment.visible) return;
+		try {
+			protection = await getProtectionOverview();
+			protectionError = null;
+		} catch (error) {
+			protectionError = error instanceof ApiError ? error.message : 'Protection setup failed to load';
+		}
+	}
+
+	async function handleProtectionSelect(id: string): Promise<void> {
+		if (protectionSaving || protection?.activeLoadoutId === id) return;
+		protectionSaving = true;
+		protectionError = null;
+		try {
+			protection = await selectProtectionLoadout(id);
+			await snapshot.hydrate();
+		} catch (error) {
+			protectionError = error instanceof ApiError ? error.message : 'Protection selection failed';
+		} finally {
+			protectionSaving = false;
+		}
+	}
 
 	async function handleDrag(e: MouseEvent) {
 		const target = e.target as HTMLElement;
@@ -621,6 +652,7 @@
 			}
 			unlisten = fn;
 			void snapshot.hydrate();
+			void refreshProtection();
 		});
 
 		return () => {
@@ -644,6 +676,7 @@
 			unlisten = await listen(OVERLAY_SHOWN_EVENT, () => {
 				if (disposed) return;
 				void snapshot.hydrate();
+				void refreshProtection();
 			});
 		})();
 
@@ -980,6 +1013,9 @@
 		{armourCostOpen}
 		{armourCostError}
 		{armourSessionId}
+		protection={inDevelopment.visible ? protection : null}
+		{protectionSaving}
+		{protectionError}
 		mobMenuOpen={overlayMenuKind === 'mob'}
 		definitionMenuOpen={overlayMenuKind === 'definition'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
@@ -1011,6 +1047,7 @@
 		onActivitiesTrigger={toggleActivitiesMenu}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
+		onProtectionSelect={handleProtectionSelect}
 	/>
 </div>
 

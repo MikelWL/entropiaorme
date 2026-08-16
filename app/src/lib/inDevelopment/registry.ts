@@ -21,7 +21,15 @@ export interface InDevelopmentSurface {
 	readonly graduates: string;
 }
 
-export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [] as const;
+export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
+	{
+		id: 'limited-protection',
+		summary:
+			'Limited armour measurement is available for one-session windows; broader allocation is still pending.',
+		graduates:
+			'Trade Terminal geometry is calibrated and multi-session, switched-loadout costs allocate from defensive evidence.',
+	},
+] as const;
 
 /** The registered surface for `id`. Throws on an unregistered id, matching
  * the guard's build-time check so both enforcement points agree. */

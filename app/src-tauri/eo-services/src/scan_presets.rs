@@ -138,6 +138,13 @@ fn repair_fallback() -> PanelAnchor {
     PanelAnchor::fallback(50, 17, 48, 86)
 }
 
+/// Provisional rectangle for the Trade Terminal total. It is
+/// deliberately replaced by a full bottom-right-docked calibration before
+/// the read is treated as calibrated.
+fn trade_terminal_fallback() -> PanelAnchor {
+    PanelAnchor::fallback(80, 18, 48, 110)
+}
+
 /// The auction sale window carries no shipped constants: its rect is
 /// whatever calibration recorded, and a degenerate fallback is the
 /// honest stand-in until then. `compute_region` refuses a zero-sized
@@ -208,6 +215,8 @@ pub struct ScanPresets {
     pub skill: PanelAnchor,
     pub profession: PanelAnchor,
     pub repair: PanelAnchor,
+    pub trade_terminal: PanelAnchor,
+    pub trade_terminal_calibrated: bool,
     pub sale_window: PanelAnchor,
 }
 
@@ -216,10 +225,19 @@ impl ScanPresets {
     /// exist; the fallbacks then govern).
     pub fn new(geometry_path: &Path) -> Self {
         let geometry = load_geometry(geometry_path);
+        let trade_terminal_calibrated = geometry
+            .get(TRADE_TERMINAL_KEY)
+            .and_then(Value::as_object)
+            .is_some_and(|entry| !entry.is_empty());
         Self {
             skill: build_anchor(geometry.get("skill"), skill_fallback()),
             profession: build_anchor(geometry.get("profession"), profession_fallback()),
             repair: repair_fallback(),
+            trade_terminal: build_anchor(
+                geometry.get(TRADE_TERMINAL_KEY),
+                trade_terminal_fallback(),
+            ),
+            trade_terminal_calibrated,
             sale_window: build_anchor(geometry.get(SALE_WINDOW_KEY), sale_window_fallback()),
         }
     }
@@ -228,6 +246,7 @@ impl ScanPresets {
 /// The sale window's key in the geometry file, shared by the loader and
 /// the calibration tool that writes the entry.
 pub const SALE_WINDOW_KEY: &str = "sale_window";
+pub const TRADE_TERMINAL_KEY: &str = "trade_terminal";
 
 /// The capture rect for a panel anchored to the window's bottom-right
 /// corner, or None for a degenerate rect. `window` is the game
@@ -281,6 +300,8 @@ mod tests {
         assert_eq!(presets.skill, skill_fallback());
         assert_eq!(presets.profession, profession_fallback());
         assert_eq!(presets.repair, repair_fallback());
+        assert_eq!(presets.trade_terminal, trade_terminal_fallback());
+        assert!(!presets.trade_terminal_calibrated);
         assert_eq!(presets.skill.width, 635);
         assert_eq!(presets.profession.bottom_offset, 161);
         assert_eq!(presets.repair.height, 17);

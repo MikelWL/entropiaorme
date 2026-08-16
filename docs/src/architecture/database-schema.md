@@ -80,7 +80,9 @@ evidence with exact ordinary-loot reclassification), and
 `0041_ARIS_unresolved_rewards.sql` (truthful unresolved outcomes for guarded
 historical ARIS completions that had no exact voucher attribution), and
 `0042_quest_run_ownership.sql` (one-to-one ownership between durable runs and
-their completions). The
+their completions), and `0043_protection_accounting.sql` (the armour and plate
+catalogue, composable protection loadouts, live identity intervals, limited-item
+TT observations and reconciliations, and defensive-event evidence). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -565,6 +567,66 @@ event timestamps for attribution.
 | `started_at` | REAL | Not null; wall-clock start. |
 | `ended_at` | REAL | Optional wall-clock end; null while open. |
 | `origin_device` | TEXT | Optional origin-device identifier. |
+
+#### Protection catalogue and limited-item accounting
+
+Migration `0043` keeps armour and plates as separate economic layers. A named
+loadout composes at most one of each, including mixed limited and unlimited
+configurations. Limited layers carry an average acquisition markup and are
+measured through successive Trade Terminal TT-value observations. Unlimited
+layers continue to use the existing raw repair-cost path.
+
+`protection_sets` owns the reusable layer catalogue:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `kind` | TEXT | Not null; `armour` or `plates`. |
+| `name` | TEXT | Not null. Active names are unique case-insensitively within a kind. |
+| `economy_kind` | TEXT | Not null; `limited` or `unlimited`. |
+| `markup_percent` | REAL | Required and at least 100 for limited sets; null for unlimited sets. This is the average acquisition basis across the seven pieces. |
+| `created_at` | REAL | Not null. |
+| `archived_at` | REAL | Optional archive stamp. |
+
+`protection_loadouts` composes the layers shown as one choice in the overlay:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Primary key, autoincrement. |
+| `name` | TEXT | Not null; active names are unique case-insensitively. |
+| `armour_set_id` | INTEGER | Optional reference to `protection_sets(id)`. |
+| `plate_set_id` | INTEGER | Optional reference to `protection_sets(id)`. |
+| `created_at` | REAL | Not null. |
+| `archived_at` | REAL | Optional archive stamp. |
+
+An empty loadout is permitted only as the explicit `No protection` declaration.
+`protection_state` is a singleton containing the active loadout and its update
+time. The tracker snapshots that default when a session begins and updates it
+atomically when the player changes protection during a session.
+
+`protection_observations` records one confirmed total TT reading for exactly
+seven armour pieces or exactly seven plates. Its client token is unique, making
+confirmation idempotent. `source` is `ocr` or `manual`; `raw_text` preserves the
+recognised text when present. A non-null `reset_reason` establishes a new
+baseline instead of claiming decay, which is required when a reading rises.
+
+`protection_reconciliations` joins an opening and closing observation. It stores
+TT consumed, the frozen markup basis, resulting PED cost, and either a booked
+session identity or a pending reason. Automatic booking is deliberately narrow:
+the observation window must contain exactly one completed session and the
+measured layer identity must remain unambiguous throughout it. Every broader
+case is retained as pending rather than guessed.
+
+`session_protection_intervals` is the immutable economic snapshot beside each
+`session_intervals(kind = 'protection')` row. It retains the loadout identity and
+the resolved armour and plate names, economy kinds, and markup bases, so later
+catalogue changes cannot rewrite recorded play.
+
+`protection_defence_events` retains each numeric damage-taken event and each
+deflection, stamped with its session, attribution context, and protection
+interval. Deflection deliberately has no invented damage amount. This evidence
+supports later proportional allocation without contaminating the first
+unambiguous whole-session booking policy.
 
 #### `session_contexts`
 

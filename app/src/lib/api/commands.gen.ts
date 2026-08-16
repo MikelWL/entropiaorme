@@ -2066,6 +2066,104 @@ export interface ProspectSample {
  */
 export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
 
+export type ProtectionEconomyKind = 'limited' | 'unlimited';
+
+export interface ProtectionLoadout {
+	id: string;
+	name: string;
+	armour: ProtectionSetRef | null;
+	plates: ProtectionSetRef | null;
+}
+
+export interface ProtectionLoadoutInput {
+	name: string;
+	armourSetId?: number | null;
+	plateSetId?: number | null;
+}
+
+export interface ProtectionObservation {
+	id: string;
+	setId: string;
+	ttValuePed: number;
+	source: ProtectionObservationSource;
+	rawText: string | null;
+	observedAt: number;
+	resetReason: string | null;
+}
+
+export interface ProtectionObservationInput {
+	setId: number;
+	clientToken: string;
+	ttValuePed: number;
+	source: ProtectionObservationSource;
+	rawText?: string | null;
+	resetReason?: string | null;
+}
+
+export interface ProtectionObservationOutcome {
+	observation: ProtectionObservation;
+	reconciliation: ProtectionReconciliation | null;
+}
+
+export type ProtectionObservationSource = 'ocr' | 'manual';
+
+export interface ProtectionOverview {
+	sets: ProtectionSet[];
+	loadouts: ProtectionLoadout[];
+	activeLoadoutId: string | null;
+	recentReconciliations: ProtectionReconciliation[];
+}
+
+export interface ProtectionReconciliation {
+	id: string;
+	setId: string;
+	openingObservationId: string;
+	closingObservationId: string;
+	consumedTtPed: number;
+	markupPercent: number;
+	costPed: number;
+	status: ProtectionReconciliationStatus;
+	sessionId: string | null;
+	reason: string | null;
+	createdAt: number;
+}
+
+export type ProtectionReconciliationStatus = 'booked' | 'pending';
+
+export interface ProtectionScanResult {
+	valuePed: number | null;
+	rawText: string | null;
+	confidence: number | null;
+	error: string | null;
+	calibrated: boolean;
+}
+
+export interface ProtectionSet {
+	id: string;
+	kind: ProtectionSetKind;
+	name: string;
+	economyKind: ProtectionEconomyKind;
+	markupPercent: number | null;
+	latestObservation: ProtectionObservation | null;
+	pendingReconciliations: number;
+}
+
+export interface ProtectionSetInput {
+	kind: ProtectionSetKind;
+	name: string;
+	economyKind: ProtectionEconomyKind;
+	markupPercent?: number | null;
+}
+
+export type ProtectionSetKind = 'armour' | 'plates';
+
+export interface ProtectionSetRef {
+	id: string;
+	name: string;
+	economyKind: ProtectionEconomyKind;
+	markupPercent: number | null;
+}
+
 /**
  * A quest in the wire shape (`_format_quest` key for key). Ids are
  * stringified; `rewardDescription` / `notes` collapse null-or-empty to
@@ -3036,6 +3134,38 @@ export async function equipmentDelete(itemId: number): Promise<void> {
 
 export async function equipmentDetail(itemId: number): Promise<EquipmentDetail> {
 	return invokeCommand('equipment_detail', { item_id: itemId });
+}
+
+export async function protectionOverview(): Promise<ProtectionOverview> {
+	return invokeCommand('protection_overview', {});
+}
+
+export async function protectionSetCreate(input: ProtectionSetInput): Promise<ProtectionOverview> {
+	return invokeCommand('protection_set_create', { input });
+}
+
+export async function protectionLoadoutCreate(input: ProtectionLoadoutInput): Promise<ProtectionOverview> {
+	return invokeCommand('protection_loadout_create', { input });
+}
+
+export async function protectionSetArchive(setId: number): Promise<ProtectionOverview> {
+	return invokeCommand('protection_set_archive', { set_id: setId });
+}
+
+export async function protectionLoadoutArchive(loadoutId: number): Promise<ProtectionOverview> {
+	return invokeCommand('protection_loadout_archive', { loadout_id: loadoutId });
+}
+
+export async function protectionSelect(loadoutId: number): Promise<ProtectionOverview> {
+	return invokeCommand('protection_select', { loadout_id: loadoutId });
+}
+
+export async function protectionObservationConfirm(input: ProtectionObservationInput): Promise<ProtectionObservationOutcome> {
+	return invokeCommand('protection_observation_confirm', { input });
+}
+
+export async function protectionTradeTerminalScan(): Promise<ProtectionScanResult> {
+	return invokeCommand('protection_trade_terminal_scan', {});
 }
 
 export async function characterCalibration(): Promise<CalibrationStatus> {

@@ -179,11 +179,12 @@ impl TrackerActor {
     /// mutates owned in-memory state, so it runs under the guard;
     /// there is no DB write or publish. Defensive incoming events
     /// stay out of the kills model.
-    pub(super) fn on_combat(&mut self, event: &BusEvent) {
+    pub(super) async fn on_combat(&mut self, event: &BusEvent) {
         let BusEvent::Combat(payload) = event else {
             return;
         };
         let Self {
+            db,
             session,
             heal_tool,
             providers,
@@ -198,6 +199,7 @@ impl TrackerActor {
         // on a real mutation, so a duplicate self-heal tick or an
         // unhandled combat kind does not wake listeners for a no-op.
         let mut mutated = false;
+        let mut defence: Option<(String, Option<i64>, Option<i64>, Option<f64>, bool)> = None;
 
         match payload {
             CombatPayload::DamageDealt { amount, .. } => {
@@ -216,6 +218,16 @@ impl TrackerActor {
             }
             CombatPayload::DamageReceived { amount, .. } => {
                 active.accumulator.damage_taken += amount;
+                defence = Some((
+                    active.session.id.clone(),
+                    active.intervals.context_id(),
+                    active
+                        .intervals
+                        .open_of_kind(super::IntervalKind::Protection)
+                        .map(|interval| interval.id),
+                    Some(*amount),
+                    false,
+                ));
                 mutated = true;
             }
             CombatPayload::SelfHeal { amount, timestamp } => {
@@ -254,12 +266,46 @@ impl TrackerActor {
             CombatPayload::PlayerDodge { .. }
             | CombatPayload::PlayerEvade { .. }
             | CombatPayload::PlayerJam { .. }
-            | CombatPayload::MobMiss { .. }
-            | CombatPayload::Deflect { .. } => {}
+            | CombatPayload::MobMiss { .. } => {}
+            CombatPayload::Deflect { .. } => {
+                defence = Some((
+                    active.session.id.clone(),
+                    active.intervals.context_id(),
+                    active
+                        .intervals
+                        .open_of_kind(super::IntervalKind::Protection)
+                        .map(|interval| interval.id),
+                    None,
+                    true,
+                ));
+                mutated = true;
+            }
         }
 
         if mutated {
             active.dirty = true;
+        }
+        if let Some((session_id, context_id, protection_interval_id, damage, deflected)) = defence {
+            let stored = db
+                .with_writer(move |conn| {
+                    conn.execute(
+                        "INSERT INTO protection_defence_events \
+                         (session_id, context_id, protection_interval_id, damage, deflected) \
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![
+                            session_id,
+                            context_id,
+                            protection_interval_id,
+                            damage,
+                            deflected as i64
+                        ],
+                    )?;
+                    Ok(())
+                })
+                .await;
+            if let Err(error) = stored {
+                tracing::error!(target: "eo::tracker", %error, "defensive evidence write failed");
+            }
         }
     }
 

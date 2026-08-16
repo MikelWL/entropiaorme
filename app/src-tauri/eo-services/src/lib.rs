@@ -48,6 +48,7 @@ pub mod paths;
 pub mod ped;
 pub mod pin_configs;
 pub mod planet_maps;
+pub mod protection;
 pub mod quests;
 pub mod repair_ocr;
 pub mod sale_window_ocr;

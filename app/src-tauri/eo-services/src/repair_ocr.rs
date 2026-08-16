@@ -32,6 +32,10 @@ pub type FrameReader = Arc<dyn Fn(&BgrImage) -> Option<(String, f64)> + Send + S
 pub struct RepairProviders {
     /// The repair-terminal region from the live game window.
     pub repair_region: RegionLookup,
+    /// The bottom-right-docked Trade Terminal total-value region.
+    pub trade_terminal_region: RegionLookup,
+    /// False while the provisional fallback rectangle is in use.
+    pub trade_terminal_calibrated: bool,
     /// Capture an `x/y/w/h` screen rectangle as BGR pixels.
     pub capture_region: RegionCapture,
     /// Recognise one frame.
@@ -42,6 +46,8 @@ impl Default for RepairProviders {
     fn default() -> Self {
         Self {
             repair_region: Arc::new(|| None),
+            trade_terminal_region: Arc::new(|| None),
+            trade_terminal_calibrated: false,
             capture_region: Arc::new(|_, _, _, _| None),
             read_text: Arc::new(|_| None),
         }
@@ -76,15 +82,31 @@ impl RepairOcrService {
     /// `{cost_ped, raw_text, confidence}`, with the original's error
     /// surface on each failure leg.
     pub fn scan_repair_cost(&self) -> Value {
+        self.scan_number("repair", &self.providers.repair_region, true)
+    }
+
+    /// Capture and recognise the Trade Terminal's total TT value. The
+    /// result carries whether its region is calibrated so the UI cannot
+    /// present a provisional rectangle as trusted evidence.
+    pub fn scan_trade_terminal_value(&self) -> Value {
+        self.scan_number(
+            "trade_terminal",
+            &self.providers.trade_terminal_region,
+            self.providers.trade_terminal_calibrated,
+        )
+    }
+
+    fn scan_number(&self, panel: &str, region_lookup: &RegionLookup, calibrated: bool) -> Value {
         let failure = |error: &str| {
             json!({
                 "error": error,
                 "cost_ped": 0.0,
                 "raw_text": "",
                 "confidence": 0.0,
+                "calibrated": calibrated,
             })
         };
-        let Some((tl, br)) = (self.providers.repair_region)() else {
+        let Some((tl, br)) = region_lookup() else {
             return failure("Entropia Universe window not found: start the game first");
         };
         let (x, y) = (tl[0], tl[1]);
@@ -100,7 +122,7 @@ impl RepairOcrService {
         if let Some(tap) = tap {
             let region = json!({"x": x, "y": y, "w": w, "h": h});
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                tap("repair", &region, &frame)
+                tap(panel, &region, &frame)
             }));
         }
 
@@ -112,6 +134,7 @@ impl RepairOcrService {
             "cost_ped": cost,
             "raw_text": text,
             "confidence": confidence,
+            "calibrated": calibrated,
         })
     }
 }
@@ -170,6 +193,7 @@ mod tests {
                 Some(frame())
             }),
             read_text: Arc::new(|_| Some(("2,20 PED".to_string(), 0.97))),
+            ..Default::default()
         });
 
         let taps = Arc::new(Mutex::new(Vec::new()));
