@@ -56,8 +56,8 @@ use crate::protection::{
     ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
 };
 use crate::quests::{
-    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
+    Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput, QuestHandInState, QuestInput,
+    QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use crate::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -68,8 +68,8 @@ use crate::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use crate::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
-    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
+    SessionDetail, SessionIntervals, SessionPage, SessionReassignResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use crate::ApiError;
 use crate::Nullable;
@@ -531,6 +531,58 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(Quest))),
         },
         CommandSpec {
+            name: "quest_hand_in_begin",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_state",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_wait",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "after_clump_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_cancel",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "quest_hand_in_confirm",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "clump_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: None,
+        },
+        CommandSpec {
             name: "quest_rewards_unresolved",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<UnresolvedQuestReward>))),
@@ -566,46 +618,6 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "quests_analytics",
             args: Vec::new(),
             returns: Some(schema(schema_for!(Vec<QuestAnalyticsRow>))),
-        },
-        CommandSpec {
-            name: "playlists_list",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<QuestPlaylist>))),
-        },
-        CommandSpec {
-            name: "playlist_create",
-            args: vec![ArgSpec {
-                name: "input",
-                schema: schema(schema_for!(PlaylistInput)),
-            }],
-            returns: Some(schema(schema_for!(QuestPlaylist))),
-        },
-        CommandSpec {
-            name: "playlist_update",
-            args: vec![
-                ArgSpec {
-                    name: "playlist_id",
-                    schema: schema(schema_for!(i64)),
-                },
-                ArgSpec {
-                    name: "input",
-                    schema: schema(schema_for!(PlaylistInput)),
-                },
-            ],
-            returns: Some(schema(schema_for!(QuestPlaylist))),
-        },
-        CommandSpec {
-            name: "playlist_delete",
-            args: vec![ArgSpec {
-                name: "playlist_id",
-                schema: schema(schema_for!(i64)),
-            }],
-            returns: None,
-        },
-        CommandSpec {
-            name: "playlists_analytics",
-            args: Vec::new(),
-            returns: Some(schema(schema_for!(Vec<PlaylistAnalyticsRow>))),
         },
         CommandSpec {
             name: "quest_families_list",
@@ -1190,14 +1202,6 @@ pub fn manifest() -> Vec<CommandSpec> {
             name: "tracking_snapshot",
             args: Vec::new(),
             returns: Some(schema(schema_for!(TrackingSnapshot))),
-        },
-        CommandSpec {
-            name: "tracking_quest_link_suggestion",
-            args: vec![ArgSpec {
-                name: "session_id",
-                schema: schema(schema_for!(String)),
-            }],
-            returns: Some(schema(schema_for!(SessionQuestLinkSuggestion))),
         },
         CommandSpec {
             name: "tracking_start",

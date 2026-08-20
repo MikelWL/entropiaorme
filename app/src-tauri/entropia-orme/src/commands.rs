@@ -54,8 +54,8 @@ use eo_api::protection::{
     ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
 };
 use eo_api::quests::{
-    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
+    Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput, QuestHandInState, QuestInput,
+    QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -66,8 +66,8 @@ use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
-    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
+    SessionDetail, SessionIntervals, SessionPage, SessionReassignResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -478,6 +478,49 @@ pub async fn quest_complete(app: tauri::AppHandle, quest_id: i64) -> Result<Ques
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_begin(
+    app: tauri::AppHandle,
+    quest_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?.quest_hand_in_begin(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_state(
+    app: tauri::AppHandle,
+    quest_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?.quest_hand_in_state(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_wait(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    after_clump_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?
+        .quest_hand_in_wait(quest_id, after_clump_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_cancel(app: tauri::AppHandle, quest_id: i64) -> Result<(), ApiError> {
+    facade(&app)?.quest_hand_in_cancel(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_confirm(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    clump_id: i64,
+) -> Result<(), ApiError> {
+    facade(&app)?
+        .quest_hand_in_confirm(quest_id, clump_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn quest_cancel(
     app: tauri::AppHandle,
     quest_id: i64,
@@ -509,40 +552,6 @@ pub async fn quest_reward_review(
     input: QuestRewardReviewInput,
 ) -> Result<(), ApiError> {
     facade(&app)?.quest_reward_review(input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlists_list(app: tauri::AppHandle) -> Result<Vec<QuestPlaylist>, ApiError> {
-    facade(&app)?.playlists_list().await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_create(
-    app: tauri::AppHandle,
-    input: PlaylistInput,
-) -> Result<QuestPlaylist, ApiError> {
-    facade(&app)?.playlist_create(input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_update(
-    app: tauri::AppHandle,
-    playlist_id: i64,
-    input: PlaylistInput,
-) -> Result<QuestPlaylist, ApiError> {
-    facade(&app)?.playlist_update(playlist_id, input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_delete(app: tauri::AppHandle, playlist_id: i64) -> Result<(), ApiError> {
-    facade(&app)?.playlist_delete(playlist_id).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlists_analytics(
-    app: tauri::AppHandle,
-) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
-    facade(&app)?.playlists_analytics().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -862,7 +871,7 @@ pub async fn ledger_summary(
             losses: Default::default(),
         };
         for entry in entries {
-            let side = match serde_json::to_value(&entry.kind) {
+            let side = match serde_json::to_value(entry.kind) {
                 Ok(value) if value == "markup" => &mut summary.gains,
                 _ => &mut summary.losses,
             };
@@ -1232,16 +1241,6 @@ pub async fn tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSnapshot
     {
         facade(&app)?.tracking_snapshot().await
     }
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_link_suggestion(
-    app: tauri::AppHandle,
-    session_id: String,
-) -> Result<SessionQuestLinkSuggestion, ApiError> {
-    facade(&app)?
-        .tracking_quest_link_suggestion(session_id)
-        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1875,16 +1874,16 @@ mod tests {
         "quest_delete",
         "quest_start",
         "quest_complete",
+        "quest_hand_in_begin",
+        "quest_hand_in_state",
+        "quest_hand_in_wait",
+        "quest_hand_in_cancel",
+        "quest_hand_in_confirm",
         "quest_rewards_unresolved",
         "quest_reward_review",
         "quest_cancel",
         "quests_mobs",
         "quests_analytics",
-        "playlists_list",
-        "playlist_create",
-        "playlist_update",
-        "playlist_delete",
-        "playlists_analytics",
         "quest_families_list",
         "quest_family_create",
         "quest_family_update",
@@ -1959,7 +1958,6 @@ mod tests {
         "tracking_session_intervals",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",
-        "tracking_quest_link_suggestion",
         "tracking_start",
         "tracking_stop",
         "tracking_release_mob",

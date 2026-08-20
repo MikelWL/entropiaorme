@@ -82,7 +82,14 @@ historical ARIS completions that had no exact voucher attribution), and
 `0042_quest_run_ownership.sql` (one-to-one ownership between durable runs and
 their completions), and `0043_protection_accounting.sql` (the armour and plate
 catalogue, composable protection loadouts, live identity intervals, limited-item
-TT observations and reconciliations, and defensive-event evidence). The
+TT observations and reconciliations, and defensive-event evidence),
+`0044_deferred_protection_costs.sql` (evidence-window settlement and
+damage-weighted session/context allocation for deferred protection costs), and
+`0045_manual_quest_hand_in.sql` (manual-hand-in quest completion, stable raw
+loot-clump identity, and bounded review evidence), and
+`0046_quest_reward_lifecycle.sql` (Universal Ammo ledger recognition, quest
+stock provenance and effort attribution, append-only reward corrections, and
+the quest-item daily-rollup family). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -323,17 +330,18 @@ Quest definitions, including rewards, chain position, and activation state.
 | `planet` | TEXT | Not null; defaults to `'Calypso'`. |
 | `waypoint` | TEXT | Optional. |
 | `cooldown_hours` | REAL | Optional. |
-| `reward_ped` | REAL | Optional. |
-| `reward_is_skill` | INTEGER | Not null; defaults to 0 (boolean flag). |
-| `expected_reward_markup_percent` | REAL | Optional. |
+| `reward_ped` | REAL | Optional PES amount when `reward_is_skill = 1`. Legacy non-skill values remain readable but the active service neither authors nor accounts them. |
+| `reward_is_skill` | INTEGER | Not null; defaults to 0 (boolean flag). Selects whether `reward_ped` is PES progression. |
+| `expected_reward_markup_percent` | REAL | Dormant legacy field. Observed reward evidence and current market projections replace authored reward estimates. |
 | `notes` | TEXT | Optional. |
 | `chain_name` | TEXT | Optional. |
 | `chain_position` | INTEGER | Optional. |
 | `chain_total` | INTEGER | Optional. |
 | `started_at` | REAL | Optional. |
 | `signal_loot_item` | TEXT | Optional (migration `0020`). Null uses the mission-log lifecycle; a value names the loot item whose arrival completes a signal-driven quest. |
-| `completion_trigger` | TEXT | `mission_log` or `signal_item`; independent of the reward policy. |
-| `reward_policy` | TEXT | `none`, `fixed_ped`, `fixed_pes`, `named_items`, or `completion_clump`. |
+| `completion_trigger` | TEXT | Legacy two-value trigger retained for migration compatibility. Current service reads and writes use `completion_mode`. |
+| `completion_mode` | TEXT | Canonical completion trigger: `mission_log`, `signal_item`, or `manual_hand_in`; independent of the reward policy. |
+| `reward_policy` | TEXT | Active policies are `none`, `fixed_pes`, `named_items`, and `completion_clump`. The stored `fixed_ped` value is legacy and normalises to `none`; Universal Ammo is recognised from observed item evidence instead. |
 | `family_id` | INTEGER | Optional reference to `quest_families(id)` (migration `0021`; indexed `idx_quests_family`). Null leaves the quest standalone. |
 | `cooldown_anchor` | TEXT | Not null; defaults to `'completion'` (migration `0021`). Selects whether this quest's cooldown runs from pickup or completion. |
 | `last_started_at` | REAL | Optional durable pickup timestamp (migration `0021`), retained after `started_at` clears so pickup-anchored cooldown remains measurable. |
@@ -372,7 +380,10 @@ The mobs associated with a quest. Composite-keyed join table.
 
 #### `quest_playlists`
 
-User-defined ordered collections of quests, with an estimated duration.
+Dormant legacy storage for the retired playlist feature. The active product,
+command facade, and quest service never read or write these rows. Session
+definition rosters are the sole authored quest collection. The table remains
+to preserve old databases without a lossy migration.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -386,7 +397,8 @@ User-defined ordered collections of quests, with an estimated duration.
 
 #### `quest_playlist_items`
 
-The ordered members of a playlist.
+Dormant legacy playlist membership, retained only for non-lossy historical
+storage. It has no active service or UI consumer.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -423,9 +435,9 @@ Records that a given quest was completed during a given session. The
 | `completed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
 | `activity_context_id` | INTEGER | Optional reference to `session_contexts(id)`. The exact declared activity signature in force immediately before completion; indexed when present. |
 | `activity_interval_id` | INTEGER | Optional reference to `session_intervals(id)`. The declared quest stretch that earned the completion. |
-| `reward_source` | TEXT | Nullable for legacy completions; otherwise one of `none`, `tracked_loot`, `ledger`, or `skill`. |
-| `reward_kind` | TEXT | Nullable for unclassified legacy completions; otherwise the canonical primary economic treatment: `none`, `included_in_loot`, `fixed_liquid`, `item`, or `skill`. This is deliberately separate from evidence provenance; analytics reports `mixed` when item evidence accompanies another treatment. |
-| `reward_ped` | REAL | Optional immutable completion-time reward value. Liquid PED enters activity economics; skill value remains progression. |
+| `reward_source` | TEXT | Nullable for legacy completions; active writes use `none`, `tracked_loot`, or `skill`. The stored `ledger` value is legacy. |
+| `reward_kind` | TEXT | Nullable for unclassified legacy completions; active writes use `none`, `included_in_loot`, `item`, or `skill`. Stored `fixed_liquid` rows are legacy. Economic treatment for observed items lives on each reward-item row. |
+| `reward_ped` | REAL | Optional immutable PES value when `reward_kind = 'skill'`. Active quest completion never writes a direct liquid-PED reward. |
 | `expected_reward_markup_percent` | REAL | Optional legacy completion-time snapshot. Retained for compatibility; Hunting projections do not consume it. |
 | `ledger_entry_id` | TEXT | Optional reference to the exact liquid reward row in `ledger_entries`. |
 | `quest_claim_id` | INTEGER | Optional reference to the exact progression reward row in `quest_claims`. |
@@ -450,11 +462,45 @@ item without usable market data remains at its recorded TT value.
 | `item_name` | TEXT | Not null; the observed item name. |
 | `quantity` | INTEGER | Not null and positive; the observed quantity. |
 | `value_ped` | REAL | Not null and non-negative; the completion-time TT value. |
+| `accounting_kind` | TEXT | `liquid` for Universal Ammo, otherwise `stock`. Liquid rows enter the ledger and never Inventory; stock rows are Inventory acquisitions. |
+| `ledger_entry_id` | TEXT | Optional reference to the exact Universal Ammo gain in `ledger_entries`. Null for stock rewards. |
+
+#### `quest_reward_attributions`
+
+Immutable ownership of a confirmed reward across the exact activity contexts
+traversed by its durable run. Rows store the context and session-definition
+identity, a conserved weight, and whether cycle PED or elapsed duration supplied
+the weight. A run with neither measurable basis remains quest-attributable but
+does not invent activity ownership.
+
+#### `quest_reward_reversals`
+
+Append-only economic corrections. A reversal retains the completion and reward
+evidence, removes stock acquisitions from current holdings, and references any
+compensating Universal Ammo ledger expense or negative PES claim. A reversal is
+refused while a dependent stock listing, sale, conversion, or removal exists.
+
+#### `quest_cooldown_resets`
+
+Append-only cooldown corrections, deliberately separate from reward reversal.
+Availability ignores a reset completion while its historical run, evidence,
+Inventory acquisition, and accounting remain intact.
 
 #### `quest_reward_item_rules`
 
 Quest-local item names that identify a `named_items` reward. The composite
 primary key is `(quest_id, item_name)`; `sort_order` preserves authoring order.
+
+#### `quest_reward_clumps` and `quest_reward_clump_items`
+
+A bounded raw-evidence journal for loot clumps observed while a manual-hand-in
+quest stretch is active. Each clump carries the stable source identity shared
+with its ordinary kill or harvest record, session and context ownership,
+observation time, and an optional unique completion claim. Its ordered item rows
+preserve every raw chat-log item not already assigned to an overlapping signal
+quest, including names excluded from ordinary loot tracking. Unclaimed evidence
+is retention-bounded; a claimed clump remains as durable provenance for its
+immutable completion reward.
 
 #### `quest_runs` and `quest_run_intervals`
 
@@ -464,18 +510,25 @@ unique indexes permit only one in-progress run per quest and ensure a run and
 completion own at most one another; reciprocal-pair triggers reject crossed
 links once either side has been bound. `quest_run_intervals` links every declared
 effort interval that earned the run, including intervals from several sessions.
+For manual hand-in, `hand_in_waiting` and `hand_in_after_clump_id` persist the
+next-clump capture boundary. A partial unique index permits only one waiting run
+at a time, matching the single overlay flow.
 
 #### `quest_reward_reviews` and `quest_reward_review_items`
 
 Append-only decisions over originally unresolved completion evidence. A review
-records `confirmed` or `none`; confirmed item rows reference the exact ordinary
-loot acquisitions they reclassified, and each acquisition can be claimed only
-once. The original completion evidence remains unchanged.
+records `confirmed` or `none`. Confirmed stock selections reference and
+deactivate the exact ordinary loot acquisitions they reclassified, and each
+acquisition can be claimed only once. Filtered Universal Ammo is the narrow
+exception: its immutable completion evidence is the acquisition source, so it
+creates liquid ledger value without a review-item or Inventory row. The
+original completion evidence remains unchanged.
 
 #### `session_quest_analytics_links`
 
-Associates a session with a single quest or playlist for analytics attribution.
-Keyed by session, so each session has at most one link.
+Dormant legacy association storage. Recorded quest intervals and session
+definition rosters replaced this link ontology; no active command or analytics
+reader consumes it. The table remains for non-lossy historical storage.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -685,6 +738,7 @@ analytics queries can read the total directly.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
+| `loot_source_id` | TEXT | Optional stable raw-clump identity (migration `0045`), unique when present. Live watcher loot uses it for exact manual reward reclassification; legacy and synthetic records may be null. |
 | `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed (`idx_kill_session`). |
 | `mob_name` | TEXT | Optional. In tag-mode sessions the tag string is persisted here. |
 | `mob_species` | TEXT | Defaults to `''`. |
@@ -755,6 +809,7 @@ evidence remains explicitly unknown.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
+| `loot_source_id` | TEXT | Optional stable raw-clump identity (migration `0045`), unique when present across harvesting rows. Failed swings and legacy records may be null. |
 | `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed alone (`idx_harvest_session`) and with tool and timestamp (`idx_harvest_session_tool_time`). |
 | `timestamp` | REAL | Not null. Indexed with yield tier and tool (`idx_harvest_time_tier_tool`) for period-scoped analytics. |
 | `success` | INTEGER | Not null; defaults to 1 (boolean flag). |
@@ -814,15 +869,18 @@ activity's TT return.
   has no auction fees and recognises markup atomically with the stock outflow.
 - `stock_conversions` records source and target stock. Ordinary Nanocube
   recycling preserves TT; deliberate Shrapnel conversion records its 101%
-  output TT and owns the 1% ledger gain.
+  conversion and owns only the 1% ledger gain. The consumed Shrapnel leaves
+  stock; Universal Ammo never becomes an Inventory position.
 - `stock_removals` records that a quantity is no longer held when its outcome
   is unknown. It has no ledger effect, so historical loot TT remains intact.
 - `stock_movements` is the signed, provenance-aware inventory ledger. Its
   source kind carries Hunting independently of its optional observed species;
   harvesting tier/tool and Hunting species/session definition remain
   downstream analytical dimensions through transformations and into realised
-  outcomes. Missing mob evidence therefore limits target detail without
-  suppressing stock or activity attribution.
+  outcomes. Quest stock additionally carries reward-item, durable-run, quest,
+  activity-context, and session-definition identity. Missing mob evidence
+  therefore limits target detail without suppressing stock or activity
+  attribution.
 
 Every outcome can be undone as a correction while retaining its lifecycle row
 marked as undone. A conversion undo is refused if later movements have already
@@ -1110,6 +1168,7 @@ point sets.
 | `computed_at` | REAL | Not null; defaults to `unixepoch('now')`. |
 | `harvest_loot_tt` | REAL | Nullable (migration `0006`); `SUM(harvest_events.loot_total_ped)`. |
 | `harvest_cost` | REAL | Nullable (migration `0006`); `SUM(harvest_events.cost_ped)`. |
+| `quest_item_tt` | REAL | Nullable (migration `0046`); confirmed non-Universal-Ammo quest reward TT. Universal Ammo enters through the ledger instead. |
 
 #### `daily_ledger_rollups`
 

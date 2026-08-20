@@ -71,7 +71,7 @@ fn filter_sessions_fixture(sessions: Value, definition_id: i64) -> Value {
 }
 
 /// The dashboard fixture value under `key` (`snapshot` / `sessionDetail` /
-/// `quests` / `playlists`), for the typed tracking read commands. The e2e build
+/// `quests`), for the typed tracking read commands. The e2e build
 /// serves the same committed dashboard fixture through those commands, keeping
 /// the visual baselines stable. The session-list fixture lives in the analytics
 /// fixture under `sessions` (`analytics_fixture`). Built once and cached.

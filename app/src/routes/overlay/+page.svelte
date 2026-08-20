@@ -15,6 +15,7 @@
 		getActivityOptions,
 		activateActivity,
 		deactivateActivity,
+		beginQuestHandIn,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -46,6 +47,7 @@
 		OVERLAY_MENU_WINDOW_LABEL,
 		OVERLAY_MENU_MIN_WIDTH,
 		buildActivitiesMenuState,
+		buildQuestHandInMenuState,
 		buildDefinitionMenuState,
 		computeMenuHeight,
 		computeMenuWidth,
@@ -191,9 +193,7 @@
 		selectDefinition: (id) => selectDefinition(id)
 	});
 
-	// The Activities control: what the session offers and the two writes
-	// that move between offered and standing. The strip renders its chips
-	// off the tracking frame; this model feeds the menu.
+	// Activities owns offered/standing transitions; the strip reads live chips.
 	const activities = createActivitiesModel({
 		readOptions: getActivityOptions,
 		activateQuest: (questId, additive) =>
@@ -202,6 +202,7 @@
 			activateActivity('segment', null, label, additive),
 		deactivateQuest: (questId) => deactivateActivity('quest', questId, null),
 		deactivateSegment: (label) => deactivateActivity('segment', null, label),
+		beginHandIn: beginQuestHandIn,
 		refresh: () => snapshot.hydrate()
 	});
 
@@ -414,11 +415,21 @@
 	}
 
 	async function toggleActivitiesMenu(anchor: HTMLElement) {
-		if (overlayMenuKind === 'activities') {
+		if (overlayMenuKind === 'activities' || overlayMenuKind === 'questHandIn') {
 			await hideOverlayMenu();
 			return;
 		}
 		await openActivitiesMenu(anchor);
+	}
+
+	async function openQuestHandIn(key: string) {
+		const anchor = activitiesAnchor;
+		const option = activities.find(key);
+		if (!anchor?.isConnected || !option) return;
+		const handIn = await activities.beginHandIn(option);
+		facets.facetError = activities.error;
+		if (!handIn) return;
+		await showOverlayMenu('questHandIn', anchor, buildQuestHandInMenuState(anchor.getBoundingClientRect().width, handIn), { focusPopup: true });
 	}
 
 	/** An Activities action keeps the control open (declaring one thing
@@ -436,13 +447,6 @@
 			await openActivitiesMenu(activitiesAnchor);
 		}
 		if (failure) facets.facetError = failure;
-	}
-
-	/** The row an Activities selection names, matched on the key the menu
-	 * was presented with. A row that vanished between the present and the
-	 * tap (a completion landing, a definition edit) simply does nothing. */
-	function selectedActivity(key: string) {
-		return activities.options?.options.find((option) => option.key === key) ?? null;
 	}
 
 	async function showArmourCost(anchor: HTMLElement) {
@@ -709,17 +713,27 @@
 
 				if (event.payload.kind === 'activities') {
 					const payload = event.payload;
+					if (payload.action === 'handIn') {
+						await openQuestHandIn(payload.key);
+						return;
+					}
 					await handleActivityAction(() => {
 						if (payload.action === 'declare') {
 							activities.segmentDraft = payload.label;
 							return activities.declareTyped();
 						}
-						const option = selectedActivity(payload.key);
+						const option = activities.find(payload.key);
 						if (!option) return Promise.resolve(false);
 						return payload.action === 'toggle'
 							? activities.toggle(option)
 							: activities.declare(option, true);
 					});
+					return;
+				}
+
+				if (event.payload.kind === 'questHandIn') {
+					overlayMenuKind = null;
+					await activities.refresh();
 					return;
 				}
 
@@ -1002,7 +1016,7 @@
 		definitionEditable={facets.definitionEditable}
 		savingBoost={facets.savingBoost}
 		savingActivity={activities.saving}
-		activitiesMenuOpen={overlayMenuKind === 'activities'}
+		activitiesMenuOpen={overlayMenuKind === 'activities' || overlayMenuKind === 'questHandIn'}
 		facetError={facets.facetError}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}

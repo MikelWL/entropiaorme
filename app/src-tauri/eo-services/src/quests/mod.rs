@@ -1,11 +1,8 @@
-//! Quest service: the quest and playlist CRUD surface with its shared
-//! helper layer (row shaping, cooldown derivation, reward-markup normalisation,
-//! mob and playlist-item management), plus the lifecycle actions
+//! Quest service: quest CRUD, cooldown derivation, reward materialisation,
+//! mob management, lifecycle actions,
 //! (start/complete/cancel with ledger and claim integration), the
-//! curated session-link suggestions, and the chat-log mission
-//! detection (auto-start, auto-complete, and reward suppression),
-//! and the analytics readers (per-quest and per-playlist
-//! sustainability metrics over curated session links).
+//! chat-log mission detection (auto-start, auto-complete, and reward suppression),
+//! and per-quest analytics.
 //!
 //! Payload semantics are an owned contract, pinned by the frozen goldens
 //! (ADR-0017): a key that is ABSENT takes the documented default, while a
@@ -28,17 +25,17 @@ mod actor;
 mod analytics;
 mod crud;
 mod families;
+mod hand_in;
 mod lifecycle;
-mod linking;
 mod missions;
 mod offers;
 mod payload;
-mod playlists;
 mod review;
 #[cfg(test)]
 mod tests;
 
 pub use families::CooldownAnchor;
+pub use hand_in::{HandInCandidate, HandInRewardItem, HandInState};
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 pub use offers::{read_quest_offers, QuestOffer};
 
@@ -57,7 +54,13 @@ pub use offers::{read_quest_offers, QuestOffer};
 pub type QuestStretchCloser = Arc<
     dyn Fn(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
-pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
+
+/// The live tracker's in-memory half of an exact reward reclassification.
+/// The quest transaction owns persistence; this sink keeps the running
+/// overlay aggregate in step immediately after that commit.
+pub type QuestLootReconciler = Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
 
 use std::sync::{Arc, OnceLock};
 
@@ -91,7 +94,7 @@ pub enum QuestError {
     Rollup(#[from] crate::db::DbError),
 }
 
-/// Quest operations: CRUD, playlists, the completion lifecycle,
+/// Quest operations: CRUD, the completion lifecycle,
 /// chat-log mission detection, and the analytics readers.
 pub struct QuestService {
     db: Db,
@@ -107,6 +110,7 @@ pub struct QuestService {
     /// composition has wired it. Absent in every test and composition
     /// that has no tracker, which is why every report is best-effort.
     stretch_closer: OnceLock<QuestStretchCloser>,
+    loot_reconciler: OnceLock<QuestLootReconciler>,
 }
 
 impl QuestService {
@@ -143,6 +147,7 @@ impl QuestService {
             session: session_rx,
             pump: pump.clone(),
             stretch_closer: OnceLock::new(),
+            loot_reconciler: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -181,6 +186,12 @@ impl QuestService {
         let _ = self.stretch_closer.set(closer);
     }
 
+    /// Wire the live aggregate correction sink. Composition calls this once
+    /// after the tracker exists; a second call is ignored.
+    pub fn set_loot_reconciler(&self, reconciler: QuestLootReconciler) {
+        let _ = self.loot_reconciler.set(reconciler);
+    }
+
     /// Report a quest's completion to the interval layer, if anything
     /// is listening, so a declared stretch of it closes.
     ///
@@ -191,6 +202,12 @@ impl QuestService {
     pub(super) async fn report_stretch_closed(&self, quest_id: i64) {
         if let Some(closer) = self.stretch_closer.get() {
             closer(quest_id).await;
+        }
+    }
+
+    pub(super) async fn report_loot_reconciled(&self, source_id: String) {
+        if let Some(reconciler) = self.loot_reconciler.get() {
+            reconciler(source_id).await;
         }
     }
 

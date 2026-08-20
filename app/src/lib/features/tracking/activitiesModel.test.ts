@@ -11,15 +11,21 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		questId: 11,
 		active: false,
 		available: true,
+		resettable: false,
 		unavailableReason: null,
 		availableFrom: null,
 		offRoster: false,
+		manualHandIn: false,
+		handInWaiting: false,
+		rosterOrder: 0,
 		...overrides,
 	};
 }
 
 function harness(overrides: Partial<ActivitiesModelDeps> = {}) {
 	const offerings: ActivityOptionsResult = {
+		definitionId: 1,
+		definitionName: 'Daily Hunt',
 		visible: true,
 		adHocSegments: true,
 		readyCount: 1,
@@ -32,6 +38,12 @@ function harness(overrides: Partial<ActivitiesModelDeps> = {}) {
 		activateSegment: vi.fn(async () => {}),
 		deactivateQuest: vi.fn(async () => {}),
 		deactivateSegment: vi.fn(async () => {}),
+		beginHandIn: vi.fn(async () => ({
+			questId: 11,
+			questName: 'Daily: Carabok',
+			waiting: false,
+			candidate: null,
+		})),
 		refresh: vi.fn(async () => {}),
 		...overrides,
 	};
@@ -202,5 +214,17 @@ describe('naming an activity in play', () => {
 
 		expect(model.segmentDraft).toBe('Boss lap');
 		expect(model.error).toBe('No active session');
+	});
+});
+
+describe('reviewing a manual hand-in', () => {
+	it('begins the exact-clump review and refreshes the parent snapshot', async () => {
+		const { model, deps } = harness();
+
+		const handIn = await model.beginHandIn(option({ manualHandIn: true }));
+
+		expect(handIn?.questId).toBe(11);
+		expect(deps.beginHandIn).toHaveBeenCalledWith(11);
+		expect(deps.refresh).toHaveBeenCalledOnce();
 	});
 });

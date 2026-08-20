@@ -5,8 +5,8 @@
  * draft, the morph lifecycle). Deps-injected so the dashboard island
  * and the tests compose it the same way.
  *
- * A definition's roster is authored data replaced wholesale on save
- * (the playlist-items precedent), so the draft here is a plain array
+ * A definition's roster is authored data replaced wholesale on save,
+ * so the draft here is a plain array
  * the editor mutates freely; nothing persists until Save. Segment
  * entries are never drafted here: they arrive by being named in the
  * overlay while playing, and the editor only prunes them.

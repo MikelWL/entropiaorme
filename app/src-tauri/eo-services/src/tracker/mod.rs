@@ -267,6 +267,17 @@ impl HuntTracker {
             .await
     }
 
+    /// Reload one exactly identified raw clump from committed active item
+    /// rows after quest reward confirmation or reversal. False means the
+    /// source is absent from the running session or already matches the DB.
+    pub async fn reconcile_loot_source(&self, source_id: &str) -> Result<bool, DbError> {
+        self.call(|reply| TrackerMsg::ReconcileLootSource {
+            source_id: source_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
     /// Declare the protection loadout in force from now onward. The
     /// actor writes the persisted default, interval, resolved layer
     /// snapshot, and fresh event context as one transition.

@@ -1,5 +1,5 @@
 /**
- * Quest-surface view model: the quest/playlist data set, the quest-view
+ * Quest-surface view model: the quest data set, the quest-view
  * filters and grouping, the quest lifecycle and CRUD handlers, the quest
  * form modal state, and the analytics loads. Presentation lives in the
  * feature components; they compose over this state.
@@ -13,8 +13,6 @@ import {
 	deleteQuest,
 	getAnalyticsOverview,
 	getMarketHuntMarkups,
-	getPlaylistAnalytics,
-	getPlaylists,
 	getQuestAnalytics,
 	getQuestFamilies,
 	getQuests,
@@ -25,27 +23,23 @@ import {
 	questsDemoFamilies,
 	questsDemoGlobalLiquidReturnRate,
 	questsDemoGlobalSkillProgressionRate,
-	questsDemoPlaylistAnalytics,
-	questsDemoPlaylists,
 	questsDemoQuestAnalytics,
 	questsDemoQuests,
 } from '$lib/guide/fixtures/quests';
 import type {
-	PlaylistAnalyticsRow,
 	Quest,
 	QuestAnalyticsRow,
 	QuestCompletionTrigger,
 	QuestCooldownAnchor,
 	QuestCreateData,
 	QuestFamily,
-	QuestPlaylist,
 	QuestRewardPolicy,
 } from '$lib/types';
 import { describeError } from '$lib/view/errorState';
 import { getCooldownStatus } from './cooldown';
 import { type GlobalRates, globalRates, type RewardMode } from './economics';
 
-/** The planet options the quest and playlist forms offer. */
+/** The planet options the quest forms offer. */
 export const PLANETS = [
 	'Calypso',
 	'ARIS',
@@ -68,7 +62,6 @@ export interface QuestFormState {
 	cooldown_hours: number | null;
 	reward_ped: number | null;
 	reward_is_skill: boolean;
-	expected_reward_markup_percent: number | null;
 	reward_description: string;
 	completion_trigger: QuestCompletionTrigger;
 	reward_policy: QuestRewardPolicy;
@@ -95,7 +88,6 @@ function defaultQuestForm(): QuestFormState {
 		cooldown_hours: null,
 		reward_ped: null,
 		reward_is_skill: false,
-		expected_reward_markup_percent: null,
 		reward_description: '',
 		completion_trigger: 'mission_log',
 		reward_policy: 'none',
@@ -122,7 +114,6 @@ function familyPartOf(name: string): string | null {
 export function createQuestsModel() {
 	// ── Data ──
 	let quests = $state<Quest[]>([]);
-	let playlists = $state<QuestPlaylist[]>([]);
 	let families = $state<QuestFamily[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -154,7 +145,6 @@ export function createQuestsModel() {
 
 	// ── Analytics ──
 	let analyticsData = $state<QuestAnalyticsRow[]>([]);
-	let playlistAnalyticsData = $state<PlaylistAnalyticsRow[]>([]);
 	let analyticsLoading = $state(false);
 	let analyticsError = $state<string | null>(null);
 	let analyticsLoaded = $state(false);
@@ -231,10 +221,8 @@ export function createQuestsModel() {
 		try {
 			if (guideMode) {
 				quests = questsDemoQuests.map((q) => ({ ...q }));
-				playlists = questsDemoPlaylists.map((p) => ({ ...p }));
 				families = questsDemoFamilies.map((f) => ({ ...f }));
 				analyticsData = questsDemoQuestAnalytics.map((a) => ({ ...a }));
-				playlistAnalyticsData = questsDemoPlaylistAnalytics.map((a) => ({ ...a }));
 				rates = {
 					liquidReturnRate: questsDemoGlobalLiquidReturnRate,
 					skillProgressionRate: questsDemoGlobalSkillProgressionRate,
@@ -247,9 +235,8 @@ export function createQuestsModel() {
 			// Leaving guide mode must drop the seeded demo analytics: re-arm
 			// the lazy analytics load so the next visit reads live data.
 			analyticsLoaded = false;
-			const [q, p, f] = await Promise.all([getQuests(), getPlaylists(), getQuestFamilies()]);
+			const [q, f] = await Promise.all([getQuests(), getQuestFamilies()]);
 			quests = q;
-			playlists = p;
 			families = f;
 			initialiseCollapsedCategories(q);
 		} catch (e) {
@@ -263,9 +250,8 @@ export function createQuestsModel() {
 		try {
 			// Families ride the same poll: a chat-log completion or an
 			// auto-created variant moves the family availability picture.
-			const [q, p, f] = await Promise.all([getQuests(), getPlaylists(), getQuestFamilies()]);
+			const [q, f] = await Promise.all([getQuests(), getQuestFamilies()]);
 			quests = q;
-			playlists = p;
 			families = f;
 			// A refresh can drop a quest (deleted elsewhere); a pending cancel
 			// choice on a vanished quest would otherwise dangle forever.
@@ -285,14 +271,12 @@ export function createQuestsModel() {
 		analyticsLoading = true;
 		analyticsError = null;
 		try {
-			const [qAnalytics, plAnalytics, overview, market] = await Promise.all([
+			const [qAnalytics, overview, market] = await Promise.all([
 				getQuestAnalytics(),
-				getPlaylistAnalytics(),
 				getAnalyticsOverview('all'),
 				getMarketHuntMarkups().catch(() => null),
 			]);
 			analyticsData = qAnalytics;
-			playlistAnalyticsData = plAnalytics;
 			rates = globalRates(overview);
 			if (market !== null) rewardMarket = market;
 			analyticsLoaded = true;
@@ -403,7 +387,6 @@ export function createQuestsModel() {
 			cooldown_hours: h,
 			reward_ped: quest.reward,
 			reward_is_skill: quest.rewardIsSkill,
-			expected_reward_markup_percent: quest.expectedRewardMarkupPercent,
 			reward_description: quest.rewardDescription,
 			completion_trigger: quest.completionTrigger,
 			reward_policy: quest.rewardPolicy,
@@ -430,17 +413,14 @@ export function createQuestsModel() {
 			category: questForm.category || null,
 			waypoint: questForm.waypoint || null,
 			cooldown_hours: cdHours,
-			reward_ped: ['fixed_ped', 'fixed_pes'].includes(questForm.reward_policy)
-				? questForm.reward_ped
-				: null,
+			reward_ped: questForm.reward_policy === 'fixed_pes' ? questForm.reward_ped : null,
 			reward_is_skill: questForm.reward_policy === 'fixed_pes',
 			completion_trigger: questForm.completion_trigger,
-			reward_policy: questForm.reward_policy,
+			reward_policy:
+				questForm.completion_trigger === 'manual_hand_in'
+					? 'completion_clump'
+					: questForm.reward_policy,
 			reward_item_names: questForm.reward_item_names,
-			expected_reward_markup_percent:
-				questForm.reward_policy === 'fixed_ped' && (questForm.reward_ped ?? 0) > 0
-					? questForm.expected_reward_markup_percent
-					: null,
 			reward_description: questForm.reward_description || null,
 			notes: questForm.notes || null,
 			chain_name: questForm.chain_name || null,
@@ -506,20 +486,10 @@ export function createQuestsModel() {
 		questForm.reward_item_names = questForm.reward_item_names.filter((entry) => entry !== item);
 	}
 
-	function rewardMarkupInputDisabled() {
-		return (questForm.reward_ped ?? 0) <= 0;
-	}
-
 	return {
 		// ── Data ──
 		get quests() {
 			return quests;
-		},
-		get playlists() {
-			return playlists;
-		},
-		set playlists(value: QuestPlaylist[]) {
-			playlists = value;
 		},
 		get families() {
 			return families;
@@ -628,9 +598,6 @@ export function createQuestsModel() {
 		get analyticsData() {
 			return analyticsData;
 		},
-		get playlistAnalyticsData() {
-			return playlistAnalyticsData;
-		},
 		get analyticsLoading() {
 			return analyticsLoading;
 		},
@@ -685,7 +652,6 @@ export function createQuestsModel() {
 		removeMob,
 		addRewardItem,
 		removeRewardItem,
-		rewardMarkupInputDisabled,
 	};
 }
 

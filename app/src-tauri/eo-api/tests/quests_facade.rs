@@ -1,10 +1,9 @@
-//! Behavioural pins for the quests + playlists family over the typed
+//! Behavioural pins for the quest family over the typed
 //! facade, ported from the family's HTTP-era hermetic router tests: the
 //! reads over an empty database, the quest create / read-back / update
 //! (present-null clears) ladder, the lifecycle (start / complete /
-//! cancel), the playlist create-with-items / update / delete, and the
-//! not-found legs. Plus transport-invariance pins: the created quest and
-//! playlist serialise to the exact bytes the HTTP routes answered.
+//! cancel), and the not-found legs. Plus a transport-invariance pin: the
+//! created quest serialises to the exact bytes the HTTP route answered.
 //!
 //! The framework-validation legs (the create/update field-type 422s, the
 //! string→type lax coercions, the surrogate-taint / beyond-`i64` deferred
@@ -14,9 +13,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use eo_api::quests::{
-    PlaylistInput, PlaylistItemInput, QuestCooldownAnchor, QuestFamilyInput, QuestInput,
-};
+use eo_api::quests::{QuestCooldownAnchor, QuestFamilyInput, QuestInput};
 use eo_api::{Api, ApiError};
 use eo_services::clock::RealClock;
 use eo_services::db::Db;
@@ -26,7 +23,7 @@ mod common;
 
 /// The composed facade over a fresh migrated database and an empty
 /// catalogue snapshot, matching the HTTP-era quests router assertions
-/// (quest/playlist CRUD is catalogue-independent).
+/// (quest CRUD is catalogue-independent).
 async fn quests_api(dir: &Path) -> Api {
     let snapshot = dir.join("snapshot");
     std::fs::create_dir_all(&snapshot).unwrap();
@@ -70,7 +67,6 @@ fn minimal(name: &str) -> QuestInput {
         cooldown_hours: None,
         reward_ped: None,
         reward_is_skill: false,
-        expected_reward_markup_percent: None,
         reward_description: None,
         completion_trigger: None,
         reward_policy: None,
@@ -92,10 +88,8 @@ async fn the_reads_answer_the_empty_database() {
     let api = quests_api(dir.path()).await;
 
     assert!(api.quests_list().await.unwrap().is_empty());
-    assert!(api.playlists_list().await.unwrap().is_empty());
     assert!(api.quests_mobs().await.unwrap().is_empty());
     assert!(api.quests_analytics().await.unwrap().is_empty());
-    assert!(api.playlists_analytics().await.unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -117,14 +111,15 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
         "{\"id\":\"1\",\"name\":\"Alpha\",\"category\":null,\"targetMobs\":[],\
          \"planet\":\"Calypso\",\"waypoint\":null,\"cooldownDurationHours\":null,\
          \"cooldownExpiresAt\":null,\"reward\":null,\"rewardIsSkill\":false,\
-         \"expectedRewardMarkupPercent\":null,\"rewardDescription\":\"\",\"notes\":\"\",\
+         \"rewardDescription\":\"\",\"notes\":\"\",\
          \"chainName\":null,\"chainPosition\":null,\"chainTotal\":null,\
-         \"playlistIds\":[],\"startedAt\":null,\"signalLootItem\":null,\
+         \"startedAt\":null,\"signalLootItem\":null,\
          \"completionTrigger\":\"mission_log\",\"rewardPolicy\":\"none\",\
          \"rewardItemNames\":[],\
          \"cooldownAnchor\":\"completion\",\"lastStartedAt\":null,\"familyId\":null,\
          \"familyName\":null,\"familyCooldownDurationHours\":null,\
-         \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null}"
+         \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null,\
+         \"rewardUndoAvailable\":false}"
     );
 
     // The read-back through the listing and the by-id read agree.
@@ -197,48 +192,6 @@ async fn the_lifecycle_starts_completes_and_cancels() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_playlist_create_derives_membership_from_its_items() {
-    let dir = tempfile::tempdir().unwrap();
-    let api = quests_api(dir.path()).await;
-
-    let input = PlaylistInput {
-        name: "Run".to_string(),
-        planet: "Calypso".to_string(),
-        estimated_minutes: 45,
-        items: vec![PlaylistItemInput {
-            quest_id: 3,
-            description: None,
-            group_type: "long_horizon".to_string(),
-        }],
-    };
-    let created = api.playlist_create(input).await.unwrap();
-
-    // Transport invariance: the item list drives the classified id sets,
-    // ids stringify, and the shape matches the HTTP route byte for byte.
-    assert_eq!(
-        serde_json::to_string(&created).unwrap(),
-        "{\"id\":\"1\",\"name\":\"Run\",\"planet\":\"Calypso\",\"estimatedMinutes\":45,\
-         \"questIds\":[\"3\"],\"immediateQuestIds\":[],\"longHorizonQuestIds\":[\"3\"],\
-         \"items\":[{\"questId\":\"3\",\"description\":null,\"groupType\":\"long_horizon\"}]}"
-    );
-
-    // Rename with the membership re-sent leaves it intact.
-    let renamed = PlaylistInput {
-        name: "Run 2".to_string(),
-        planet: "Calypso".to_string(),
-        estimated_minutes: 45,
-        items: vec![PlaylistItemInput {
-            quest_id: 3,
-            description: None,
-            group_type: "long_horizon".to_string(),
-        }],
-    };
-    let updated = api.playlist_update(1, renamed).await.unwrap();
-    assert_eq!(updated.name, "Run 2");
-    assert_eq!(updated.long_horizon_quest_ids, vec!["3".to_string()]);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_not_found_legs_answer_the_typed_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let api = quests_api(dir.path()).await;
@@ -258,24 +211,6 @@ async fn the_not_found_legs_answer_the_typed_not_found() {
     assert_eq!(
         api.quest_start(424242).await.unwrap_err(),
         ApiError::not_found("Quest not found")
-    );
-    assert_eq!(
-        api.playlist_update(
-            424242,
-            PlaylistInput {
-                name: "Z".to_string(),
-                planet: "Calypso".to_string(),
-                estimated_minutes: 30,
-                items: Vec::new(),
-            }
-        )
-        .await
-        .unwrap_err(),
-        ApiError::not_found("Playlist not found")
-    );
-    assert_eq!(
-        api.playlist_delete(424242).await.unwrap_err(),
-        ApiError::not_found("Playlist not found")
     );
 }
 
@@ -315,27 +250,11 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         None,
     );
 
-    // Quest 1: a liquid reward with a markup, fully costed sessions.
-    let mut alpha = minimal("Alpha");
-    alpha.reward_ped = Some(2.5);
-    alpha.expected_reward_markup_percent = Some(150.0);
-    api.quest_create(alpha).await.unwrap();
+    // Quest 1: fully costed sessions with no invented authored reward.
+    api.quest_create(minimal("Alpha")).await.unwrap();
     // Quest 2: no reward, a bare completed session; its aggregates are
     // the engine's INTEGER zeros, which the facade coerces to floats.
     api.quest_create(minimal("Nul")).await.unwrap();
-    // Playlist 1: quest 1 immediate.
-    api.playlist_create(PlaylistInput {
-        name: "Run".to_string(),
-        planet: "Calypso".to_string(),
-        estimated_minutes: 30,
-        items: vec![PlaylistItemInput {
-            quest_id: 1,
-            description: None,
-            group_type: "immediate".to_string(),
-        }],
-    })
-    .await
-    .unwrap();
 
     seed_db
         .with_writer(move |conn| {
@@ -378,10 +297,7 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
                 )?;
             }
             // Membership is the recorded quest stretch: one interval per
-            // session naming the quest it ran. sess-p ran quest 1 (a
-            // member of playlist 1), so it counts for BOTH the quest and
-            // the playlist; under intervals a playlist's sessions are
-            // derived from its members', never declared separately.
+            // session naming the quest it ran.
             for (sid, qid, start, end) in [
                 ("sess-1", 1i64, 1000.0, 1030.5),
                 ("sess-n", 2, 7000.0, 7050.0),
@@ -399,43 +315,22 @@ async fn populated_analytics_serialise_to_the_wire_bytes() {
         .await
         .unwrap();
 
-    // Transport invariance: the populated analytics rows serialise to the
-    // exact bytes the HTTP routes answered (model-float rounding applied,
-    // the engine's INTEGER zeros coerced to floats on the wire).
+    // Observed completions and the sessions' recorded quest stretches are the
+    // only analytics input. There is no authored liquid-reward projection.
     let quest_rows = api.quests_analytics().await.unwrap();
-    assert_eq!(
-        serde_json::to_string(&quest_rows).unwrap(),
-        "[{\"questId\":\"1\",\"questName\":\"Alpha\",\"planet\":\"Calypso\",\"category\":null,\
-         \"rewardPed\":2.5,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":150.0,\
-         \"totalExpectedRewardPed\":7.5,\"recordedCompletions\":2,\
-         \"confirmedCompletions\":0,\"unresolvedCompletions\":0,\
-         \"totalRecordedRewardTt\":0.0,\"totalRecordedRewardPes\":0.0,\
-         \"totalRecordedItemTt\":0.0,\"recordedRewardItems\":[],\
-         \"linkedSessions\":2,\"totalDurationSec\":130.5,\
-         \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
-         \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75},\
-         {\"questId\":\"2\",\"questName\":\"Nul\",\"planet\":\"Calypso\",\"category\":null,\
-         \"rewardPed\":0.0,\"rewardIsSkill\":false,\"expectedRewardMarkupPercent\":null,\
-         \"totalExpectedRewardPed\":0.0,\"recordedCompletions\":1,\
-         \"confirmedCompletions\":0,\"unresolvedCompletions\":0,\
-         \"totalRecordedRewardTt\":0.0,\"totalRecordedRewardPes\":0.0,\
-         \"totalRecordedItemTt\":0.0,\"recordedRewardItems\":[],\
-         \"linkedSessions\":1,\"totalDurationSec\":50.0,\
-         \"totalWeaponCost\":0.0,\"totalHealCost\":0.0,\"totalEnhancerCost\":0.0,\
-         \"totalArmourCost\":0.0,\"totalLootTt\":0.0,\"totalPes\":0.0}]"
-    );
-    let playlist_rows = api.playlists_analytics().await.unwrap();
-    assert_eq!(
-        serde_json::to_string(&playlist_rows).unwrap(),
-        "[{\"playlistId\":\"1\",\"playlistName\":\"Run\",\"questCount\":1,\
-         \"longHorizonQuestCount\":0,\"matchedSessions\":2,\"totalRewardPed\":5.0,\
-         \"totalImmediateRewardPed\":5.0,\"totalBonusRewardPed\":0.0,\"totalPesReward\":0.0,\
-         \"totalImmediatePesReward\":0.0,\"totalBonusPesReward\":0.0,\
-         \"totalExpectedRewardPed\":7.5,\"totalExpectedImmediateRewardPed\":7.5,\
-         \"totalExpectedBonusRewardPed\":0.0,\"totalDurationSec\":130.5,\
-         \"totalWeaponCost\":10.0,\"totalHealCost\":2.0,\"totalEnhancerCost\":0.5,\
-         \"totalArmourCost\":0.25,\"totalLootTt\":12.75,\"totalPes\":0.75}]"
-    );
+    assert_eq!(quest_rows.len(), 2);
+    let alpha = quest_rows
+        .iter()
+        .find(|row| row.quest_name == "Alpha")
+        .unwrap();
+    assert_eq!(alpha.recorded_completions, 2);
+    assert_eq!(alpha.confirmed_completions, 0);
+    assert_eq!(alpha.linked_sessions, 2);
+    assert_eq!(alpha.total_duration_sec, 130.5);
+    assert_eq!(alpha.total_weapon_cost, 10.0);
+    assert_eq!(alpha.total_loot_tt, 12.75);
+    assert_eq!(alpha.total_recorded_reward_tt, 0.0);
+    assert_eq!(alpha.total_realised_reward_markup, 0.0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -106,6 +106,7 @@ mod tests {
 
         bus.publish(&BusEvent::LootGroup(LootGroupPayload {
             kind: LootTag,
+            source_id: None,
             timestamp: Some("2026-05-19T10:00:02".into()),
             items: vec![LootItem {
                 item_name: "Wool".into(),

@@ -39,6 +39,7 @@ use crate::{Api, ApiError};
 #[serde(rename_all = "camelCase")]
 pub struct ReturnsBreakdown {
     pub loot_tt: f64,
+    pub quest_item_tt: f64,
     pub pes: f64,
     pub codex_pes: f64,
     pub quest_pes: f64,
@@ -72,6 +73,7 @@ pub struct LossesBreakdown {
 pub struct TimelineDay {
     pub date: String,
     pub loot_tt: f64,
+    pub quest_item_tt: f64,
     pub pes: f64,
     pub codex_pes: f64,
     pub quest_pes: f64,
@@ -86,6 +88,7 @@ pub struct TimelineDay {
 pub struct MonthlyEntry {
     pub month: String,
     pub loot_tt: f64,
+    pub quest_item_tt: f64,
     pub pes: f64,
     pub codex_pes: f64,
     pub quest_pes: f64,
@@ -298,6 +301,7 @@ pub struct HuntingActivityComparison {
     pub returns: f64,
     pub loot_rate: f64,
     pub confirmed_reward_ped: f64,
+    pub realised_reward_markup: f64,
     /// Actual reward items observed at completion. Their markup stays a
     /// current market projection and never enters realised accounting.
     pub reward_items: Vec<HarvestLootItem>,
@@ -1496,6 +1500,7 @@ pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> Analyt
         },
         returns_breakdown: ReturnsBreakdown {
             loot_tt: data.returns_breakdown.loot_tt,
+            quest_item_tt: data.returns_breakdown.quest_item_tt,
             pes: data.returns_breakdown.pes,
             codex_pes: data.returns_breakdown.codex_pes,
             quest_pes: data.returns_breakdown.quest_pes,
@@ -1520,6 +1525,7 @@ pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> Analyt
             .map(|point| TimelineDay {
                 date: point.bucket,
                 loot_tt: point.loot_tt,
+                quest_item_tt: point.quest_item_tt,
                 pes: point.pes,
                 codex_pes: point.codex_pes,
                 quest_pes: point.quest_pes,
@@ -1534,6 +1540,7 @@ pub(crate) fn overview_dto(data: eo_services::analytics::OverviewData) -> Analyt
             .map(|point| MonthlyEntry {
                 month: point.bucket,
                 loot_tt: point.loot_tt,
+                quest_item_tt: point.quest_item_tt,
                 pes: point.pes,
                 codex_pes: point.codex_pes,
                 quest_pes: point.quest_pes,
@@ -1617,7 +1624,7 @@ pub(crate) fn hunting_activity_dto(
         }
     }
     fn activity(row: eo_services::analytics::HuntingSignatureRow) -> HuntingActivityComparison {
-        let rewarded_returns = row.returns + row.confirmed_reward_ped;
+        let rewarded_returns = row.returns + row.confirmed_reward_ped + row.realised_reward_markup;
         HuntingActivityComparison {
             kind: HuntingActivityKind::classify(&row.kind),
             label: row.label,
@@ -1629,6 +1636,7 @@ pub(crate) fn hunting_activity_dto(
                 0.0
             },
             confirmed_reward_ped: row.confirmed_reward_ped,
+            realised_reward_markup: row.realised_reward_markup,
             reward_items: row.reward_items.into_iter().map(loot_item).collect(),
             rewarded_returns,
             rewarded_rate: if row.cycled > 0.0 {

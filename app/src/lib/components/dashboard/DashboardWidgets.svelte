@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Tabs } from '$lib/components';
-	import QuestingWidget, { type PlaylistQuestItem } from './QuestingWidget.svelte';
+	import QuestingWidget from './QuestingWidget.svelte';
 	import CustomiseStatsWidget from './CustomiseStatsWidget.svelte';
 	import LootCompositionWidget from './LootCompositionWidget.svelte';
 	import LootPulseWidget from './LootPulseWidget.svelte';
-	import type { Quest, QuestPlaylist } from '$lib/types/quests';
+	import type { ActivityOptionsResult } from '$lib/api';
+	import type { Quest } from '$lib/types/quests';
 	import { onMount } from 'svelte';
 	import { registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 
@@ -12,39 +13,31 @@
 		sessionId,
 		multiplierHistory,
 		cumulativeNetHistory,
-		playlists,
-		activePlaylistId,
-		activePlaylist,
-		immediateItems,
-		longHorizonItems,
+		activityOptions,
+		quests,
 		pendingCancelChoiceQuestId,
 		copiedWp,
-		onPlaylistChange,
 		onQuestStart,
 		onQuestComplete,
 		onQuestCancel,
 		onToggleCancelChoice,
 		onCopyWaypoint,
-		formatMinutes,
+		onEditSession,
 		getCooldownRemaining,
 	}: {
 		sessionId: string | null;
 		multiplierHistory: number[] | null;
 		cumulativeNetHistory: number[] | null;
-		playlists: QuestPlaylist[];
-		activePlaylistId: string | null;
-		activePlaylist: QuestPlaylist | null;
-		immediateItems: PlaylistQuestItem[];
-		longHorizonItems: PlaylistQuestItem[];
+		activityOptions: ActivityOptionsResult | null;
+		quests: Quest[];
 		pendingCancelChoiceQuestId: string | null;
 		copiedWp: string | null;
-		onPlaylistChange: (id: string | null) => void;
 		onQuestStart: (questId: string) => void;
 		onQuestComplete: (questId: string) => void;
 		onQuestCancel: (questId: string, undoReward: boolean) => void;
 		onToggleCancelChoice: (questId: string) => void;
 		onCopyWaypoint: (questId: string, waypoint: string) => void;
-		formatMinutes: (m: number) => string;
+		onEditSession: (definitionId: number | null) => void;
 		getCooldownRemaining: (quest: import('$lib/types/quests').Quest) => string | null;
 	} = $props();
 
@@ -84,20 +77,16 @@
 		<LootCompositionWidget {sessionId} />
 	{:else if activeTab === 'quests'}
 		<QuestingWidget
-			{playlists}
-			{activePlaylistId}
-			{activePlaylist}
-			{immediateItems}
-			{longHorizonItems}
+			{activityOptions}
+			{quests}
 			{pendingCancelChoiceQuestId}
 			{copiedWp}
-			{onPlaylistChange}
 			{onQuestStart}
 			{onQuestComplete}
 			{onQuestCancel}
 			{onToggleCancelChoice}
 			{onCopyWaypoint}
-			{formatMinutes}
+			{onEditSession}
 			{getCooldownRemaining}
 		/>
 	{:else if activeTab === 'customise'}

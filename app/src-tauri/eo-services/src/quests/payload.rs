@@ -36,15 +36,3 @@ pub(super) fn value_to_sql(value: &Value) -> rusqlite::types::Value {
         other => panic!("unbindable payload value: {other}"),
     }
 }
-
-/// Render a JSON value the way a Python f-string renders the
-/// corresponding object (for byte-exact error messages).
-pub(super) fn python_str(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
-}

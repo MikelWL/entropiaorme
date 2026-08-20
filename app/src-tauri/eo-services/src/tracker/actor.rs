@@ -80,6 +80,11 @@ pub(super) enum TrackerMsg {
         target: ActivityKey,
         reply: oneshot::Sender<Result<Vec<ActiveActivity>, TrackerCommandError>>,
     },
+    /// Reconcile a committed quest-reward source into the live aggregate.
+    ReconcileLootSource {
+        source_id: String,
+        reply: oneshot::Sender<Result<bool, DbError>>,
+    },
     SetProtection {
         selection: ProtectionSelection,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
@@ -223,6 +228,9 @@ impl TrackerActor {
             }
             TrackerMsg::DeactivateActivity { target, reply } => {
                 let _ = reply.send(self.deactivate_activity(target).await);
+            }
+            TrackerMsg::ReconcileLootSource { source_id, reply } => {
+                let _ = reply.send(self.reconcile_loot_source(&source_id).await);
             }
             TrackerMsg::SetProtection { selection, reply } => {
                 let _ = reply.send(self.set_protection(selection).await);

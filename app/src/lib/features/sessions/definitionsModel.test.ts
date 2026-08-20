@@ -45,13 +45,11 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		cooldownExpiresAt: null,
 		reward: null,
 		rewardIsSkill: false,
-		expectedRewardMarkupPercent: null,
 		rewardDescription: '',
 		notes: '',
 		chainName: null,
 		chainPosition: null,
 		chainTotal: null,
-		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
 		completionTrigger: 'mission_log',
@@ -64,6 +62,7 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		familyCooldownDurationHours: null,
 		familyCooldownAnchor: null,
 		familyCooldownExpiresAt: null,
+		rewardUndoAvailable: false,
 		...overrides,
 	};
 }

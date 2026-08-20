@@ -1,5 +1,5 @@
 /**
- * Quest and playlist economics: the pure derivations behind the quests
+ * Quest economics: the pure derivations behind the quests
  * analytics view. No runes; every function is a plain input-to-output
  * mapping so the accounting invariants (liquid TT and non-liquid PES
  * never blend) stay pinned by the colocated tests.
@@ -11,7 +11,7 @@ import type {
 	MarketHarvestItem,
 } from '$lib/api/commands.gen';
 import { projectRewardItems } from '$lib/features/analytics/huntingModel.svelte';
-import type { PlaylistAnalyticsRow, QuestAnalyticsRow } from '$lib/types';
+import type { QuestAnalyticsRow } from '$lib/types';
 
 export type RewardMode = 'tt' | 'markup';
 
@@ -33,11 +33,14 @@ export interface GlobalRates {
 export function globalRates(
 	overview: Pick<AnalyticsOverview, 'returnsBreakdown' | 'lossesBreakdown'>,
 ): GlobalRates {
-	// Liquid PED returns: TT loot plus liquid ledger gains (convert).
-	// Quest reward markup is per-quest in `total_expected_reward_ped`
-	// so it's intentionally not folded into the global rate here.
-	const convertGains = overview.returnsBreakdown.ledger.convert ?? 0;
-	const liquidReturns = overview.returnsBreakdown.lootTt + convertGains;
+	// Liquid PED returns: ordinary loot, confirmed quest-item TT, and every
+	// realised ledger gain (including Universal Ammo and realised sale MU).
+	const ledgerGains = Object.values(overview.returnsBreakdown.ledger).reduce(
+		(sum, value) => sum + value,
+		0,
+	);
+	const liquidReturns =
+		overview.returnsBreakdown.lootTt + overview.returnsBreakdown.questItemTt + ledgerGains;
 	// PES throughput across all progression channels.
 	const skillProgressionReturns =
 		overview.returnsBreakdown.pes +
@@ -55,24 +58,21 @@ export interface QuestAnalyticsComputed {
 	questName: string;
 	planet: string;
 	category: string | null;
-	rewardPed: number;
-	rewardIsSkill: boolean;
-	expectedRewardMarkupPercent: number | null;
 	linkedSessions: number;
 	recordedCompletions: number;
 	confirmedCompletions: number;
 	unresolvedCompletions: number;
 	totalRecordedRewardTt: number;
 	totalRecordedRewardMu: number;
+	totalRealisedRewardMarkup: number;
 	totalRecordedRewardPes: number;
 	totalCycled: number;
 	avgRawReturns: number;
 	avgCycled: number;
-	// Liquid PED reward shown in the Reward column. Toggle-aware: TT mode
-	// = face value, Markup mode = with expected markup applied. 0 for
-	// skill quests since they have no liquid contribution.
+	// Confirmed liquid-TT outcome shown in the Reward column. TT mode uses
+	// observed face value; Markup mode projects only stock reward items.
 	displayLiquidReward: number;
-	// PES face value of the reward, invariant to toggle. 0 for liquid quests.
+	// PES face value of the reward, invariant to toggle. 0 for liquid-TT outcomes.
 	avgRewardPes: number;
 	rewardMarkupPercent: number | null;
 	// Liquid Net for the run: liquid cycle returns + liquid reward − cycled.
@@ -94,8 +94,8 @@ export function computeQuestAnalytics(
 		const sessions = row.linkedSessions || 1;
 		const recordedRuns = row.recordedCompletions || 1;
 		const avgCycled = totalCycled / sessions;
-		// Liquid reward: face value or with markup, depending on toggle.
-		// Skill quests contribute 0 to the liquid side regardless.
+		// Liquid TT: face value or with stock-item markup projection, depending
+		// on the toggle. PES outcomes never contribute to the liquid side.
 		const avgRewardLiquidFace = row.totalRecordedRewardTt / recordedRuns;
 		const marketByItem = new Map<string, MarketHarvestItem>(
 			market?.items.map((item) => [item.itemName, item]) ?? [],
@@ -120,96 +120,23 @@ export function computeQuestAnalytics(
 			questName: row.questName,
 			planet: row.planet,
 			category: row.category,
-			rewardPed: row.rewardPed,
-			rewardIsSkill: row.rewardIsSkill,
-			expectedRewardMarkupPercent: row.expectedRewardMarkupPercent,
 			linkedSessions: row.linkedSessions,
 			recordedCompletions: row.recordedCompletions,
 			confirmedCompletions: row.confirmedCompletions,
 			unresolvedCompletions: row.unresolvedCompletions,
 			totalRecordedRewardTt: row.totalRecordedRewardTt,
 			totalRecordedRewardMu,
+			totalRealisedRewardMarkup: row.totalRealisedRewardMarkup,
 			totalRecordedRewardPes: row.totalRecordedRewardPes,
 			totalCycled,
 			displayLiquidReward,
 			avgRewardPes,
-			rewardMarkupPercent: row.expectedRewardMarkupPercent,
+			rewardMarkupPercent:
+				row.totalRecordedRewardTt > 0
+					? (totalRecordedRewardMu / row.totalRecordedRewardTt) * 100
+					: null,
 			avgRawReturns,
 			avgCycled,
-			avgNet,
-			avgPesNet,
-			returnRate,
-		};
-	});
-}
-
-export interface PlaylistAnalyticsComputed {
-	playlistName: string;
-	questCount: number;
-	longHorizonQuestCount: number;
-	// Toggle-aware liquid display (face value or markup-applied).
-	displayImmediateReward: number;
-	displayBonusReward: number;
-	// PES face-value sub-line totals, invariant to toggle.
-	avgImmediateSkillReward: number;
-	avgBonusSkillReward: number;
-	rewardMarkupPercent: number | null;
-	avgCycled: number;
-	avgRawReturns: number;
-	// Liquid Net + cycle-PES Net (face value).
-	avgNet: number;
-	avgPesNet: number;
-	returnRate: number;
-}
-
-export function computePlaylistAnalytics(
-	rows: PlaylistAnalyticsRow[],
-	rates: GlobalRates,
-	rewardMode: RewardMode,
-): PlaylistAnalyticsComputed[] {
-	return rows.map((row) => {
-		const totalCycled =
-			row.totalWeaponCost + row.totalHealCost + row.totalEnhancerCost + row.totalArmourCost;
-		const sessions = row.matchedSessions || 1;
-		const avgImmediateReward = row.totalImmediateRewardPed / sessions;
-		const avgBonusReward = row.totalBonusRewardPed / sessions;
-		const avgImmediateSkillReward = row.totalImmediatePesReward / sessions;
-		const avgBonusSkillReward = row.totalBonusPesReward / sessions;
-		// Liquid portions (face value).
-		const avgImmediateLiquidFace = avgImmediateReward - avgImmediateSkillReward;
-		const avgBonusLiquidFace = avgBonusReward - avgBonusSkillReward;
-		// Liquid portions with expected markup applied. Backend already
-		// emits face value for skill quests in the expected totals, so
-		// subtracting the PES sum yields the liquid-with-markup amount.
-		const avgImmediateLiquidMarkup =
-			(row.totalExpectedImmediateRewardPed - row.totalImmediatePesReward) / sessions;
-		const avgBonusLiquidMarkup =
-			(row.totalExpectedBonusRewardPed - row.totalBonusPesReward) / sessions;
-		const displayImmediateReward =
-			rewardMode === 'markup' ? avgImmediateLiquidMarkup : avgImmediateLiquidFace;
-		const displayBonusReward = rewardMode === 'markup' ? avgBonusLiquidMarkup : avgBonusLiquidFace;
-		const liquidFaceTotal = avgImmediateLiquidFace + avgBonusLiquidFace;
-		const liquidMarkupTotal = avgImmediateLiquidMarkup + avgBonusLiquidMarkup;
-		const rewardMarkupPercentValue =
-			liquidFaceTotal > 0 ? (liquidMarkupTotal / liquidFaceTotal) * 100 : null;
-		const avgCycled = totalCycled / sessions;
-		const avgRawReturns = avgCycled * rates.liquidReturnRate;
-		const avgNet = avgRawReturns + displayImmediateReward + displayBonusReward - avgCycled;
-		const returnRate =
-			avgCycled > 0 ? (avgRawReturns + displayImmediateReward + displayBonusReward) / avgCycled : 0;
-		const avgPesNet =
-			avgCycled * rates.skillProgressionRate + avgImmediateSkillReward + avgBonusSkillReward;
-		return {
-			playlistName: row.playlistName,
-			questCount: row.questCount,
-			longHorizonQuestCount: row.longHorizonQuestCount,
-			displayImmediateReward,
-			displayBonusReward,
-			avgImmediateSkillReward,
-			avgBonusSkillReward,
-			rewardMarkupPercent: rewardMarkupPercentValue,
-			avgCycled,
-			avgRawReturns,
 			avgNet,
 			avgPesNet,
 			returnRate,

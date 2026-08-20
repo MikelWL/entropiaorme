@@ -1,27 +1,17 @@
 /**
- * The quests family: quest and playlist CRUD, the lifecycle verbs, and
+ * The quests family: quest CRUD, lifecycle verbs, and
  * the curated analytics rows. Thin wrappers over the generated typed
  * commands; argument shaping (string ids onto numeric commands) only.
  */
 
-import type {
-	PlaylistInput,
-	Quest,
-	QuestFamily,
-	QuestFamilyInput,
-	QuestInput,
-	QuestPlaylist,
-} from './commands.gen';
+import type { Quest, QuestFamily, QuestFamilyInput, QuestInput } from './commands.gen';
 import * as commands from './commands.gen';
 
 export const getQuests = commands.questsList;
 export const getQuestAnalytics = commands.questsAnalytics;
 export const getUnresolvedQuestRewards = commands.questRewardsUnresolved;
 export const reviewQuestReward = commands.questRewardReview;
-export const getPlaylistAnalytics = commands.playlistsAnalytics;
-export const getPlaylists = commands.playlistsList;
 export const createQuest = commands.questCreate;
-export const createPlaylist = commands.playlistCreate;
 export const getQuestFamilies = commands.questFamiliesList;
 export const createQuestFamily = commands.questFamilyCreate;
 
@@ -53,14 +43,12 @@ export async function completeQuest(id: string): Promise<Quest> {
 	return commands.questComplete(Number(id));
 }
 
+export const beginQuestHandIn = commands.questHandInBegin;
+export const getQuestHandInState = commands.questHandInState;
+export const waitForNextQuestHandInClump = commands.questHandInWait;
+export const cancelQuestHandIn = commands.questHandInCancel;
+export const confirmQuestHandIn = commands.questHandInConfirm;
+
 export async function cancelQuest(id: string, undoReward = false): Promise<Quest> {
 	return commands.questCancel(Number(id), undoReward);
-}
-
-export async function updatePlaylist(id: string, data: PlaylistInput): Promise<QuestPlaylist> {
-	return commands.playlistUpdate(Number(id), data);
-}
-
-export async function deletePlaylist(id: string): Promise<void> {
-	await commands.playlistDelete(Number(id));
 }

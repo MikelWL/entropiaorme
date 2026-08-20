@@ -435,7 +435,7 @@ impl ProducerState {
     }
 
     /// A handle to the composed quest service. The typed-command facade
-    /// serves the quest and playlist families over this same
+    /// serves the quest family over this same
     /// `Arc<QuestService>`: cloned into the facade at the composition
     /// handoff, so the bus-fed flows (session tracking, mission
     /// auto-start, reward suppression) and the command surface share one
@@ -1315,6 +1315,16 @@ fn compose_producers(
         }));
     }
 
+    {
+        let tracker_sink = tracker.clone();
+        quests.set_loot_reconciler(Arc::new(move |source_id| {
+            let tracker = tracker_sink.clone();
+            Box::pin(async move {
+                let _ = tracker.reconcile_loot_source(&source_id).await;
+            })
+        }));
+    }
+
     // Wire the mission-completion probe: a tick's completions land
     // strictly after its publishes, so the tick's own loot (the final
     // objective kill, the payout) stamps into the declared stretch
@@ -1343,13 +1353,13 @@ fn compose_producers(
     {
         let quests_probe = quests.clone();
         let probe_runtime = runtime.clone();
-        watcher.set_signal_loot_probe(Arc::new(move |loot| {
+        watcher.set_signal_loot_probe(Arc::new(move |clump| {
             let quests = quests_probe.clone();
             probe_runtime.spawn(async move {
                 // Errors are contained: a failed check must not take the
                 // tail loop's attention, and the quest's own state is
                 // re-derivable from the next matching tick.
-                let _ = quests.signal_loot_check(&loot).await;
+                let _ = quests.raw_loot_clump_check(&clump).await;
             });
         }));
     }

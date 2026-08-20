@@ -89,6 +89,8 @@ vi.mock('$lib/api', () => {
 		getManualMobSuggestions: vi.fn(async () => []),
 		lockManualMob: vi.fn(),
 		getActivityOptions: vi.fn(async () => ({
+			definitionId: null,
+			definitionName: null,
 			visible: false,
 			adHocSegments: false,
 			readyCount: 0,
@@ -97,8 +99,13 @@ vi.mock('$lib/api', () => {
 		})),
 		activateActivity: vi.fn(),
 		deactivateActivity: vi.fn(),
+		beginQuestHandIn: vi.fn(async () => ({
+			questId: 1,
+			questName: 'AI Daily',
+			waiting: false,
+			candidate: null,
+		})),
 		getQuests: vi.fn(async () => []),
-		getPlaylists: vi.fn(async () => []),
 		updateSettings: seams.updateSettings,
 	};
 });

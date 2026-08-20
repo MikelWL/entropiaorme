@@ -13,6 +13,14 @@
 		model.questForm.family_id = model.familyMatchForName(model.questForm.name)?.id ?? null;
 	});
 
+	// Manual hand-in always captures the user-confirmed raw clump. Keep the
+	// reward policy visible but fixed so the form cannot suggest an
+	// incompatible separate-reward rule.
+	$effect(() => {
+		if (model.questForm.completion_trigger !== 'manual_hand_in') return;
+		model.questForm.reward_policy = 'completion_clump';
+	});
+
 	const selectedFamily = $derived(
 		model.families.find((f) => f.id === model.questForm.family_id) ?? null,
 	);
@@ -45,36 +53,26 @@
 					<Select id="q-trigger" bind:value={model.questForm.completion_trigger}>
 						<option value="mission_log">Mission log</option>
 						<option value="signal_item">Signal item</option>
+						<option value="manual_hand_in">Manual hand-in</option>
 					</Select>
 				</div>
 				<div>
 					<label class="block text-xs text-text-secondary mb-1" for="q-reward-policy">Reward</label>
-					<Select id="q-reward-policy" bind:value={model.questForm.reward_policy}>
+					<Select
+						id="q-reward-policy"
+						bind:value={model.questForm.reward_policy}
+						disabled={model.questForm.completion_trigger === 'manual_hand_in'}
+					>
 						<option value="none">No separate reward</option>
-						<option value="fixed_ped">Fixed PED</option>
 						<option value="fixed_pes">Fixed PES</option>
 						<option value="named_items">Specific items</option>
 						<option value="completion_clump">Completion loot clump</option>
 					</Select>
 				</div>
-				{#if model.questForm.reward_policy === 'fixed_ped' || model.questForm.reward_policy === 'fixed_pes'}
+				{#if model.questForm.reward_policy === 'fixed_pes'}
 					<div>
-						<label class="block text-xs text-text-secondary mb-1" for="q-reward">Amount ({model.questForm.reward_policy === 'fixed_pes' ? 'PES' : 'PED'})</label>
+						<label class="block text-xs text-text-secondary mb-1" for="q-reward">Amount (PES)</label>
 						<Input id="q-reward" type="number" step="0.01" min="0" required bind:value={model.questForm.reward_ped} />
-					</div>
-				{/if}
-				{#if model.questForm.reward_policy === 'fixed_ped'}
-					<div>
-						<label class="block text-xs text-text-secondary mb-1" for="q-rmarkup">Expected Reward Markup %</label>
-						<Input
-							id="q-rmarkup"
-							type="number"
-							step="0.1"
-							min="0"
-							bind:value={model.questForm.expected_reward_markup_percent}
-							disabled={model.rewardMarkupInputDisabled()}
-							placeholder="e.g. 130"
-						/>
 					</div>
 				{/if}
 				{#if model.questForm.reward_policy === 'named_items'}
@@ -99,7 +97,13 @@
 						<p class="text-[11px] text-text-secondary/70 mt-1">Every matching line is separated from ordinary loot with its observed quantity and TT. Missing expected items remain unresolved.</p>
 					</div>
 				{:else if model.questForm.reward_policy === 'completion_clump'}
-					<p class="col-span-2 text-[11px] text-text-secondary/70">Captures every loot line accompanying an isolated NPC hand-in. A tick containing combat evidence is left unresolved instead of consuming ordinary loot.</p>
+					<p class="col-span-2 text-[11px] text-text-secondary/70">
+						{#if model.questForm.completion_trigger === 'manual_hand_in'}
+							Selecting this quest in Activities starts its run. Use Hand in quest there to review the latest clump or wait for the next one, then confirm the exact reward.
+						{:else}
+							Captures every loot line accompanying an isolated NPC hand-in. A tick containing combat evidence is left unresolved instead of consuming ordinary loot.
+						{/if}
+					</p>
 				{/if}
 				<div class="col-span-2">
 					<label class="block text-xs text-text-secondary mb-1" for="q-rdesc">Reward Note</label>

@@ -42,6 +42,7 @@
 	 * how a quest completes is the record's business, not the player's
 	 * at the moment of choosing. */
 	function rowBadge(option: ActivityOption): string | null {
+		if (option.active && option.handInWaiting) return 'Waiting';
 		if (option.active) return 'Recording';
 		if (option.available) return null;
 		const left = option.availableFrom === null ? null : formatTimeUntil(option.availableFrom, now);
@@ -101,6 +102,16 @@
 								onActivitySelect({ kind: 'activities', action: 'coActivate', key: option.key })}
 						>+</button>
 					{/if}
+					{#if !idle && option.active && option.manualHandIn}
+						<button
+							type="button"
+							class="menu-hand-in-btn"
+							aria-label={`Hand in ${option.name}`}
+							title="Review the quest reward clump"
+							onclick={() =>
+								onActivitySelect({ kind: 'activities', action: 'handIn', key: option.key })}
+						>Hand in quest</button>
+					{/if}
 				</div>
 			{/each}
 			{#if menuState.adHocSegments}
@@ -131,6 +142,8 @@
 				</div>
 			{/if}
 		{/if}
+	{:else if menuState.kind === 'questHandIn'}
+		<!-- Rendered by the dedicated hand-in panel in the popup route. -->
 	{:else if menuState.kind === 'trifecta'}
 		{#each menuState.options as option}
 			<button
@@ -245,6 +258,24 @@
 	.menu-option:disabled:hover {
 		background: transparent;
 		color: rgba(255, 255, 255, 0.82);
+	}
+
+	.menu-hand-in-btn {
+		flex-shrink: 0;
+		padding: 5px 7px;
+		border: 0;
+		border-radius: 5px;
+		background: rgba(56, 189, 248, 0.14);
+		color: rgba(186, 230, 253, 0.98);
+		font-size: 10px;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.menu-hand-in-btn:hover,
+	.menu-hand-in-btn:focus-visible {
+		background: rgba(56, 189, 248, 0.24);
+		outline: none;
 	}
 
 	.menu-option-name {

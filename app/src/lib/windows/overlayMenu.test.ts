@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ActivityOption, ActivityOptionsResult } from '$lib/api';
-import { buildActivitiesMenuState, menuRowCount } from './overlayMenu';
+import {
+	buildActivitiesMenuState,
+	buildQuestHandInMenuState,
+	computeMenuHeight,
+	menuRowCount,
+} from './overlayMenu';
 
 function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 	return {
@@ -12,15 +17,21 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		questId: 11,
 		active: false,
 		available: true,
+		resettable: false,
 		unavailableReason: null,
 		availableFrom: null,
 		offRoster: false,
+		manualHandIn: false,
+		handInWaiting: false,
+		rosterOrder: 0,
 		...overrides,
 	};
 }
 
 function offerings(overrides: Partial<ActivityOptionsResult> = {}): ActivityOptionsResult {
 	return {
+		definitionId: 1,
+		definitionName: 'Daily Hunt',
 		visible: true,
 		adHocSegments: false,
 		readyCount: 1,
@@ -69,5 +80,18 @@ describe('the Activities menu state', () => {
 		const state = buildActivitiesMenuState(180, offerings({ options: [] }), false, '');
 
 		expect(menuRowCount(state)).toBe(1);
+	});
+});
+
+describe('the manual hand-in satellite', () => {
+	it('reserves its maximum height while waiting so the next candidate cannot be clipped', () => {
+		const state = buildQuestHandInMenuState(180, {
+			questId: 7,
+			questName: 'AI Daily terminal',
+			waiting: true,
+			candidate: null,
+		});
+
+		expect(computeMenuHeight(menuRowCount(state))).toBe(220);
 	});
 });

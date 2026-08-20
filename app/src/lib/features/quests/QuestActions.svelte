@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button } from '$lib/components';
+	import Button from '$lib/components/Button.svelte';
 	import type { Quest } from '$lib/types';
 	import type { CooldownStatus } from '$lib/types/common';
 
@@ -23,7 +23,7 @@
 		familyGated?: boolean;
 		/** Whether this quest is showing the Keep/Undo reward cancel choice. */
 		pendingCancelChoice: boolean;
-		/** Quest-row style two-line remaining readout; playlist items use the inline span. */
+		/** Quest-row style two-line remaining readout. */
 		remainingDetail?: boolean;
 		onStart: () => void;
 		onComplete: () => void;
@@ -36,9 +36,13 @@
 	 can be cooling at the same time (its own or its family's timer runs
 	 from the start), and Complete must stay reachable through it. -->
 {#if quest.startedAt}
-	<Button size="sm" onclick={onComplete}>
-		{#snippet children()}Complete{/snippet}
-	</Button>
+	{#if quest.completionTrigger === 'manual_hand_in'}
+		<span class="text-xs text-text-tertiary">Hand in from overlay</span>
+	{:else}
+		<Button size="sm" onclick={onComplete}>
+			{#snippet children()}Complete{/snippet}
+		</Button>
+	{/if}
 	<Button size="sm" variant="ghost" onclick={() => onCancel(false)}>
 		{#snippet children()}Cancel{/snippet}
 	</Button>
@@ -68,7 +72,25 @@
 		</Button>
 	{/if}
 {:else}
-	<Button size="sm" variant="secondary" onclick={onStart}>
-		{#snippet children()}Start{/snippet}
-	</Button>
+	{#if quest.completionTrigger === 'manual_hand_in'}
+		<span class="text-xs text-text-tertiary">Start from session Activities</span>
+	{:else}
+		<Button size="sm" variant="secondary" onclick={onStart}>
+			{#snippet children()}Start{/snippet}
+		</Button>
+	{/if}
+	{#if quest.rewardUndoAvailable}
+		{#if pendingCancelChoice}
+			<Button size="sm" variant="danger" onclick={() => onCancel(true)}>
+				{#snippet children()}Confirm undo{/snippet}
+			</Button>
+			<Button size="sm" variant="ghost" onclick={onToggleCancelChoice}>
+				{#snippet children()}Back{/snippet}
+			</Button>
+		{:else}
+			<Button size="sm" variant="ghost" onclick={onToggleCancelChoice}>
+				{#snippet children()}Undo reward{/snippet}
+			</Button>
+		{/if}
+	{/if}
 {/if}

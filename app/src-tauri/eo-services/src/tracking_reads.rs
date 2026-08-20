@@ -1595,42 +1595,9 @@ pub fn project(value: &Value, order: &[&str]) -> Value {
     Value::Object(out)
 }
 
-// ── Quest-link formatters ───────────────────────────────────────────
-
-/// `str(value)` as the router applies it to ids.
-pub fn python_str_of(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Number(number) => number.to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// `str(id) if id is not None else None` over a suggestion's nullable id.
-pub fn str_id_or_null(value: &Value) -> Value {
-    if value.is_null() {
-        Value::Null
-    } else {
-        json!(python_str_of(value))
-    }
-}
-
 /// `str(...) or None` as an owned `Option<String>` (for the typed DTOs).
 pub fn opt_str(value: &Value) -> Option<String> {
     value.as_str().map(str::to_string)
-}
-
-/// The quest-link suggestion wire shape (`get_session_quest_link_suggestion`).
-pub fn format_quest_link_suggestion(session_id: &str, suggestion: &Value) -> Value {
-    json!({
-        "sessionId": session_id,
-        "suggestionType": suggestion["suggestion_type"],
-        "reason": suggestion["reason"],
-        "questId": str_id_or_null(&suggestion["quest_id"]),
-        "questName": suggestion["quest_name"],
-        "playlistId": str_id_or_null(&suggestion["playlist_id"]),
-        "playlistName": suggestion["playlist_name"],
-    })
 }
 
 /// `_trifecta_attribution_summary`: the active preset's bound
@@ -3183,51 +3150,13 @@ mod tests {
     }
 
     #[test]
-    fn python_str_of_renders_scalars() {
-        assert_eq!(python_str_of(&json!("hi")), "hi");
-        assert_eq!(python_str_of(&json!(42)), "42");
-        assert_eq!(python_str_of(&json!(true)), "true");
-    }
-
-    #[test]
-    fn str_id_or_null_stringifies_or_nulls() {
-        assert_eq!(str_id_or_null(&Value::Null), Value::Null);
-        assert_eq!(str_id_or_null(&json!(42)), json!("42"));
-        assert_eq!(str_id_or_null(&json!("x")), json!("x"));
-    }
-
-    #[test]
     fn opt_str_reads_strings_only() {
         assert_eq!(opt_str(&json!("x")), Some("x".to_string()));
         assert_eq!(opt_str(&Value::Null), None);
         assert_eq!(opt_str(&json!(5)), None);
     }
 
-    #[test]
-    fn format_quest_link_suggestion_shapes_the_wire() {
-        let suggestion = json!({
-            "suggestion_type": "auto",
-            "reason": "match",
-            "quest_id": 42,
-            "quest_name": "Q",
-            "playlist_id": null,
-            "playlist_name": "P",
-        });
-        assert_eq!(
-            format_quest_link_suggestion("s1", &suggestion),
-            json!({
-                "sessionId": "s1",
-                "suggestionType": "auto",
-                "reason": "match",
-                "questId": "42",
-                "questName": "Q",
-                "playlistId": null,
-                "playlistName": "P",
-            })
-        );
-    }
-
-    // ── Quest-link and trifecta ─────────────────────────────────────
+    // ── Trifecta ────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn trifecta_attribution_summary_builds_or_nulls() {

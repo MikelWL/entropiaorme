@@ -286,6 +286,7 @@ pub struct OverviewData {
 #[serde(rename_all = "camelCase")]
 pub struct ReturnsData {
     pub loot_tt: f64,
+    pub quest_item_tt: f64,
     pub pes: f64,
     pub codex_pes: f64,
     pub quest_pes: f64,
@@ -322,6 +323,7 @@ pub struct CycledData {
 pub struct TimelinePoint {
     pub bucket: String,
     pub loot_tt: f64,
+    pub quest_item_tt: f64,
     pub pes: f64,
     pub codex_pes: f64,
     pub quest_pes: f64,
@@ -463,6 +465,8 @@ pub struct HuntingSignatureRow {
     pub pes_per100_ped: f64,
     /// Confirmed reward TT recorded separately from ordinary loot.
     pub confirmed_reward_ped: f64,
+    /// Net markup realised when reward stock was later sold or converted.
+    pub realised_reward_markup: f64,
     /// Actual reward items observed at completion. Their current market
     /// projection is resolved outside the accounting service.
     pub reward_items: Vec<HarvestLootItemRow>,
@@ -741,7 +745,7 @@ fn hybrid_window(start: Option<f64>, end: Option<f64>, watermark: &str) -> Hybri
 /// the merged result reproduces the raw engine typing: an all-empty
 /// window leaves the wire as an integer zero, exactly as
 /// `COALESCE(SUM(...), 0)` does.
-type FamilySums = [Option<f64>; 11];
+type FamilySums = [Option<f64>; 12];
 
 fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
     for (slot, value) in into.iter_mut().zip(from) {
@@ -754,7 +758,7 @@ fn merge_family_sums(into: &mut FamilySums, from: FamilySums) {
 /// The `daily_rollups` family-sum columns, position-matched to
 /// [`FamilySums`] (loot, weapon, enhancer, armour, heal, dangling, skill,
 /// codex, quest).
-const ROLLUP_FAMILY_COLS: [&str; 11] = [
+const ROLLUP_FAMILY_COLS: [&str; 12] = [
     "loot_tt",
     "weapon_cost",
     "enhancer_cost",
@@ -766,6 +770,7 @@ const ROLLUP_FAMILY_COLS: [&str; 11] = [
     "quest_pes",
     "harvest_loot_tt",
     "harvest_cost",
+    "quest_item_tt",
 ];
 
 /// The rollup-side family sums for several windows in ONE conditional-
@@ -787,7 +792,7 @@ fn rollup_family_sums_multi(
     conn: &rusqlite::Connection,
     windows: &[HybridWindow],
 ) -> Result<Vec<FamilySums>, DbError> {
-    let mut out: Vec<FamilySums> = vec![[None; 11]; windows.len()];
+    let mut out: Vec<FamilySums> = vec![[None; 12]; windows.len()];
 
     // The windows that actually cover full rollup days, paired with their
     // index back into `out`.
@@ -808,7 +813,7 @@ fn rollup_family_sums_multi(
     // One CASE-guarded SUM per (window, family): the conditional-aggregation
     // pass. Columns are emitted window-major, family-minor, matching the
     // read-back below.
-    let mut cols: Vec<String> = Vec::with_capacity(active.len() * 11);
+    let mut cols: Vec<String> = Vec::with_capacity(active.len() * 12);
     for (_, lo, hi) in &active {
         for col in ROLLUP_FAMILY_COLS {
             let guard = match lo {
@@ -839,9 +844,9 @@ fn rollup_family_sums_multi(
         cols.join(", ")
     );
     let per_slot = conn.query_row(&sql, [], |row| {
-        let mut per_slot: Vec<FamilySums> = vec![[None; 11]; active.len()];
+        let mut per_slot: Vec<FamilySums> = vec![[None; 12]; active.len()];
         for (slot, sums) in per_slot.iter_mut().enumerate() {
-            let base = slot * 11;
+            let base = slot * 12;
             for (family, value) in sums.iter_mut().enumerate() {
                 *value = row.get::<_, Option<f64>>(base + family)?;
             }
@@ -876,7 +881,7 @@ fn raw_family_sums(
     }
 
     let (start, end) = range;
-    let mut sums: FamilySums = [None; 11];
+    let mut sums: FamilySums = [None; 12];
     let (w, p) = where_epoch("timestamp", start, end);
     let kills = fetch(
         conn,
@@ -943,6 +948,24 @@ fn raw_family_sums(
     )?;
     sums[9] = harvest[0];
     sums[10] = harvest[1];
+    let (w, p) = where_epoch("c.completed_at", start, end);
+    sums[11] = fetch(
+        conn,
+        format!(
+            "SELECT SUM(ri.value_ped) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions c ON c.id = ri.completion_id \
+             WHERE ri.accounting_kind = 'stock' AND {w} \
+               AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                               WHERE rr.completion_id = c.id) \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = c.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            c.reward_outcome) = 'confirmed'"
+        ),
+        &p,
+        1,
+    )?[0];
     Ok(sums)
 }
 
@@ -969,6 +992,7 @@ fn bucketed_epoch(
 struct Metrics {
     /// Liquid loot TT: kill loot plus harvest (wood) loot.
     loot_tt: SqlNumber,
+    quest_item_tt: SqlNumber,
     skill_tt: SqlNumber,
     codex_pes: SqlNumber,
     quest_pes: SqlNumber,
@@ -1085,6 +1109,7 @@ fn assemble_metrics(
     let quest_pes = SqlNumber::from_family(sums[8]);
     let harvest_loot = SqlNumber::from_family(sums[9]);
     let harvest = SqlNumber::from_family(sums[10]);
+    let quest_item_tt = SqlNumber::from_family(sums[11]);
 
     // Wood TT is liquid loot; the headline Loot TT carries both
     // activities.
@@ -1104,6 +1129,7 @@ fn assemble_metrics(
 
     Ok(Metrics {
         loot_tt,
+        quest_item_tt,
         skill_tt,
         codex_pes,
         quest_pes,
@@ -1127,7 +1153,7 @@ fn sum_values(map: &std::collections::BTreeMap<String, f64>) -> f64 {
 /// `_rate_from_metrics`: liquid gains over liquid losses (progression
 /// excluded), 0.0 when losses are non-positive.
 fn rate_from_metrics(m: &Metrics) -> f64 {
-    let total_gains = m.loot_tt.as_f64() + sum_values(&m.ledger_gains);
+    let total_gains = m.loot_tt.as_f64() + m.quest_item_tt.as_f64() + sum_values(&m.ledger_gains);
     let total_losses = m.tracking_cost.as_f64() + sum_values(&m.ledger_losses);
     if total_losses > 0.0 {
         total_gains / total_losses
@@ -1280,7 +1306,7 @@ fn overview_read(
 
     let total_ledger_gains = sum_values(&m.ledger_gains);
     let total_ledger_losses = sum_values(&m.ledger_losses);
-    let total_gains = m.loot_tt.as_f64() + total_ledger_gains;
+    let total_gains = m.loot_tt.as_f64() + m.quest_item_tt.as_f64() + total_ledger_gains;
     let total_losses = m.tracking_cost.as_f64() + total_ledger_losses;
     let return_rate = if total_losses > 0.0 {
         total_gains / total_losses
@@ -1311,6 +1337,7 @@ fn overview_read(
         trend,
         returns_breakdown: ReturnsData {
             loot_tt: m.loot_tt.rounded(2).as_f64(),
+            quest_item_tt: m.quest_item_tt.rounded(2).as_f64(),
             pes: m.skill_tt.rounded(2).as_f64(),
             codex_pes: m.codex_pes.rounded(2).as_f64(),
             quest_pes: m.quest_pes.rounded(2).as_f64(),
@@ -1349,6 +1376,7 @@ enum BucketKind {
 #[derive(Default)]
 struct BreakdownMaps {
     loot: std::collections::BTreeMap<String, SqlNumber>,
+    quest_item: std::collections::BTreeMap<String, SqlNumber>,
     weapon: std::collections::BTreeMap<String, SqlNumber>,
     enhancer: std::collections::BTreeMap<String, SqlNumber>,
     sess: std::collections::BTreeMap<String, SqlNumber>,
@@ -1395,14 +1423,14 @@ fn rollup_breakdown(
         BucketKind::Day => format!(
             "SELECT day AS bucket, has_rows, loot_tt, weapon_cost, enhancer_cost, \
              armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes, \
-             harvest_loot_tt, harvest_cost \
+             harvest_loot_tt, harvest_cost, quest_item_tt \
              FROM daily_rollups WHERE day <= ?{extra} ORDER BY bucket"
         ),
         BucketKind::Month => format!(
             "SELECT strftime('%Y-%m', day) AS bucket, MAX(has_rows), SUM(loot_tt), \
              SUM(weapon_cost), SUM(enhancer_cost), SUM(armour_cost), SUM(heal_cost), \
              SUM(dangling_cost), SUM(skill_tt), SUM(codex_pes), SUM(quest_pes), \
-             SUM(harvest_loot_tt), SUM(harvest_cost) \
+             SUM(harvest_loot_tt), SUM(harvest_cost), SUM(quest_item_tt) \
              FROM daily_rollups WHERE day <= ?{extra} GROUP BY bucket ORDER BY bucket"
         ),
     };
@@ -1426,6 +1454,7 @@ fn rollup_breakdown(
             (&mut maps.codex, 9),
             (&mut maps.quest, 10),
             (&mut maps.harvest_cost, 12),
+            (&mut maps.quest_item, 13),
         ] {
             if let Some(value) = family(index)? {
                 BreakdownMaps::merge(map, &bucket, SqlNumber::Float(value));
@@ -1473,12 +1502,13 @@ fn raw_breakdown(
     let (qc_w, qc_p) = where_epoch("qc.claimed_at", start, end);
     let (sess_w, sess_p) = where_epoch("s.started_at", start, end);
     let (hv_w, hv_p) = where_epoch("h.timestamp", start, end);
+    let (qri_w, qri_p) = where_epoch("c.completed_at", start, end);
 
     let sources: [(
         &mut std::collections::BTreeMap<String, SqlNumber>,
         String,
         &Vec<f64>,
-    ); 8] = [
+    ); 9] = [
         (
             &mut maps.loot,
             format!(
@@ -1544,6 +1574,24 @@ fn raw_breakdown(
                 ts_bucket("h.timestamp")
             ),
             &hv_p,
+        ),
+        (
+            &mut maps.quest_item,
+            format!(
+                "SELECT {} AS bucket, COALESCE(SUM(ri.value_ped), 0) \
+                 FROM session_quest_completion_reward_items ri \
+                 JOIN session_quest_completions c ON c.id = ri.completion_id \
+                 WHERE ri.accounting_kind = 'stock' AND {qri_w} \
+                   AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                                   WHERE rr.completion_id = c.id) \
+                   AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                                 WHERE r.completion_id = c.id \
+                                 ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                                c.reward_outcome) = 'confirmed' \
+                 GROUP BY bucket",
+                ts_bucket("c.completed_at")
+            ),
+            &qri_p,
         ),
     ];
     for (map, sql, params) in sources {
@@ -1632,6 +1680,7 @@ fn breakdown_points(
         points.push(TimelinePoint {
             bucket: bucket.clone(),
             loot_tt: family(&maps.loot, bucket),
+            quest_item_tt: family(&maps.quest_item, bucket),
             pes: family(&maps.skill, bucket),
             codex_pes: family(&maps.codex, bucket),
             quest_pes: family(&maps.quest, bucket),
@@ -2074,6 +2123,7 @@ struct SignatureAgg {
     pes: f64,
     duration_hours: f64,
     confirmed_reward_ped: f64,
+    realised_reward_markup: f64,
     reward_kinds: std::collections::BTreeSet<String>,
     reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
@@ -2796,10 +2846,6 @@ fn hunting_activity_read(
             let reward = context_rewards
                 .entry(context_id)
                 .or_insert_with(|| (0.0, BTreeSet::new()));
-            if matches!(kind.as_str(), "fixed_liquid" | "mixed") {
-                let reward_ped = row.get::<_, Option<f64>>(4)?.unwrap_or(0.0);
-                reward.0 += reward_ped;
-            }
             if kind != "none" {
                 reward.1.insert(kind);
             }
@@ -2807,17 +2853,19 @@ fn hunting_activity_read(
     }
     {
         let mut stmt = conn.prepare(
-            "SELECT sqc.activity_context_id, ri.item_name, SUM(ri.quantity), \
-                    COALESCE(SUM(ri.value_ped), 0) \
+            "SELECT a.activity_context_id, ri.item_name, \
+                    SUM(ri.quantity * a.weight), COALESCE(SUM(ri.value_ped * a.weight), 0) \
              FROM session_quest_completion_reward_items ri \
              JOIN session_quest_completions sqc ON sqc.id = ri.completion_id \
+             JOIN quest_reward_attributions a ON a.completion_id = sqc.id \
              JOIN hunting_session_scope scope ON scope.id = sqc.session_id \
-             WHERE sqc.activity_context_id IS NOT NULL \
-               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+             WHERE COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
                              WHERE r.completion_id = sqc.id \
                              ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
                             sqc.reward_outcome) = 'confirmed' \
-             GROUP BY sqc.activity_context_id, ri.item_name",
+               AND NOT EXISTS(SELECT 1 FROM quest_reward_reversals rr \
+                              WHERE rr.completion_id = sqc.id) \
+             GROUP BY a.activity_context_id, ri.item_name",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -2826,10 +2874,50 @@ fn hunting_activity_read(
             context_reward_items
                 .entry(context_id)
                 .or_default()
-                .insert(row.get(1)?, (row.get::<_, i64>(2).unwrap_or(0), value));
+                .insert(row.get(1)?, (as_float(row, 2).round() as i64, value));
             let reward = context_rewards.entry(context_id).or_default();
             reward.0 += value;
             reward.1.insert("item".to_string());
+        }
+    }
+
+    // A later sale realises only markup beyond the reward's TT principal.
+    // Project that gain back through the immutable quest context carried by
+    // each consumed stock movement. Quantity is the allocation basis so a
+    // zero-TT voucher remains attributable.
+    let mut context_realised_reward_markup: HashMap<i64, f64> = HashMap::new();
+    for realised in realised_stock_outcomes(conn)? {
+        if realised.outcome.activity_net_markup.abs() <= STOCK_EPSILON {
+            continue;
+        }
+        let contributions: Vec<(String, Option<i64>, f64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT source_kind, activity_context_id, SUM(-quantity) \
+                 FROM stock_movements WHERE ref_id = ? AND movement_kind = ? \
+                   AND source_kind IN ('hunt', 'harvest', 'quest') \
+                 GROUP BY source_kind, activity_context_id",
+            )?;
+            let mapped = stmt.query_map(
+                rusqlite::params![realised.id, realised.movement_kind],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let attributed_quantity: f64 = contributions.iter().map(|(_, _, qty)| qty).sum();
+        if attributed_quantity <= STOCK_EPSILON {
+            continue;
+        }
+        for (source_kind, context_id, quantity) in contributions {
+            if source_kind != "quest" {
+                continue;
+            }
+            let Some(context_id) = context_id else {
+                continue;
+            };
+            *context_realised_reward_markup
+                .entry(context_id)
+                .or_default() +=
+                realised.outcome.activity_net_markup * quantity / attributed_quantity;
         }
     }
 
@@ -2885,6 +2973,10 @@ fn hunting_activity_read(
                 agg.confirmed_reward_ped += reward_ped;
                 agg.reward_kinds.extend(kinds.iter().cloned());
             }
+            agg.realised_reward_markup += context_realised_reward_markup
+                .get(context_id)
+                .copied()
+                .unwrap_or(0.0);
             if let Some(items) = context_reward_items.get(context_id) {
                 for (name, (quantity, value)) in items {
                     let item = agg.reward_items.entry(name.clone()).or_insert((0, 0.0));
@@ -3138,6 +3230,7 @@ fn assemble_signatures(
                 0.0
             },
             confirmed_reward_ped: round2(agg.confirmed_reward_ped),
+            realised_reward_markup: round2(agg.realised_reward_markup),
             reward_items: loot_rows(&agg.reward_items),
             reward_status: status,
             loot_items: loot_rows(&agg.loot_items),
@@ -3253,6 +3346,7 @@ fn assemble_signatures(
                 0.0
             },
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
+            realised_reward_markup: round2(variants.iter().map(|v| v.realised_reward_markup).sum()),
             reward_items: loot_rows(&family_reward_items),
             reward_status: family_reward_status,
             loot_items: loot_rows(&family_items),
@@ -3425,6 +3519,10 @@ fn inventory_item(row: &rusqlite::Row) -> InventoryRow {
 /// closed. Positions and PED both round to hundredths at the display edge.
 const STOCK_EPSILON: f64 = 1e-9;
 
+fn is_universal_ammo(item_name: &str) -> bool {
+    item_name.trim().eq_ignore_ascii_case("Universal Ammo")
+}
+
 /// The auction-listing column list, in the order [`listing_from_row`] reads.
 const LISTING_COLUMNS: &str = "id, item_name, quantity, attributed_qty, unattributed_qty, \
      tt_value, attributed_tt, starting_bid, buyout, listing_fee, listed_at, status, \
@@ -3485,8 +3583,9 @@ fn listing_from_row(row: &rusqlite::Row) -> AuctionListingRow {
 
     let loot_outcome = (sold && subject_kind == "loot").then(|| {
         stock_allocation::resolve_sale(
+            row.get_unwrap::<_, f64>(2),
+            row.get_unwrap::<_, f64>(3),
             tt_value,
-            attributed_tt,
             final_price.unwrap_or(0.0),
             listing_fee,
             sale_fee.unwrap_or(0.0),
@@ -3568,6 +3667,7 @@ fn insert_movement(
         None => "unattributed",
         Some(StockProvenance::Hunt(_)) => "hunt",
         Some(StockProvenance::Harvest(_)) => "harvest",
+        Some(StockProvenance::Quest { .. }) => "quest",
     };
     let yield_tier = match provenance {
         Some(StockProvenance::Harvest(tier)) => Some(tier.as_str()),
@@ -3577,12 +3677,27 @@ fn insert_movement(
         Some(StockProvenance::Hunt(species)) => species,
         _ => None,
     };
+    let (quest_reward_item_id, quest_run_id, quest_id, activity_context_id) = match provenance {
+        Some(StockProvenance::Quest {
+            reward_item_id,
+            quest_run_id,
+            quest_id,
+            activity_context_id,
+        }) => (
+            Some(reward_item_id),
+            Some(quest_run_id),
+            Some(quest_id),
+            activity_context_id,
+        ),
+        _ => (None, None, None, None),
+    };
     conn.execute(
         "INSERT INTO stock_movements ( \
              item_name, movement_kind, ref_id, source_kind, source_event_id, \
              yield_tier, mob_species, session_definition_id, quantity, tt_value, occurred_at, \
-             created_at, tool_name) \
-         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+             created_at, tool_name, quest_reward_item_id, quest_run_id, quest_id, \
+             activity_context_id) \
+         VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rusqlite::params![
             item_name,
             movement_kind,
@@ -3596,6 +3711,10 @@ fn insert_movement(
             occurred_at,
             created_at,
             tool_name,
+            quest_reward_item_id,
+            quest_run_id,
+            quest_id,
+            activity_context_id,
         ],
     )?;
     Ok(())
@@ -3673,16 +3792,19 @@ fn realised_stock_outcomes(
     conn: &rusqlite::Connection,
 ) -> rusqlite::Result<Vec<RealisedStockOutcome>> {
     let mut stmt = conn.prepare(
-        "SELECT id, 'listing', tt_value, attributed_tt, COALESCE(final_price, 0), \
+        "SELECT id, 'listing', quantity, attributed_qty, tt_value, COALESCE(final_price, 0), \
                 listing_fee, COALESCE(sale_fee, 0) \
          FROM auction_listings \
          WHERE status = 'sold' AND undone_at IS NULL AND subject_kind = 'loot' \
          UNION ALL \
-         SELECT id, 'trade', tt_value, attributed_tt, final_price, 0, 0 \
+         SELECT id, 'trade', quantity, attributed_qty, tt_value, final_price, 0, 0 \
          FROM private_sales WHERE undone_at IS NULL \
          UNION ALL \
-         SELECT id, 'conversion_out', tt_value, COALESCE(attributed_tt, tt_value), \
-                COALESCE(output_tt_value, tt_value), 0, 0 \
+         SELECT id, 'conversion_out', quantity, \
+                CASE WHEN tt_value > 0 \
+                     THEN quantity * COALESCE(attributed_tt, tt_value) / tt_value \
+                     ELSE 0 END, \
+                tt_value, COALESCE(output_tt_value, tt_value), 0, 0 \
          FROM stock_conversions \
          WHERE undone_at IS NULL AND gain_entry_id IS NOT NULL",
     )?;
@@ -3697,6 +3819,7 @@ fn realised_stock_outcomes(
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
                 ),
             })
         })?
@@ -3768,6 +3891,17 @@ fn raw_position(conn: &rusqlite::Connection, item_name: &str) -> rusqlite::Resul
          + COALESCE(( \
              SELECT SUM(li.quantity) FROM kill_loot_items AS li \
              WHERE li.item_name = ?1 AND li.deactivated_at IS NULL), 0) \
+         + COALESCE(( \
+             SELECT SUM(ri.quantity) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions c ON c.id = ri.completion_id \
+             WHERE ri.item_name = ?1 AND ri.accounting_kind = 'stock' \
+               AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                               WHERE rr.completion_id = c.id) \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = c.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            c.reward_outcome) = 'confirmed'), 0) \
          + COALESCE(( \
              SELECT SUM(m.quantity) FROM stock_movements AS m \
              WHERE m.item_name = ?1), 0)",
@@ -3843,6 +3977,16 @@ struct PositionKey {
     definition_id: Option<i64>,
     /// The producing tool; empty when unknown.
     tool: String,
+    /// Present only for confirmed quest-reward stock.
+    quest: Option<QuestPositionKey>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct QuestPositionKey {
+    reward_item_id: i64,
+    quest_run_id: i64,
+    quest_id: i64,
+    activity_context_id: Option<i64>,
 }
 
 /// Recover the originating activity from a movement. Current rows carry it
@@ -3854,6 +3998,8 @@ fn movement_activity_kind(source_kind: &str, tier: Option<&str>, species: Option
         "harvest".to_string()
     } else if source_kind == "hunt" || species.is_some_and(|value| !value.is_empty()) {
         "hunt".to_string()
+    } else if source_kind == "quest" {
+        "quest".to_string()
     } else {
         String::new()
     }
@@ -3877,6 +4023,7 @@ fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<Positi
             species: species.clone(),
             definition_id: None,
             tool: String::new(),
+            quest: None,
         };
         let unknown = by_source.get(&unknown_key).copied().unwrap_or(0.0);
         if unknown >= -STOCK_EPSILON {
@@ -3948,6 +4095,7 @@ fn item_positions(
                     species: String::new(),
                     definition_id: None,
                     tool: tool.unwrap_or_default(),
+                    quest: None,
                 })
                 .or_insert(0.0) += quantity;
         }
@@ -3989,6 +4137,68 @@ fn item_positions(
                     species,
                     definition_id,
                     tool: String::new(),
+                    quest: None,
+                })
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    {
+        let mut stmt = conn.prepare(
+            "SELECT ri.id, c.quest_run_id, c.quest_id, a.activity_context_id, \
+                    a.session_definition_id, COALESCE(a.weight, 1.0), \
+                    ri.quantity * COALESCE(a.weight, 1.0), \
+                    ri.value_ped * COALESCE(a.weight, 1.0) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions c ON c.id = ri.completion_id \
+             LEFT JOIN quest_reward_attributions a ON a.completion_id = c.id \
+             WHERE ri.item_name = ? AND ri.accounting_kind = 'stock' \
+               AND c.quest_run_id IS NOT NULL \
+               AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                               WHERE rr.completion_id = c.id) \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = c.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            c.reward_outcome) = 'confirmed'",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![item_name], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, f64>(6)?,
+                    row.get::<_, f64>(7)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (
+            reward_item_id,
+            quest_run_id,
+            quest_id,
+            context_id,
+            definition_id,
+            quantity,
+            tt_value,
+        ) in rows
+        {
+            base_qty += quantity;
+            base_tt += tt_value;
+            *by_source
+                .entry(PositionKey {
+                    source_kind: "quest".to_string(),
+                    tier: String::new(),
+                    species: String::new(),
+                    definition_id,
+                    tool: String::new(),
+                    quest: Some(QuestPositionKey {
+                        reward_item_id,
+                        quest_run_id,
+                        quest_id,
+                        activity_context_id: context_id,
+                    }),
                 })
                 .or_insert(0.0) += quantity;
         }
@@ -3999,9 +4209,11 @@ fn item_positions(
     {
         let mut stmt = conn.prepare(
             "SELECT source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
+                    quest_reward_item_id, quest_run_id, quest_id, activity_context_id, \
                     SUM(quantity), SUM(tt_value) \
              FROM stock_movements WHERE item_name = ? \
-             GROUP BY source_kind, yield_tier, mob_species, session_definition_id, tool_name",
+             GROUP BY source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
+                      quest_reward_item_id, quest_run_id, quest_id, activity_context_id",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
@@ -4011,12 +4223,29 @@ fn item_positions(
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<i64>>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, f64>(5)?,
-                    row.get::<_, f64>(6)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
+                    row.get::<_, f64>(9)?,
+                    row.get::<_, f64>(10)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (source_kind, tier, species, definition_id, tool, quantity, tt_value) in rows {
+        for (
+            source_kind,
+            tier,
+            species,
+            definition_id,
+            tool,
+            reward_item_id,
+            run_id,
+            quest_id,
+            context_id,
+            quantity,
+            tt_value,
+        ) in rows
+        {
             if quantity > 0.0 {
                 produced_qty += quantity;
                 produced_tt += tt_value;
@@ -4032,6 +4261,17 @@ fn item_positions(
                     species: species.unwrap_or_default(),
                     definition_id,
                     tool: tool.unwrap_or_default(),
+                    quest: match (reward_item_id, run_id, quest_id) {
+                        (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
+                            Some(QuestPositionKey {
+                                reward_item_id,
+                                quest_run_id,
+                                quest_id,
+                                activity_context_id: context_id,
+                            })
+                        }
+                        _ => None,
+                    },
                 })
                 .or_insert(0.0) += quantity;
         }
@@ -4103,6 +4343,7 @@ fn all_item_positions(
                     species: String::new(),
                     definition_id: None,
                     tool: tool.unwrap_or_default(),
+                    quest: None,
                 })
                 .or_insert(0.0) += quantity;
         }
@@ -4128,6 +4369,7 @@ fn all_item_positions(
                     species,
                     definition_id,
                     tool: String::new(),
+                    quest: None,
                 })
                 .or_insert(0.0) += quantity;
         };
@@ -4145,10 +4387,60 @@ fn all_item_positions(
 
     {
         let mut stmt = conn.prepare(
+            "SELECT ri.item_name, ri.id, c.quest_run_id, c.quest_id, \
+                    a.activity_context_id, a.session_definition_id, \
+                    ri.quantity * COALESCE(a.weight, 1.0), \
+                    ri.value_ped * COALESCE(a.weight, 1.0) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions c ON c.id = ri.completion_id \
+             LEFT JOIN quest_reward_attributions a ON a.completion_id = c.id \
+             WHERE ri.accounting_kind = 'stock' AND c.quest_run_id IS NOT NULL \
+               AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                               WHERE rr.completion_id = c.id) \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = c.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            c.reward_outcome) = 'confirmed'",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let item: String = row.get(0)?;
+            let reward_item_id: i64 = row.get(1)?;
+            let quest_run_id: i64 = row.get(2)?;
+            let quest_id: i64 = row.get(3)?;
+            let context_id: Option<i64> = row.get(4)?;
+            let definition_id: Option<i64> = row.get(5)?;
+            let quantity: f64 = row.get(6)?;
+            let tt_value: f64 = row.get(7)?;
+            let acc = items.entry(item).or_default();
+            acc.base_qty += quantity;
+            acc.base_tt += tt_value;
+            *acc.by_source
+                .entry(PositionKey {
+                    source_kind: "quest".to_string(),
+                    tier: String::new(),
+                    species: String::new(),
+                    definition_id,
+                    tool: String::new(),
+                    quest: Some(QuestPositionKey {
+                        reward_item_id,
+                        quest_run_id,
+                        quest_id,
+                        activity_context_id: context_id,
+                    }),
+                })
+                .or_insert(0.0) += quantity;
+        }
+    }
+
+    {
+        let mut stmt = conn.prepare(
             "SELECT item_name, source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
+                    quest_reward_item_id, quest_run_id, quest_id, activity_context_id, \
                     SUM(quantity), SUM(tt_value) \
              FROM stock_movements \
-             GROUP BY item_name, source_kind, yield_tier, mob_species, session_definition_id, tool_name",
+             GROUP BY item_name, source_kind, yield_tier, mob_species, session_definition_id, tool_name, \
+                      quest_reward_item_id, quest_run_id, quest_id, activity_context_id",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -4158,8 +4450,12 @@ fn all_item_positions(
             let species: Option<String> = row.get(3)?;
             let definition_id: Option<i64> = row.get(4)?;
             let tool: Option<String> = row.get(5)?;
-            let quantity: f64 = row.get(6)?;
-            let tt_value: f64 = row.get(7)?;
+            let reward_item_id: Option<i64> = row.get(6)?;
+            let run_id: Option<i64> = row.get(7)?;
+            let quest_id: Option<i64> = row.get(8)?;
+            let context_id: Option<i64> = row.get(9)?;
+            let quantity: f64 = row.get(10)?;
+            let tt_value: f64 = row.get(11)?;
             let acc = items.entry(item).or_default();
             if quantity > 0.0 {
                 acc.produced_qty += quantity;
@@ -4176,6 +4472,17 @@ fn all_item_positions(
                     species: species.unwrap_or_default(),
                     definition_id,
                     tool: tool.unwrap_or_default(),
+                    quest: match (reward_item_id, run_id, quest_id) {
+                        (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
+                            Some(QuestPositionKey {
+                                reward_item_id,
+                                quest_run_id,
+                                quest_id,
+                                activity_context_id: context_id,
+                            })
+                        }
+                        _ => None,
+                    },
                 })
                 .or_insert(0.0) += quantity;
         }
@@ -4220,7 +4527,14 @@ fn as_source_positions(
                     (!key.species.is_empty()).then_some(key.species.as_str()),
                 ))
             } else {
-                None
+                key.quest
+                    .as_ref()
+                    .map(|quest| stock_allocation::StockProvenance::Quest {
+                        reward_item_id: quest.reward_item_id,
+                        quest_run_id: quest.quest_run_id,
+                        quest_id: quest.quest_id,
+                        activity_context_id: quest.activity_context_id,
+                    })
             },
             // Keep the session-definition key on every Hunting position;
             // optional target evidence never gates the deliberate axis.
@@ -4596,6 +4910,24 @@ impl AnalyticsService {
                 if matches!(profession, Profession::Hunting | Profession::Inventory) {
                     items.extend(hunting_loot.iter().map(|cell| cell.item_name.clone()));
                 }
+                if matches!(profession, Profession::Inventory) {
+                    let mut stmt = conn.prepare(
+                        "SELECT DISTINCT ri.item_name \
+                         FROM session_quest_completion_reward_items ri \
+                         JOIN session_quest_completions c ON c.id = ri.completion_id \
+                         WHERE ri.accounting_kind = 'stock' \
+                           AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                                           WHERE rr.completion_id = c.id) \
+                           AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                                         WHERE r.completion_id = c.id \
+                                         ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                                        c.reward_outcome) = 'confirmed'",
+                    )?;
+                    let names = stmt
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    items.extend(names);
+                }
                 let movement_scope = match profession {
                     Profession::Harvesting => {
                         "WHERE EXISTS (SELECT 1 FROM auction_listings al \
@@ -4642,6 +4974,9 @@ impl AnalyticsService {
                 };
                 let mut rows = Vec::new();
                 for item_name in items {
+                    if is_universal_ammo(&item_name) {
+                        continue;
+                    }
                     // A universe item with no open position stays listed at
                     // zero, exactly as the per-item read reported it.
                     let (quantity, unit_tt) = all_positions
@@ -4729,6 +5064,11 @@ impl AnalyticsService {
         listed_at: Option<&str>,
         auction_days: Option<i64>,
     ) -> Result<AuctionListingRow, AnalyticsError> {
+        if is_universal_ammo(item_name) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and cannot be listed",
+            ));
+        }
         if quantity <= 0.0 {
             return Err(AnalyticsError::InvalidInput(
                 "a listing needs a positive quantity",
@@ -5061,8 +5401,9 @@ impl AnalyticsService {
                     final_price - listing.cost_basis.unwrap_or(listing.tt_value)
                 } else {
                     stock_allocation::resolve_sale(
+                        listing.quantity,
+                        listing.attributed_qty,
                         listing.tt_value,
-                        listing.attributed_tt,
                         final_price,
                         listing.listing_fee,
                         sale_fee,
@@ -5194,6 +5535,10 @@ impl AnalyticsService {
                         Option<String>,
                         Option<i64>,
                         Option<String>,
+                        Option<i64>,
+                        Option<i64>,
+                        Option<i64>,
+                        Option<i64>,
                         f64,
                         f64,
                     );
@@ -5201,6 +5546,8 @@ impl AnalyticsService {
                         let mut stmt = tx.prepare(
                             "SELECT source_kind, yield_tier, mob_species, \
                                     session_definition_id, tool_name, \
+                                    quest_reward_item_id, quest_run_id, quest_id, \
+                                    activity_context_id, \
                                     quantity, tt_value \
                              FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = 'listing'",
@@ -5215,13 +5562,28 @@ impl AnalyticsService {
                                     row.get(4)?,
                                     row.get(5)?,
                                     row.get(6)?,
+                                    row.get(7)?,
+                                    row.get(8)?,
+                                    row.get(9)?,
+                                    row.get(10)?,
                                 ))
                             })?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    for (source_kind, tier, species, definition_id, tool, quantity, tt_value) in
-                        returning
+                    for (
+                        source_kind,
+                        tier,
+                        species,
+                        definition_id,
+                        tool,
+                        reward_item_id,
+                        run_id,
+                        quest_id,
+                        context_id,
+                        quantity,
+                        tt_value,
+                    ) in returning
                     {
                         let provenance = match source_kind.as_str() {
                             "harvest" => tier.as_deref().map(|tier| {
@@ -5232,6 +5594,17 @@ impl AnalyticsService {
                             "hunt" => {
                                 Some(stock_allocation::StockProvenance::Hunt(species.as_deref()))
                             }
+                            "quest" => match (reward_item_id, run_id, quest_id) {
+                                (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
+                                    Some(stock_allocation::StockProvenance::Quest {
+                                        reward_item_id,
+                                        quest_run_id,
+                                        quest_id,
+                                        activity_context_id: context_id,
+                                    })
+                                }
+                                _ => None,
+                            },
                             _ => None,
                         };
                         insert_movement(
@@ -5276,6 +5649,11 @@ impl AnalyticsService {
         quantity: f64,
         converted_at: Option<&str>,
     ) -> Result<(), AnalyticsError> {
+        if is_universal_ammo(source_item) || is_universal_ammo(target_item) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid value, not inventory stock",
+            ));
+        }
         self.convert_stock_with_ratio(
             profession,
             source_item,
@@ -5399,24 +5777,26 @@ impl AnalyticsService {
                         &converted_at,
                         now,
                     )?;
-                    let allocation_output_tt = if converted_tt > STOCK_EPSILON {
-                        allocation.tt_value + gain * (allocation.tt_value / converted_tt)
-                    } else {
-                        allocation.tt_value
-                    };
-                    insert_movement(
-                        &tx,
-                        &target_c,
-                        "conversion_in",
-                        Some(&id),
-                        allocation.provenance,
-                        allocation.session_definition_id,
-                        allocation.tool_name,
-                        allocation_output_tt / target_unit_tt,
-                        allocation_output_tt,
-                        &converted_at,
-                        now,
-                    )?;
+                    if !is_universal_ammo(&target_c) {
+                        let allocation_output_tt = if converted_tt > STOCK_EPSILON {
+                            allocation.tt_value + gain * (allocation.tt_value / converted_tt)
+                        } else {
+                            allocation.tt_value
+                        };
+                        insert_movement(
+                            &tx,
+                            &target_c,
+                            "conversion_in",
+                            Some(&id),
+                            allocation.provenance,
+                            allocation.session_definition_id,
+                            allocation.tool_name,
+                            allocation_output_tt / target_unit_tt,
+                            allocation_output_tt,
+                            &converted_at,
+                            now,
+                        )?;
+                    }
                 }
 
                 if gain > STOCK_EPSILON {
@@ -5451,6 +5831,11 @@ impl AnalyticsService {
         final_price: f64,
         sold_at: Option<&str>,
     ) -> Result<(), AnalyticsError> {
+        if is_universal_ammo(item_name) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and cannot be traded",
+            ));
+        }
         if quantity <= 0.0 || final_price < 0.0 {
             return Err(AnalyticsError::InvalidInput(
                 "a trade needs a positive quantity and a non-negative price",
@@ -5542,6 +5927,11 @@ impl AnalyticsService {
         quantity: f64,
         removed_at: Option<&str>,
     ) -> Result<(), AnalyticsError> {
+        if is_universal_ammo(item_name) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held as stock",
+            ));
+        }
         if quantity <= 0.0 {
             return Err(AnalyticsError::InvalidInput(
                 "a removal needs a positive quantity",
@@ -5730,7 +6120,16 @@ impl AnalyticsService {
                             activity_net_markup: output_tt.zip(attributed_tt).map(
                                 |(output, attributed)| {
                                     stock_allocation::resolve_sale(
-                                        tt_value, attributed, output, 0.0, 0.0,
+                                        quantity,
+                                        if tt_value > STOCK_EPSILON {
+                                            quantity * attributed / tt_value
+                                        } else {
+                                            0.0
+                                        },
+                                        tt_value,
+                                        output,
+                                        0.0,
+                                        0.0,
                                     )
                                     .activity_net_markup
                                 },
@@ -5746,7 +6145,7 @@ impl AnalyticsService {
 
                 {
                     let mut stmt = conn.prepare(
-                        "SELECT id, item_name, quantity, tt_value, attributed_tt, final_price, \
+                        "SELECT id, item_name, quantity, attributed_qty, tt_value, final_price, \
                                 sold_at, undone_at FROM private_sales WHERE profession = ?",
                     )?;
                     let sales = stmt
@@ -5763,10 +6162,16 @@ impl AnalyticsService {
                             ))
                         })?
                         .collect::<rusqlite::Result<Vec<_>>>()?;
-                    for (id, item, quantity, tt, attributed_tt, price, sold_at, undone_at) in sales
+                    for (id, item, quantity, attributed_qty, tt, price, sold_at, undone_at) in sales
                     {
-                        let outcome =
-                            stock_allocation::resolve_sale(tt, attributed_tt, price, 0.0, 0.0);
+                        let outcome = stock_allocation::resolve_sale(
+                            quantity,
+                            attributed_qty,
+                            tt,
+                            price,
+                            0.0,
+                            0.0,
+                        );
                         rows.push(ActivityHistoryRow {
                             id,
                             kind: "trade".to_string(),
@@ -6091,7 +6496,7 @@ impl AnalyticsService {
     /// Net realised markup per yield tier, from confirmed stock outcomes.
     ///
     /// Each sold listing's activity-claimable markup is divided across the
-    /// sources that supplied it, in proportion to the TT each contributed.
+    /// sources that supplied it, in proportion to the quantity each contributed.
     /// Pending listings realise nothing, and expired ones never realise.
     ///
     /// The tool that produced the stock is recorded on the movement rows but
@@ -6112,15 +6517,14 @@ impl AnalyticsService {
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
-                    // Attributed TT spans both provenance dimensions, so the
+                    // Attributed quantity spans every provenance dimension, so the
                     // share denominator does too: a sale drawing on boards
                     // AND hides credits each side only what it supplied.
                     let contributions: Vec<(Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
-                            "SELECT yield_tier, SUM(-tt_value) FROM stock_movements \
+                            "SELECT yield_tier, SUM(-quantity) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
-                                    OR mob_species IS NOT NULL) \
+                               AND source_kind IN ('hunt', 'harvest', 'quest') \
                              GROUP BY yield_tier",
                         )?;
                         let rows = stmt
@@ -6130,13 +6534,13 @@ impl AnalyticsService {
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
-                    if contributed_tt <= STOCK_EPSILON {
+                    let contributed_quantity: f64 = contributions.iter().map(|(_, qty)| qty).sum();
+                    if contributed_quantity <= STOCK_EPSILON {
                         continue;
                     }
-                    for (tier, tt) in contributions {
+                    for (tier, quantity) in contributions {
                         let Some(tier) = tier else { continue };
-                        let share = tt / contributed_tt;
+                        let share = quantity / contributed_quantity;
                         *totals.entry(tier).or_insert(0.0) += outcome.activity_net_markup * share;
                     }
                 }
@@ -6176,17 +6580,16 @@ impl AnalyticsService {
                     if outcome.activity_net_markup.abs() <= STOCK_EPSILON {
                         continue;
                     }
-                    // Attributed TT spans BOTH provenance dimensions; the
+                    // Attributed quantity spans every provenance dimension; the
                     // share denominator has to as well, or a joint sale
                     // would credit the species side more than it supplied.
                     let contributions: Vec<(Option<String>, f64)> = {
                         let mut stmt = conn.prepare(
                             "SELECT CASE WHEN source_kind = 'hunt' OR mob_species IS NOT NULL \
                                          THEN COALESCE(mob_species, '') ELSE NULL END, \
-                                    SUM(-tt_value) FROM stock_movements \
+                                    SUM(-quantity) FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
-                                    OR mob_species IS NOT NULL) \
+                               AND source_kind IN ('hunt', 'harvest', 'quest') \
                              GROUP BY 1",
                         )?;
                         let rows = stmt
@@ -6196,13 +6599,13 @@ impl AnalyticsService {
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
-                    if contributed_tt <= STOCK_EPSILON {
+                    let contributed_quantity: f64 = contributions.iter().map(|(_, qty)| qty).sum();
+                    if contributed_quantity <= STOCK_EPSILON {
                         continue;
                     }
-                    for (species, tt) in contributions {
+                    for (species, quantity) in contributions {
                         let Some(species) = species else { continue };
-                        let share = tt / contributed_tt;
+                        let share = quantity / contributed_quantity;
                         *totals.entry(species).or_insert(0.0) +=
                             outcome.activity_net_markup * share;
                     }
@@ -6241,11 +6644,10 @@ impl AnalyticsService {
                     }
                     let contributions: Vec<(Option<i64>, f64)> = {
                         let mut stmt = conn.prepare(
-                            "SELECT session_definition_id, SUM(-tt_value) \
+                            "SELECT session_definition_id, SUM(-quantity) \
                              FROM stock_movements \
                              WHERE ref_id = ? AND movement_kind = ? \
-                               AND (source_kind = 'hunt' OR yield_tier IS NOT NULL \
-                                    OR mob_species IS NOT NULL) \
+                               AND source_kind IN ('hunt', 'harvest', 'quest') \
                              GROUP BY session_definition_id",
                         )?;
                         let rows = stmt
@@ -6255,16 +6657,16 @@ impl AnalyticsService {
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         rows
                     };
-                    let contributed_tt: f64 = contributions.iter().map(|(_, tt)| tt).sum();
-                    if contributed_tt <= STOCK_EPSILON {
+                    let contributed_quantity: f64 = contributions.iter().map(|(_, qty)| qty).sum();
+                    if contributed_quantity <= STOCK_EPSILON {
                         continue;
                     }
-                    for (definition_id, tt) in contributions {
+                    for (definition_id, quantity) in contributions {
                         let Some(definition_id) = definition_id else {
                             continue;
                         };
                         *totals.entry(definition_id).or_insert(0.0) +=
-                            outcome.activity_net_markup * (tt / contributed_tt);
+                            outcome.activity_net_markup * (quantity / contributed_quantity);
                     }
                 }
 
@@ -6308,6 +6710,11 @@ impl AnalyticsService {
         notes: Option<&str>,
         acquired_at: Option<&str>,
     ) -> Result<InventoryRow, AnalyticsError> {
+        if is_universal_ammo(name) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held in Inventory",
+            ));
+        }
         let id = Uuid::new_v4().to_string();
         // acquired_at falls back to today's UTC date: the original's `or`
         // treats an empty string as falsy, so "" defaults to the clock date.
@@ -6348,6 +6755,11 @@ impl AnalyticsService {
         markup_paid: Option<f64>,
         notes: Option<&str>,
     ) -> Result<Option<InventoryRow>, AnalyticsError> {
+        if name.is_some_and(is_universal_ammo) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held in Inventory",
+            ));
+        }
         // The existence check and the (possibly empty) update run together on
         // the writer connection, which reads as well as writes.
         let updated = {
@@ -6687,7 +7099,7 @@ mod tests {
         assert_eq!(
             to_wire_json(&value),
             "{\"totalReturnRate\":0.0,\"trend\":\"stable\",\"returnsBreakdown\":{\"lootTt\":0.0,\
-             \"pes\":0.0,\"codexPes\":0.0,\"questPes\":0.0,\"ledger\":{}},\"lossesBreakdown\":\
+             \"questItemTt\":0.0,\"pes\":0.0,\"codexPes\":0.0,\"questPes\":0.0,\"ledger\":{}},\"lossesBreakdown\":\
              {\"trackingCost\":0.0,\"cycledBreakdown\":{\"weapon\":0,\"healing\":0,\"enhancer\":0,\
              \"armour\":0,\"dangling\":0,\"harvest\":0},\"ledger\":{}},\"totalGains\":0.0,\"totalLosses\":0.0,\
              \"timeline\":[],\"monthlyBreakdown\":[]}"
@@ -8024,7 +8436,7 @@ mod tests {
             .await
             .unwrap();
         assert!(position(&inventory, "Nanocube").is_some());
-        assert!(position(&inventory, "Universal Ammo").is_some());
+        assert!(position(&inventory, "Universal Ammo").is_none());
 
         // Selling the produced stock attributes back to the original tiers.
         let listing = service
@@ -8784,6 +9196,19 @@ mod tests {
         assert_eq!(patched["markupPaid"], json!(3.0), "untouched");
         assert_eq!(patched["notes"], json!("keep"), "untouched");
 
+        let error = service
+            .update_inventory_item(&id, Some("  universal AMMO "), Some(99.0), None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held in Inventory"
+            )
+        ));
+        let unchanged = to_json(service.inventory_row(&id).await.unwrap());
+        assert_eq!(unchanged, patched, "the rejected patch is atomic");
+
         // An all-None patch re-reads and returns the row unchanged.
         let same = to_json(
             service
@@ -9237,12 +9662,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         ];
         merge_family_sums(
             &mut into,
             [
                 Some(3.0),
                 Some(4.0),
+                None,
                 None,
                 None,
                 None,
@@ -9274,6 +9701,7 @@ mod tests {
         };
         Metrics {
             loot_tt: SqlNumber::Float(loot),
+            quest_item_tt: SqlNumber::Int(0),
             skill_tt: SqlNumber::Int(0),
             codex_pes: SqlNumber::Int(0),
             quest_pes: SqlNumber::Int(0),
@@ -9663,13 +10091,22 @@ mod tests {
                      (session_id, quest_id, completed_at, activity_context_id, \
                       activity_interval_id, reward_source, reward_kind, reward_ped, \
                       expected_reward_markup_percent, reward_outcome) \
-                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'ledger', 'fixed_liquid', 4.0, 150.0, 'confirmed')",
+                     VALUES('hunt-a', 11, 1780301800.0, 31, 21, 'none', 'item', NULL, NULL, 'confirmed')",
                     [],
                 )?;
                 conn.execute(
                     "INSERT INTO session_quest_completion_reward_items \
-                     (completion_id, item_name, quantity, value_ped) \
-                     SELECT id, 'Universal Ammo', 1, 4.0 \
+                     (completion_id, item_name, quantity, value_ped, accounting_kind) \
+                     SELECT id, 'Universal Ammo', 1, 4.0, 'liquid' \
+                     FROM session_quest_completions \
+                     WHERE session_id = 'hunt-a' AND quest_id = 11",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO quest_reward_attributions \
+                     (completion_id, activity_context_id, session_definition_id, weight, basis, \
+                      cycled_ped, duration_seconds) \
+                     SELECT id, 31, 7, 1.0, 'duration', 0.0, 1800.0 \
                      FROM session_quest_completions \
                      WHERE session_id = 'hunt-a' AND quest_id = 11",
                     [],
@@ -9820,11 +10257,11 @@ mod tests {
         assert!((family.cycled - 7.5).abs() < 1e-9);
         assert!((family.pes - 0.8).abs() < 1e-9);
         assert_eq!(family.runs, 1);
-        assert_eq!(family.confirmed_reward_ped, 8.0);
+        assert_eq!(family.confirmed_reward_ped, 4.0);
         assert_eq!(family.reward_items.len(), 1);
         assert_eq!(family.reward_items[0].item_name, "Universal Ammo");
         assert_eq!(family.reward_items[0].value_ped, 4.0);
-        assert_eq!(family.reward_status, "mixed");
+        assert_eq!(family.reward_status, "item");
         assert_eq!(family.loot_items.len(), 1);
         assert_eq!(family.loot_items[0].item_name, "Animal Muscle Oil");
         assert_eq!(family.loot_items[0].quantity, 60);
@@ -10332,9 +10769,7 @@ mod tests {
         let shrapnel = position(&stock, "Shrapnel").expect("depleted position remains visible");
         assert!((shrapnel.quantity - 0.0).abs() < 1e-9, "{shrapnel:?}");
         assert!((shrapnel.tt_value - 0.0).abs() < 1e-9, "{shrapnel:?}");
-        let ammo = position(&stock, "Universal Ammo").expect("converted ammo");
-        assert!((ammo.tt_value - 10.10).abs() < 1e-9);
-        assert!((ammo.quantity - 101_000.0).abs() < 1e-6);
+        assert!(position(&stock, "Universal Ammo").is_none());
 
         let ledger_gain: f64 = service
             .db
@@ -10367,5 +10802,89 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn quest_reward_stock_enters_inventory_and_zero_tt_sale_keeps_provenance() {
+        let (_dir, service) = write_service().await;
+        service
+            .db
+            .with_writer(|conn| {
+                conn.execute("INSERT INTO quests(id, name) VALUES(41, 'AI Daily')", [])?;
+                conn.execute(
+                    "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at) \
+                     VALUES(42, 41, 'completed', 100, 200)",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO session_quest_completions \
+                     (id, session_id, quest_id, completed_at, reward_source, reward_kind, \
+                      reward_outcome, reward_policy_snapshot, quest_run_id) \
+                     VALUES(43, 'manual-quest', 41, 200, 'tracked_loot', 'item', \
+                            'confirmed', 'completion_clump', 42)",
+                    [],
+                )?;
+                conn.execute("UPDATE quest_runs SET completion_id = 43 WHERE id = 42", [])?;
+                conn.execute(
+                    "INSERT INTO session_quest_completion_reward_items \
+                     (id, completion_id, item_name, quantity, value_ped, accounting_kind) \
+                     VALUES(44, 43, 'AI Daily Voucher', 1, 0, 'stock')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let held = service
+            .stock_positions(Profession::Inventory)
+            .await
+            .unwrap();
+        let voucher = position(&held, "AI Daily Voucher").expect("reward enters Inventory");
+        assert_eq!(voucher.quantity, 1.0);
+        assert_eq!(voucher.tt_value, 0.0);
+
+        service
+            .create_private_sale(
+                Profession::Inventory,
+                "AI Daily Voucher",
+                1.0,
+                2.0,
+                Some("2026-06-02"),
+            )
+            .await
+            .unwrap();
+
+        let proof = service
+            .db
+            .with_reader(|conn| {
+                conn.query_row(
+                    "SELECT ps.attributed_qty, ps.tt_value, le.amount, m.source_kind, \
+                            m.quest_reward_item_id, m.quest_run_id, m.quest_id, m.quantity \
+                     FROM private_sales ps \
+                     JOIN ledger_entries le ON le.id = ps.sale_entry_id \
+                     JOIN stock_movements m ON m.ref_id = ps.id AND m.movement_kind = 'trade'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, f64>(0)?,
+                            row.get::<_, f64>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, i64>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, f64>(7)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            proof,
+            (1.0, 0.0, 2.0, "quest".to_string(), 44, 42, 41, -1.0)
+        );
     }
 }

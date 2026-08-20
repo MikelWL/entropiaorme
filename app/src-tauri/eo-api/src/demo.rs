@@ -514,6 +514,7 @@ impl DemoState {
             .iter()
             .map(|kill| Kill {
                 id: kill.id.clone(),
+                loot_source_id: None,
                 session_id: session.id.clone(),
                 mob_name: kill.mob_name.clone(),
                 mob_species: kill.mob_species.clone(),

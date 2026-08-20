@@ -54,13 +54,13 @@
 			</div>
 			<!-- Stats line -->
 			<div class="flex items-center gap-1.5 mt-0.5 text-xs text-text-tertiary">
-				{#if quest.reward}
-					<span class="font-mono {quest.rewardIsSkill ? 'text-accent' : 'text-success'}">
+				{#if quest.rewardIsSkill && quest.reward}
+					<span class="font-mono text-accent">
 						{quest.reward.toFixed(2)}
 					</span>
-					<span>{quest.rewardIsSkill ? 'PES' : 'PED'}</span>
+					<span>PES</span>
 				{/if}
-				{#if quest.reward && (quest.cooldownDurationHours || quest.familyCooldownDurationHours)}
+				{#if quest.rewardIsSkill && quest.reward && (quest.cooldownDurationHours || quest.familyCooldownDurationHours)}
 					<span class="text-text-tertiary/50">|</span>
 				{/if}
 				{#if quest.cooldownDurationHours}

@@ -4,9 +4,6 @@
 	import FamilyFormModal from '$lib/features/quests/FamilyFormModal.svelte';
 	import FamilyListView from '$lib/features/quests/FamilyListView.svelte';
 	import { createFamilyModel } from '$lib/features/quests/familyModel.svelte';
-	import PlaylistFormModal from '$lib/features/quests/PlaylistFormModal.svelte';
-	import PlaylistListView from '$lib/features/quests/PlaylistListView.svelte';
-	import { createPlaylistModel } from '$lib/features/quests/playlistModel.svelte';
 	import QuestAnalyticsView from '$lib/features/quests/QuestAnalyticsView.svelte';
 	import QuestFormModal from '$lib/features/quests/QuestFormModal.svelte';
 	import QuestListView from '$lib/features/quests/QuestListView.svelte';
@@ -20,7 +17,6 @@
 	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore.svelte';
 
 	const model = createQuestsModel();
-	const playlistModel = createPlaylistModel(model);
 	const familyModel = createFamilyModel({
 		get families() {
 			return model.families;
@@ -44,7 +40,7 @@
 	});
 
 	// View toggle
-	let view: 'quests' | 'families' | 'playlists' | 'review' | 'analytics' = $state('quests');
+	let view: 'quests' | 'families' | 'review' | 'analytics' = $state('quests');
 
 	// Cooldown tick
 	let now = $state(Date.now());
@@ -69,7 +65,7 @@
 		const stopClock = useVisiblePoll(() => { now = Date.now(); }, { intervalMs: 1000 });
 		registerDemoApi('quests', {
 			setView: (v: string) => {
-				view = v as 'quests' | 'families' | 'playlists' | 'review' | 'analytics';
+				view = v as 'quests' | 'families' | 'review' | 'analytics';
 			},
 			openNewQuestModal: () => {
 				model.openNewQuest();
@@ -77,10 +73,6 @@
 			closeNewQuestModal: () => {
 				model.showQuestModal = false;
 				model.editingQuest = null;
-			},
-			closePlaylistModal: () => {
-				playlistModel.showPlaylistModal = false;
-				playlistModel.editingPlaylist = null;
 			},
 			closeFamilyModal: () => {
 				familyModel.showFamilyModal = false;
@@ -146,7 +138,7 @@
 		<header class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold text-text tracking-tight">Quests</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
-			<p class="text-sm text-text-secondary mt-0.5">Track missions, manage cooldowns, build hunt playlists</p>
+			<p class="text-sm text-text-secondary mt-0.5">Track missions, manage cooldowns, review rewards</p>
 		</header>
 		<div class="flex items-center gap-2">
 			<button
@@ -173,9 +165,6 @@
 			<Button size="sm" variant="secondary" onclick={() => familyModel.openNewFamily()}>
 				{#snippet children()}+ Family{/snippet}
 			</Button>
-			<Button size="sm" variant="secondary" onclick={() => playlistModel.openNewPlaylist()}>
-				{#snippet children()}+ Playlist{/snippet}
-			</Button>
 		</div>
 	</div>
 
@@ -186,12 +175,11 @@
 		tabs={[
 			{ id: 'quests', label: 'Quests' },
 			{ id: 'families', label: 'Families' },
-			{ id: 'playlists', label: 'Playlists' },
 			{ id: 'review', label: 'Reward Review' },
 			{ id: 'analytics', label: 'Analytics' }
 		]}
 		active={view}
-		onchange={(id) => (view = id as 'quests' | 'families' | 'playlists' | 'review' | 'analytics')}
+		onchange={(id) => (view = id as 'quests' | 'families' | 'review' | 'analytics')}
 	/>
 
 	{#if model.loading}
@@ -200,8 +188,6 @@
 		<QuestListView {model} {now} />
 	{:else if view === 'families'}
 		<FamilyListView model={familyModel} questsModel={model} {now} />
-	{:else if view === 'playlists'}
-		<PlaylistListView model={playlistModel} questsModel={model} {now} />
 	{:else if view === 'review'}
 		<QuestRewardReview />
 	{:else if view === 'analytics'}
@@ -211,4 +197,3 @@
 
 <QuestFormModal {model} />
 <FamilyFormModal model={familyModel} />
-<PlaylistFormModal model={playlistModel} />

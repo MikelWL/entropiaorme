@@ -39,3 +39,4 @@
   - [ADR-0023: The Linux platform layer](adr/0023-linux-platform-layer.md)
   - [ADR-0024: Estimated market data as a quarantined informational layer](adr/0024-market-informational-layer.md)
   - [ADR-0025: A central market-data service on AWS serverless](adr/0025-central-market-data-service.md)
+  - [ADR-0026: Canonical quest reward accounting and session-owned quest rosters](adr/0026-canonical-quest-reward-accounting.md)

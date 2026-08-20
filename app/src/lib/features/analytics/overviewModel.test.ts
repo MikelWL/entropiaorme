@@ -14,6 +14,7 @@ function day(overrides: Partial<TimelineDay> = {}): TimelineDay {
 	return {
 		date: '2026-07-01',
 		lootTt: 0,
+		questItemTt: 0,
 		pes: 0,
 		codexPes: 0,
 		questPes: 0,
@@ -28,6 +29,7 @@ function month(overrides: Partial<MonthlyEntry> = {}): MonthlyEntry {
 	return {
 		month: '2026-07',
 		lootTt: 0,
+		questItemTt: 0,
 		pes: 0,
 		codexPes: 0,
 		questPes: 0,
@@ -44,6 +46,7 @@ function overview(overrides: Partial<OverviewStats> = {}): OverviewStats {
 		trend: 'stable',
 		returnsBreakdown: {
 			lootTt: 850,
+			questItemTt: 0,
 			pes: 12.5,
 			codexPes: 3,
 			questPes: 1.5,
@@ -151,7 +154,14 @@ describe('pieView', () => {
 	it('returns null when either side is empty', async () => {
 		mocked.getAnalyticsOverview.mockResolvedValue(
 			overview({
-				returnsBreakdown: { lootTt: 0, pes: 0, codexPes: 0, questPes: 0, ledger: {} },
+				returnsBreakdown: {
+					lootTt: 0,
+					questItemTt: 0,
+					pes: 0,
+					codexPes: 0,
+					questPes: 0,
+					ledger: {},
+				},
 			}),
 		);
 		const model = createOverviewModel();

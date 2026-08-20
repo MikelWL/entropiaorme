@@ -77,7 +77,9 @@ const FAMILY_SELECT: &str = "\
            (SELECT MAX(c.completed_at) \
             FROM session_quest_completions c \
             JOIN quests m ON m.id = c.quest_id \
-            WHERE m.family_id = f.id) AS last_completed_at \
+            WHERE m.family_id = f.id \
+              AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
+                              WHERE r.completion_id = c.id)) AS last_completed_at \
     FROM quest_families f";
 
 impl QuestService {

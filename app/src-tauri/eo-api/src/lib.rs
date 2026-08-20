@@ -116,7 +116,7 @@ pub struct Api {
     /// The codex service (species / ranks / recommendations / claims),
     /// built over the facade's shared db, catalogue, and clock.
     codex: CodexService,
-    /// The composed quest service (quest + playlist CRUD, lifecycle,
+    /// The composed quest service (quest CRUD, lifecycle,
     /// analytics): the same instance whose owning task carries the
     /// bus-fed flows (session tracking, mission auto-start, reward
     /// suppression), so the command surface and the producer spine

@@ -3,9 +3,7 @@
 	import { formatPed, formatPercent } from '$lib/utils/format';
 	import { createTableModel } from '$lib/view/tableModel.svelte';
 	import {
-		computePlaylistAnalytics,
 		computeQuestAnalytics,
-		type PlaylistAnalyticsComputed,
 		type QuestAnalyticsComputed,
 		type RewardMode
 	} from './economics';
@@ -20,9 +18,6 @@
 			model.analyticsRewardMode,
 			model.rewardMarket
 		)
-	);
-	const computedPlaylistAnalytics = $derived(
-		computePlaylistAnalytics(model.playlistAnalyticsData, model.rates, model.analyticsRewardMode)
 	);
 
 	// The default table-model comparator sorts nulls last in both directions;
@@ -60,12 +55,18 @@
 		if (model.analyticsRewardMode === 'markup') {
 			columns.splice(3, 0, {
 				key: 'totalRecordedRewardMu',
-				label: 'Reward MU',
+				label: 'Projected Value',
+				align: 'right',
+				sortable: true
+			});
+			columns.splice(4, 0, {
+				key: 'totalRealisedRewardMarkup',
+				label: 'Realised MU',
 				align: 'right',
 				sortable: true
 			});
 		}
-		columns.splice(model.analyticsRewardMode === 'markup' ? 4 : 3, 0, {
+		columns.splice(model.analyticsRewardMode === 'markup' ? 5 : 3, 0, {
 			key: 'unresolvedCompletions',
 			label: 'Unresolved',
 			align: 'right',
@@ -78,22 +79,6 @@
 		return columns;
 	});
 
-	const playlistAnalyticsColumns = $derived.by((): ColumnDef<PlaylistAnalyticsComputed>[] => {
-		const columns: ColumnDef<PlaylistAnalyticsComputed>[] = [
-			{ key: 'playlistName', label: 'Playlist', sortable: true },
-			{ key: 'displayImmediateReward', label: 'Base Reward', align: 'right', sortable: true },
-			{ key: 'displayBonusReward', label: 'Bonus/Run', align: 'right', sortable: true },
-			{ key: 'avgCycled', label: 'Avg Cycled', align: 'right', sortable: true }
-		];
-		if (model.analyticsRewardMode === 'markup') {
-			columns.push({ key: 'rewardMarkupPercent', label: 'Markup', align: 'right', sortable: true });
-		}
-		columns.push(
-			{ key: 'avgNet', label: 'Avg Net', align: 'right', sortable: true },
-			{ key: 'returnRate', label: 'Rate', align: 'right', sortable: true }
-		);
-		return columns;
-	});
 </script>
 
 {#if model.analyticsLoading}
@@ -131,6 +116,10 @@
 				</div>
 			{:else if column.key === 'totalRecordedRewardMu'}
 				<span class="tabular-nums text-accent">{formatPed(Number(value))}</span>
+			{:else if column.key === 'totalRealisedRewardMarkup'}
+				<span class="tabular-nums {Number(value) >= 0 ? 'text-positive' : 'text-negative'}">
+					{Number(value) > 0 ? '+' : ''}{formatPed(Number(value))}
+				</span>
 			{:else if column.key === 'unresolvedCompletions'}
 				<span class="tabular-nums {Number(value) > 0 ? 'text-warning' : 'text-text-tertiary'}">{value}</span>
 			{:else if column.key === 'avgCycled'}
@@ -166,51 +155,6 @@
 			cell={analyticsCell}
 			emptyMessage="No curated quest runs"
 		/>
-
-		<!-- Playlist Analytics -->
-		{#if computedPlaylistAnalytics.length > 0}
-			<h3 class="text-sm font-medium text-text-secondary mt-6 mb-2">Playlist Analytics</h3>
-			{#snippet playlistCell({ column, value, row }: { column: { key: string }; value: unknown; row: PlaylistAnalyticsComputed })}
-				{#if column.key === 'playlistName'}
-					<span class="font-medium">{value}</span>
-				{:else if column.key === 'displayImmediateReward' || column.key === 'displayBonusReward'}
-					{@const pesPortion = column.key === 'displayImmediateReward'
-						? row.avgImmediateSkillReward
-						: row.avgBonusSkillReward}
-					<div class="flex flex-col items-end leading-tight">
-						<span class="tabular-nums">{formatPed(Number(value))}</span>
-						{#if pesPortion > 0}
-							<span class="text-[11px] text-accent">+{formatPed(pesPortion)} PES</span>
-						{/if}
-					</div>
-				{:else if column.key === 'avgCycled'}
-					<span class="tabular-nums">{formatPed(Number(value))}</span>
-				{:else if column.key === 'avgNet'}
-					<div class="flex flex-col items-end leading-tight">
-						<span class="tabular-nums {Number(value) >= 0 ? 'text-positive' : 'text-negative'}">
-							{Number(value) >= 0 ? '+' : ''}{formatPed(Number(value))}
-						</span>
-						{#if row.avgPesNet > 0}
-							<span class="text-[11px] text-accent">+{formatPed(row.avgPesNet)} PES</span>
-						{/if}
-					</div>
-				{:else if column.key === 'rewardMarkupPercent'}
-					<span class="tabular-nums text-text-secondary">
-						{value == null ? '\u2014' : `${Number(value).toFixed(0)}%`}
-					</span>
-				{:else if column.key === 'returnRate'}
-					<span class="tabular-nums">{formatPercent(Number(value))}</span>
-				{:else}
-					{value}
-				{/if}
-			{/snippet}
-			<DataTable
-				columns={playlistAnalyticsColumns}
-				rows={computedPlaylistAnalytics}
-				cell={playlistCell}
-				emptyMessage="No curated playlist runs"
-			/>
-		{/if}
 
 		<div class="text-[11px] text-text-tertiary tabular-nums pt-2 text-right">
 			Liquid baseline: {formatPercent(model.rates.liquidReturnRate)}

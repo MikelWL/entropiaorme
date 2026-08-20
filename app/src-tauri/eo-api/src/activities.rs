@@ -72,6 +72,10 @@ pub struct ActiveActivityView {
     /// The quest whose stretch is standing; null for a segment, whose
     /// name is its only identity.
     pub quest_id: Nullable<i64>,
+    /// The standing quest exposes the contextual hand-in action.
+    pub manual_hand_in: bool,
+    /// The hand-in flow is armed for the next raw loot clump.
+    pub hand_in_waiting: bool,
 }
 
 /// The acknowledgement both verbs echo: the standing set now in force,
@@ -125,6 +129,9 @@ pub struct ActivityOption {
     pub active: bool,
     /// Whether declaring it would do anything right now.
     pub available: bool,
+    /// Whether this direct quest row owns a cooldown the quest reset action
+    /// can actually clear. False for family-only and non-cooldown gates.
+    pub resettable: bool,
     /// Why it would not, in the user's words; null when it would.
     pub unavailable_reason: Nullable<String>,
     /// When the gate lifts (fractional epoch seconds), so the control
@@ -132,12 +139,19 @@ pub struct ActivityOption {
     pub available_from: Nullable<f64>,
     /// Surfaced as a fact rather than offered by the roster.
     pub off_roster: bool,
+    pub manual_hand_in: bool,
+    pub hand_in_waiting: bool,
+    /// Authored position in the session definition. Off-roster facts have no
+    /// position; consumers may apply their own finding order without losing it.
+    pub roster_order: Nullable<i64>,
 }
 
 /// What the Activities control shows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityOptionsResult {
+    pub definition_id: Nullable<i64>,
+    pub definition_name: Nullable<String>,
     /// Whether the control appears at all.
     pub visible: bool,
     /// Whether this session's definition opts into naming segments in
@@ -198,7 +212,7 @@ fn quest_availability(offer: &QuestOffer, now: f64) -> (bool, Option<&'static st
     // A signal quest's in-progress state IS the declaration, so an
     // uncooled one is always startable; a mission-log quest has to be
     // in the log first, and nothing here can put it there.
-    if offer.signal_quest {
+    if offer.signal_quest || offer.manual_hand_in {
         (true, None)
     } else {
         (false, Some(REASON_NOT_RECEIVED))
@@ -227,7 +241,7 @@ fn family_available_from(offers: &[QuestOffer], family_id: i64) -> Option<f64> {
 }
 
 /// The standing set in wire shape.
-fn active_views(standing: &[ActiveActivity]) -> Vec<ActiveActivityView> {
+fn active_views(standing: &[ActiveActivity], offers: &[QuestOffer]) -> Vec<ActiveActivityView> {
     standing
         .iter()
         .map(|activity| match activity.kind {
@@ -236,12 +250,24 @@ fn active_views(standing: &[ActiveActivity]) -> Vec<ActiveActivityView> {
                 kind: ActivityTargetKind::Quest,
                 name: activity.name.clone(),
                 quest_id: activity.quest_id.into(),
+                manual_hand_in: activity.quest_id.is_some_and(|quest_id| {
+                    offers
+                        .iter()
+                        .any(|offer| offer.id == quest_id && offer.manual_hand_in)
+                }),
+                hand_in_waiting: activity.quest_id.is_some_and(|quest_id| {
+                    offers
+                        .iter()
+                        .any(|offer| offer.id == quest_id && offer.hand_in_waiting)
+                }),
             },
             _ => ActiveActivityView {
                 key: segment_key(&activity.name),
                 kind: ActivityTargetKind::Segment,
                 name: activity.name.clone(),
                 quest_id: None.into(),
+                manual_hand_in: false,
+                hand_in_waiting: false,
             },
         })
         .collect()
@@ -297,7 +323,7 @@ pub(crate) async fn activity_picture(
         Some(active) => &active.active_activities,
         None => &[],
     };
-    let standing = active_views(running);
+    let standing = active_views(running, &offers);
     let standing_quests: Vec<i64> = running
         .iter()
         .filter_map(|activity| activity.quest_id)
@@ -315,10 +341,12 @@ pub(crate) async fn activity_picture(
     // repeated below as an off-roster row.
     let mut represented: Vec<i64> = Vec::new();
 
-    for entry in definition
+    for (roster_order, entry) in definition
         .as_ref()
         .map(|definition| definition.roster.as_slice())
         .unwrap_or_default()
+        .iter()
+        .enumerate()
     {
         match entry.kind {
             RosterEntryKind::Segment => {
@@ -334,9 +362,13 @@ pub(crate) async fn activity_picture(
                     // A segment needs only a running session; the
                     // player's own naming has nothing to wait for.
                     available: true,
+                    resettable: false,
                     unavailable_reason: None.into(),
                     available_from: None.into(),
                     off_roster: false,
+                    manual_hand_in: false,
+                    hand_in_waiting: false,
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
             RosterEntryKind::Quest => {
@@ -359,9 +391,13 @@ pub(crate) async fn activity_picture(
                     quest_id: Some(offer.id).into(),
                     active: is_standing_quest(offer.id),
                     available,
+                    resettable: !offer.in_progress && cooling(offer.own_available_from, now),
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: offer.available_from.into(),
                     off_roster: false,
+                    manual_hand_in: offer.manual_hand_in,
+                    hand_in_waiting: offer.hand_in_waiting,
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
             RosterEntryKind::QuestFamily => {
@@ -397,9 +433,13 @@ pub(crate) async fn activity_picture(
                     quest_id: serving.map(|offer| offer.id).into(),
                     active: serving.is_some_and(|offer| is_standing_quest(offer.id)),
                     available,
+                    resettable: false,
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: available_from.into(),
                     off_roster: false,
+                    manual_hand_in: serving.is_some_and(|offer| offer.manual_hand_in),
+                    hand_in_waiting: serving.is_some_and(|offer| offer.hand_in_waiting),
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
         }
@@ -425,9 +465,13 @@ pub(crate) async fn activity_picture(
             quest_id: Some(offer.id).into(),
             active: true,
             available: true,
+            resettable: false,
             unavailable_reason: None.into(),
             available_from: offer.available_from.into(),
             off_roster: true,
+            manual_hand_in: offer.manual_hand_in,
+            hand_in_waiting: offer.hand_in_waiting,
+            roster_order: None.into(),
         });
     }
     for activity in running {
@@ -447,9 +491,13 @@ pub(crate) async fn activity_picture(
             quest_id: None.into(),
             active: true,
             available: true,
+            resettable: false,
             unavailable_reason: None.into(),
             available_from: None.into(),
             off_roster: true,
+            manual_hand_in: false,
+            hand_in_waiting: false,
+            roster_order: None.into(),
         });
     }
 
@@ -468,6 +516,11 @@ pub(crate) async fn activity_picture(
         .filter(|option| option.available && !option.active)
         .count() as i64;
     Ok(ActivityOptionsResult {
+        definition_id: definition_id.into(),
+        definition_name: definition
+            .as_ref()
+            .map(|definition| definition.name.clone())
+            .into(),
         // A session that offers nothing gets no surface. The only thing
         // that overrides that is a stretch already recording, which the
         // control cannot honestly hide.
@@ -544,10 +597,8 @@ impl Api {
                 let Some(quest_id) = quest_id else {
                     return Err(ApiError::bad_request("A quest activity needs a quest_id"));
                 };
-                ActivityRef::Quest {
-                    quest_id,
-                    name: self.prepare_quest_activity(quest_id).await?,
-                }
+                let name = self.prepare_quest_activity(quest_id).await?;
+                ActivityRef::Quest { quest_id, name }
             }
             ActivityTargetKind::Segment => ActivityRef::Segment {
                 name: require_segment_label(label)?,
@@ -570,8 +621,11 @@ impl Api {
         if let Some(name) = promoting {
             self.promote_named_segment(&name).await?;
         }
+        let offers = read_quest_offers(&self.db)
+            .await
+            .map_err(ApiError::internal("activity state offers"))?;
         Ok(ActivityStateResult {
-            active: active_views(&standing),
+            active: active_views(&standing, &offers),
         })
     }
 
@@ -598,8 +652,11 @@ impl Api {
             .deactivate_activity(target)
             .await
             .map_err(tracker_conflict)?;
+        let offers = read_quest_offers(&self.db)
+            .await
+            .map_err(ApiError::internal("activity state offers"))?;
         Ok(ActivityStateResult {
-            active: active_views(&standing),
+            active: active_views(&standing, &offers),
         })
     }
 
@@ -615,21 +672,36 @@ impl Api {
         else {
             return Err(ApiError::not_found("Quest not found"));
         };
-        if quest["started_at"].is_null() {
+        let started_now = quest["started_at"].is_null();
+        if started_now {
             // A signal quest has no mission-log entry to mirror, so its
             // in-progress state IS the user's declaration: declaring it
             // starts it (and its signal loot will complete it). A
             // mission-log quest still refuses, because play cannot be
             // toward a quest the log does not carry.
-            if quest["signal_loot_item"].is_null() {
+            let completion_trigger = quest
+                .get("completion_trigger")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("mission_log");
+            if completion_trigger == "mission_log" {
                 return Err(ApiError::bad_request(
                     "Quest is not in progress; start it before playing toward it",
+                ));
+            }
+            // Starting a signal or manual quest is part of declaring it.
+            // Check the tracker typestate at the mutation boundary so the
+            // ordinary idle failure cannot leave a run or pickup cooldown
+            // behind, while lookup and request validation keep their
+            // established precedence.
+            if !self.tracker.is_tracking() {
+                return Err(tracker_conflict(
+                    eo_services::tracker::TrackerCommandError::NoActiveSession,
                 ));
             }
             self.quests
                 .start_quest(quest_id)
                 .await
-                .map_err(ApiError::internal("signal quest start"))?;
+                .map_err(ApiError::internal("declaration-started quest"))?;
         }
         Ok(quest["name"].as_str().unwrap_or_default().to_string())
     }

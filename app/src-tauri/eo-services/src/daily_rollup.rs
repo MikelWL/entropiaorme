@@ -44,10 +44,9 @@ use crate::db::DbError;
 
 /// Bump when a rollup column's meaning changes: below-version rows heal
 /// on the next read.
-// Bumped to 2 when the harvest family columns (harvest_loot_tt,
-// harvest_cost) joined the projection: below-version rows heal on the
-// next read.
-pub const ROLLUP_VERSION: i64 = 2;
+// Bumped to 3 when confirmed non-ammo quest-item TT joined the projection:
+// below-version rows heal on the next read.
+pub const ROLLUP_VERSION: i64 = 3;
 
 /// The UTC day of an epoch second, rendered as SQLite's
 /// `date(epoch, 'unixepoch')` renders it (`YYYY-MM-DD`).
@@ -113,7 +112,7 @@ fn window_sums(
 /// hooks run this inside their transaction; the heal wraps its own).
 pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbError> {
     let mut has_rows = false;
-    let mut families: [Option<f64>; 11] = [None; 11];
+    let mut families: [Option<f64>; 12] = [None; 12];
 
     if let Some(date) = canonical_day(day) {
         let (start, end) = day_bounds(date);
@@ -175,6 +174,23 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             end,
             2,
         )?;
+        let (quest_item_count, quest_item_sums) = window_sums(
+            conn,
+            "SELECT COUNT(*), SUM(ri.value_ped) \
+             FROM session_quest_completion_reward_items ri \
+             JOIN session_quest_completions c ON c.id = ri.completion_id \
+             WHERE ri.accounting_kind = 'stock' \
+               AND c.completed_at >= ? AND c.completed_at < ? \
+               AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                               WHERE rr.completion_id = c.id) \
+               AND COALESCE((SELECT r.outcome FROM quest_reward_reviews r \
+                             WHERE r.completion_id = c.id \
+                             ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1), \
+                            c.reward_outcome) = 'confirmed'",
+            start,
+            end,
+            1,
+        )?;
 
         families = [
             kill_sums[0],   // loot_tt
@@ -188,6 +204,7 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             quest_sums[0],
             harvest_sums[0], // harvest_loot_tt
             harvest_sums[1], // harvest_cost
+            quest_item_sums[0],
         ];
         has_rows = kill_count > 0
             || weapon_count > 0
@@ -195,7 +212,8 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             || skill_count > 0
             || codex_count > 0
             || quest_count > 0
-            || harvest_count > 0;
+            || harvest_count > 0
+            || quest_item_count > 0;
     }
 
     conn.execute(
@@ -214,8 +232,8 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
         "INSERT OR REPLACE INTO daily_rollups (\
          day, rollup_version, dirty, has_rows, loot_tt, weapon_cost, \
          enhancer_cost, armour_cost, heal_cost, dangling_cost, skill_tt, \
-         codex_pes, quest_pes, harvest_loot_tt, harvest_cost, computed_at) \
-         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
+         codex_pes, quest_pes, harvest_loot_tt, harvest_cost, quest_item_tt, computed_at) \
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now'))",
         rusqlite::params![
             day,
             ROLLUP_VERSION,
@@ -231,6 +249,7 @@ pub fn recompute_day(conn: &rusqlite::Connection, day: &str) -> Result<(), DbErr
             families[8],
             families[9],
             families[10],
+            families[11],
         ],
     )?;
     Ok(())
@@ -448,9 +467,10 @@ mod tests {
         rollup_version: i64,
         dirty: i64,
         has_rows: i64,
-        /// The 11 aggregate families, in column order (index 0 = `loot_tt`,
-        /// index 9 = `harvest_loot_tt`, index 10 = `harvest_cost`). Call sites
-        /// pass the SQL column index instead; `family` rebases it by 3.
+        /// The 12 aggregate families, in column order (index 0 = `loot_tt`,
+        /// index 9 = `harvest_loot_tt`, index 10 = `harvest_cost`, index 11 =
+        /// `quest_item_tt`). Call sites pass the SQL column index instead;
+        /// `family` rebases it by 3.
         families: Vec<Option<f64>>,
     }
 
@@ -588,12 +608,12 @@ mod tests {
                 .query_row(
                     "SELECT rollup_version, dirty, has_rows, loot_tt, weapon_cost, enhancer_cost, \
                      armour_cost, heal_cost, dangling_cost, skill_tt, codex_pes, quest_pes, \
-                     harvest_loot_tt, harvest_cost \
+                     harvest_loot_tt, harvest_cost, quest_item_tt \
                      FROM daily_rollups WHERE day = ?1",
                     rusqlite::params![day],
                     |row| {
-                        let mut families = Vec::with_capacity(11);
-                        for index in 3..=13 {
+                        let mut families = Vec::with_capacity(12);
+                        for index in 3..=14 {
                             families.push(row.get::<_, Option<f64>>(index)?);
                         }
                         Ok(DayRollup {

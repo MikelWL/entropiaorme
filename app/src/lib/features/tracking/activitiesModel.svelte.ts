@@ -16,7 +16,12 @@
  * separate, deliberate gesture.
  */
 
-import { type ActivityOption, type ActivityOptionsResult, ApiError } from '$lib/api';
+import {
+	type ActivityOption,
+	type ActivityOptionsResult,
+	ApiError,
+	type QuestHandInState,
+} from '$lib/api';
 
 export interface ActivitiesModelDeps {
 	/** Read what the control offers right now. */
@@ -30,6 +35,8 @@ export interface ActivitiesModelDeps {
 	deactivateQuest: (questId: number) => Promise<unknown>;
 	/** End one standing segment, matched by its name. */
 	deactivateSegment: (label: string) => Promise<unknown>;
+	/** Begin or resume exact-clump review for a manual-hand-in quest. */
+	beginHandIn: (questId: number) => Promise<QuestHandInState>;
 	/** Re-read the snapshot after a successful write. */
 	refresh: () => Promise<unknown>;
 }
@@ -66,6 +73,11 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 			error = describe(e, 'Failed to read the activities');
 			return null;
 		}
+	}
+
+	/** Resolve the stable key the satellite emitted against the latest menu read. */
+	function find(key: string): ActivityOption | null {
+		return options?.options.find((option) => option.key === key) ?? null;
 	}
 
 	/** Run a write, then refresh the snapshot and the offerings so the
@@ -128,6 +140,29 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 		return applied;
 	}
 
+	/** Open the persisted hand-in review and refresh the live snapshot so its
+	 * waiting state is immediately truthful on the parent overlay. */
+	async function beginHandIn(option: ActivityOption): Promise<QuestHandInState | null> {
+		if (saving || option.questId === null) return null;
+		saving = true;
+		error = null;
+		try {
+			const handIn = await deps.beginHandIn(Number(option.questId));
+			await deps.refresh();
+			return handIn;
+		} catch (e) {
+			error = describe(e, 'Failed to begin the quest hand-in');
+			return null;
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function refresh(): Promise<void> {
+		await deps.refresh();
+		await load();
+	}
+
 	return {
 		get options() {
 			return options;
@@ -149,9 +184,12 @@ export function createActivitiesModel(deps: ActivitiesModelDeps) {
 		},
 
 		load,
+		find,
 		toggle,
 		declare,
 		declareTyped,
+		beginHandIn,
+		refresh,
 	};
 }
 

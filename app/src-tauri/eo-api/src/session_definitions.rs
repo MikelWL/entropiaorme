@@ -25,8 +25,7 @@ use crate::{Api, ApiError};
 
 /// A definition create or update payload, in the frontend's snake_case
 /// field casing. One DTO serves both operations; the roster always
-/// binds in full and replaces the stored roster wholesale on update
-/// (the playlist-items precedent).
+/// binds in full and replaces the stored roster wholesale on update.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SessionDefinitionInput {
     pub name: String,
