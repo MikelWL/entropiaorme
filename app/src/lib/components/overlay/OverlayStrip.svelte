@@ -357,10 +357,15 @@
 									disabled={savingActivity}
 									aria-haspopup="menu"
 									aria-expanded={activitiesMenuOpen}
-									title={`Recording ${activity.name}; open the activities`}
+									title={activity.handInWaiting
+										? `Waiting for the next reward clump for ${activity.name}`
+										: `Recording ${activity.name}; open the activities`}
 									onclick={() => activitiesSection && onActivitiesTrigger(activitiesSection)}
 								>
 									<span class="truncate">{activity.name}</span>
+									{#if activity.handInWaiting}
+										<span class="text-[9px] font-semibold text-sky-200/80">Waiting</span>
+									{/if}
 								</button>
 							{/each}
 						{:else}

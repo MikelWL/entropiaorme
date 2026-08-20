@@ -21,6 +21,44 @@ enum RoutedLoot {
 }
 
 impl TrackerActor {
+    /// Apply the in-memory half of a committed quest-reward reclassification.
+    /// The stable watcher identity makes this exact even when two clumps have
+    /// the same timestamp, items, and value.
+    pub(super) fn reclassify_loot_source(&mut self, source_id: &str) -> bool {
+        let Some(active) = self.session.active_mut() else {
+            return false;
+        };
+        if let Some(kill) = active
+            .session
+            .kills
+            .iter_mut()
+            .find(|kill| kill.loot_source_id.as_deref() == Some(source_id))
+        {
+            if kill.loot_items.is_empty() && kill.loot_total_ped == Ped::ZERO {
+                return false;
+            }
+            kill.loot_items.clear();
+            kill.loot_total_ped = Ped::ZERO;
+            active.dirty = true;
+            return true;
+        }
+        if let Some(harvest) = active
+            .session
+            .harvests
+            .iter_mut()
+            .find(|harvest| harvest.loot_source_id.as_deref() == Some(source_id))
+        {
+            if harvest.loot_items.is_empty() && harvest.loot_total_ped == Ped::ZERO {
+                return false;
+            }
+            harvest.loot_items.clear();
+            harvest.loot_total_ped = Ped::ZERO;
+            active.dirty = true;
+            return true;
+        }
+        false
+    }
+
     /// Handle a loot group from chat.log. A wood group (the harvest
     /// taxonomy) records a harvesting swing; anything else creates a
     /// Kill record from the accumulator, which then resets. Either
@@ -145,6 +183,7 @@ impl TrackerActor {
                     };
                 let harvest = HarvestEvent {
                     id: uuid::Uuid::new_v4().to_string(),
+                    loot_source_id: group.source_id.clone(),
                     session_id: active.session.id.clone(),
                     timestamp: now_epoch,
                     success: true,
@@ -182,6 +221,7 @@ impl TrackerActor {
                 let accumulator = &mut active.accumulator;
                 let kill = Kill {
                     id: uuid::Uuid::new_v4().to_string(),
+                    loot_source_id: group.source_id.clone(),
                     session_id,
                     mob_name,
                     mob_species,

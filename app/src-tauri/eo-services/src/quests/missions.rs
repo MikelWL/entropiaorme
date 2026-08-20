@@ -492,6 +492,7 @@ impl RewardDecision {
             unresolved_reason: self.reason.clone(),
             evidence_json: Some(self.evidence_json.clone()),
             had_tracked_loot: !self.loot_indices.is_empty(),
+            manual_clump: None,
         }
     }
 }

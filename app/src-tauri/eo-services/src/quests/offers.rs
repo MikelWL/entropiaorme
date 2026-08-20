@@ -16,7 +16,7 @@ use super::families::cooldown_lift;
 /// The lean projection: the same SELECT shape the enriched read uses,
 /// narrowed to the availability picture.
 const OFFER_SELECT: &str = "\
-    SELECT q.id, q.name, q.started_at, q.signal_loot_item, q.family_id, \
+    SELECT q.id, q.name, q.started_at, q.signal_loot_item, q.completion_mode, q.family_id, \
            q.cooldown_hours, q.cooldown_anchor, q.last_started_at, \
            f.cooldown_hours AS family_cooldown_hours, \
            f.cooldown_anchor AS family_cooldown_anchor, \
@@ -27,7 +27,10 @@ const OFFER_SELECT: &str = "\
            (SELECT MAX(c.completed_at) \
             FROM session_quest_completions c \
             JOIN quests m ON m.id = c.quest_id \
-            WHERE m.family_id = q.family_id) AS family_last_completed_at \
+            WHERE m.family_id = q.family_id) AS family_last_completed_at, \
+           EXISTS(SELECT 1 FROM quest_runs r WHERE r.quest_id = q.id \
+                  AND r.status = 'in_progress' AND r.hand_in_waiting = 1) \
+             AS hand_in_waiting \
     FROM quests q \
     LEFT JOIN quest_families f ON f.id = q.family_id AND f.is_active = 1 \
     WHERE q.is_active = 1 \
@@ -44,6 +47,10 @@ pub struct QuestOffer {
     /// A signal-completed quest: a standing, repeatable run that
     /// declaring starts and its signal loot ends.
     pub signal_quest: bool,
+    /// A run started by declaring it and completed only through the
+    /// user-confirmed raw-clump hand-in flow.
+    pub manual_hand_in: bool,
+    pub hand_in_waiting: bool,
     pub family_id: Option<i64>,
     /// When the gate on starting this quest lifts (epoch seconds), the
     /// LATER of its own and its family's cooldown: in game the family is
@@ -88,6 +95,8 @@ pub async fn read_quest_offers(db: &Db) -> Result<Vec<QuestOffer>, DbError> {
                 signal_quest: row
                     .get::<_, Option<String>>("signal_loot_item")?
                     .is_some_and(|item| !item.trim().is_empty()),
+                manual_hand_in: row.get::<_, String>("completion_mode")? == "manual_hand_in",
+                hand_in_waiting: row.get::<_, i64>("hand_in_waiting")? != 0,
                 family_id: row.get("family_id")?,
                 available_from: match (own_lift, family_lift) {
                     (Some(own), Some(family)) => Some(own.max(family)),

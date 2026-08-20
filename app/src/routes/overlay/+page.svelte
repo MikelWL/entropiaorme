@@ -15,6 +15,7 @@
 		getActivityOptions,
 		activateActivity,
 		deactivateActivity,
+		beginQuestHandIn,
 		updateSettings,
 		type TrackingLive,
 		type TrackingStatus,
@@ -46,6 +47,7 @@
 		OVERLAY_MENU_WINDOW_LABEL,
 		OVERLAY_MENU_MIN_WIDTH,
 		buildActivitiesMenuState,
+		buildQuestHandInMenuState,
 		buildDefinitionMenuState,
 		computeMenuHeight,
 		computeMenuWidth,
@@ -414,11 +416,27 @@
 	}
 
 	async function toggleActivitiesMenu(anchor: HTMLElement) {
-		if (overlayMenuKind === 'activities') {
+		if (overlayMenuKind === 'activities' || overlayMenuKind === 'questHandIn') {
 			await hideOverlayMenu();
 			return;
 		}
 		await openActivitiesMenu(anchor);
+	}
+
+	async function openQuestHandIn(questId: number) {
+		if (!activitiesAnchor?.isConnected) return;
+		try {
+			const handIn = await beginQuestHandIn(questId);
+			await snapshot.hydrate();
+			const state = buildQuestHandInMenuState(
+				activitiesAnchor.getBoundingClientRect().width,
+				handIn,
+			);
+			facets.facetError = null;
+			await showOverlayMenu('questHandIn', activitiesAnchor, state, { focusPopup: true });
+		} catch (error) {
+			facets.facetError = describeOverlayMenuError(error);
+		}
 	}
 
 	/** An Activities action keeps the control open (declaring one thing
@@ -709,6 +727,13 @@
 
 				if (event.payload.kind === 'activities') {
 					const payload = event.payload;
+					if (payload.action === 'handIn') {
+						const option = selectedActivity(payload.key);
+						if (option?.questId !== null && option?.questId !== undefined) {
+							await openQuestHandIn(Number(option.questId));
+						}
+						return;
+					}
 					await handleActivityAction(() => {
 						if (payload.action === 'declare') {
 							activities.segmentDraft = payload.label;
@@ -720,6 +745,13 @@
 							? activities.toggle(option)
 							: activities.declare(option, true);
 					});
+					return;
+				}
+
+				if (event.payload.kind === 'questHandIn') {
+					overlayMenuKind = null;
+					await snapshot.hydrate();
+					await activities.load();
 					return;
 				}
 
@@ -1002,7 +1034,7 @@
 		definitionEditable={facets.definitionEditable}
 		savingBoost={facets.savingBoost}
 		savingActivity={activities.saving}
-		activitiesMenuOpen={overlayMenuKind === 'activities'}
+		activitiesMenuOpen={overlayMenuKind === 'activities' || overlayMenuKind === 'questHandIn'}
 		facetError={facets.facetError}
 		lastSessionId={flow.lastSessionId}
 		lastSessionStats={flow.lastSessionStats}

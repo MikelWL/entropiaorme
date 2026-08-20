@@ -82,7 +82,11 @@ historical ARIS completions that had no exact voucher attribution), and
 `0042_quest_run_ownership.sql` (one-to-one ownership between durable runs and
 their completions), and `0043_protection_accounting.sql` (the armour and plate
 catalogue, composable protection loadouts, live identity intervals, limited-item
-TT observations and reconciliations, and defensive-event evidence). The
+TT observations and reconciliations, and defensive-event evidence),
+`0044_deferred_protection_costs.sql` (evidence-window settlement and
+damage-weighted session/context allocation for deferred protection costs), and
+`0045_manual_quest_hand_in.sql` (manual-hand-in quest completion, stable raw
+loot-clump identity, and bounded review evidence). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -332,7 +336,8 @@ Quest definitions, including rewards, chain position, and activation state.
 | `chain_total` | INTEGER | Optional. |
 | `started_at` | REAL | Optional. |
 | `signal_loot_item` | TEXT | Optional (migration `0020`). Null uses the mission-log lifecycle; a value names the loot item whose arrival completes a signal-driven quest. |
-| `completion_trigger` | TEXT | `mission_log` or `signal_item`; independent of the reward policy. |
+| `completion_trigger` | TEXT | Legacy two-value trigger retained for migration compatibility. Current service reads and writes use `completion_mode`. |
+| `completion_mode` | TEXT | Canonical completion trigger: `mission_log`, `signal_item`, or `manual_hand_in`; independent of the reward policy. |
 | `reward_policy` | TEXT | `none`, `fixed_ped`, `fixed_pes`, `named_items`, or `completion_clump`. |
 | `family_id` | INTEGER | Optional reference to `quest_families(id)` (migration `0021`; indexed `idx_quests_family`). Null leaves the quest standalone. |
 | `cooldown_anchor` | TEXT | Not null; defaults to `'completion'` (migration `0021`). Selects whether this quest's cooldown runs from pickup or completion. |
@@ -456,6 +461,17 @@ item without usable market data remains at its recorded TT value.
 Quest-local item names that identify a `named_items` reward. The composite
 primary key is `(quest_id, item_name)`; `sort_order` preserves authoring order.
 
+#### `quest_reward_clumps` and `quest_reward_clump_items`
+
+A bounded raw-evidence journal for loot clumps observed while a manual-hand-in
+quest stretch is active. Each clump carries the stable source identity shared
+with its ordinary kill or harvest record, session and context ownership,
+observation time, and an optional unique completion claim. Its ordered item rows
+preserve every raw chat-log item not already assigned to an overlapping signal
+quest, including names excluded from ordinary loot tracking. Unclaimed evidence
+is retention-bounded; a claimed clump remains as durable provenance for its
+immutable completion reward.
+
 #### `quest_runs` and `quest_run_intervals`
 
 `quest_runs` records one administrative lifecycle as `in_progress`, `completed`,
@@ -464,6 +480,9 @@ unique indexes permit only one in-progress run per quest and ensure a run and
 completion own at most one another; reciprocal-pair triggers reject crossed
 links once either side has been bound. `quest_run_intervals` links every declared
 effort interval that earned the run, including intervals from several sessions.
+For manual hand-in, `hand_in_waiting` and `hand_in_after_clump_id` persist the
+next-clump capture boundary. A partial unique index permits only one waiting run
+at a time, matching the single overlay flow.
 
 #### `quest_reward_reviews` and `quest_reward_review_items`
 
@@ -685,6 +704,7 @@ analytics queries can read the total directly.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
+| `loot_source_id` | TEXT | Optional stable raw-clump identity (migration `0045`), unique when present. Live watcher loot uses it for exact manual reward reclassification; legacy and synthetic records may be null. |
 | `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed (`idx_kill_session`). |
 | `mob_name` | TEXT | Optional. In tag-mode sessions the tag string is persisted here. |
 | `mob_species` | TEXT | Defaults to `''`. |
@@ -755,6 +775,7 @@ evidence remains explicitly unknown.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | TEXT | Primary key. |
+| `loot_source_id` | TEXT | Optional stable raw-clump identity (migration `0045`), unique when present across harvesting rows. Failed swings and legacy records may be null. |
 | `session_id` | TEXT | Not null; references `tracking_sessions(id)`. Indexed alone (`idx_harvest_session`) and with tool and timestamp (`idx_harvest_session_tool_time`). |
 | `timestamp` | REAL | Not null. Indexed with yield tier and tool (`idx_harvest_time_tier_tool`) for period-scoped analytics. |
 | `success` | INTEGER | Not null; defaults to 1 (boolean flag). |

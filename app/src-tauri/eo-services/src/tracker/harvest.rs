@@ -157,6 +157,7 @@ impl TrackerActor {
             active.dirty = true;
             let harvest = HarvestEvent {
                 id: uuid::Uuid::new_v4().to_string(),
+                loot_source_id: None,
                 session_id: active.session.id.clone(),
                 timestamp: now_epoch,
                 success: false,

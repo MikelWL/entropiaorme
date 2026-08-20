@@ -1481,6 +1481,62 @@ async fn a_rostered_signal_quest_declares_from_cold_and_survives_session_boundar
     assert_eq!(activity_names(&standing.active), vec!["Hyperion Boss 1"]);
 }
 
+/// A manual-hand-in quest uses the same one-tap declaration semantics as a
+/// signal quest, then exposes its persisted waiting state through both the
+/// contextual command and the existing Activities picture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rostered_manual_quest_starts_on_selection_and_surfaces_hand_in_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, selection) = make_api_with_selection(dir.path(), "AI dailies").await;
+    let input = serde_json::from_value(serde_json::json!({
+        "name": "AI Daily terminal",
+        "completion_trigger": "manual_hand_in",
+    }))
+    .expect("quest input shape");
+    let quest = api.quest_create(input).await.unwrap();
+    let quest_id: i64 = serde_json::to_value(&quest).unwrap()["id"]
+        .as_str()
+        .expect("quest id")
+        .parse()
+        .expect("numeric quest id");
+    seed_definition(
+        &api,
+        &selection,
+        serde_json::json!({
+            "name": "AI dailies",
+            "roster": [{ "kind": "quest", "ref_id": quest_id }],
+        }),
+    )
+    .await;
+
+    api.tracking_start().await.unwrap();
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.options[0].manual_hand_in);
+    assert!(options.options[0].available);
+    assert!(!options.options[0].hand_in_waiting);
+
+    let standing = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(quest_id), None, None)
+        .await
+        .unwrap();
+    assert!(standing.active[0].manual_hand_in);
+    assert!(!standing.active[0].hand_in_waiting);
+    let quest = api.quest_get(quest_id).await.unwrap();
+    assert!(!serde_json::to_value(&quest).unwrap()["startedAt"].is_null());
+
+    let waiting = api.quest_hand_in_begin(quest_id).await.unwrap();
+    assert!(waiting.waiting);
+    assert!(waiting.candidate.is_none());
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(options.active[0].hand_in_waiting);
+    assert!(options.options[0].hand_in_waiting);
+
+    api.quest_hand_in_cancel(quest_id).await.unwrap();
+    let options = api.tracking_activity_options().await.unwrap();
+    assert!(!options.active[0].hand_in_waiting);
+    assert!(!options.options[0].hand_in_waiting);
+}
+
 /// The lifetime block: derived from the summed parts, folding the
 /// in-flight instance in, and absent entirely when no definition is in
 /// force.

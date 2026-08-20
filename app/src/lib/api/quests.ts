@@ -53,6 +53,12 @@ export async function completeQuest(id: string): Promise<Quest> {
 	return commands.questComplete(Number(id));
 }
 
+export const beginQuestHandIn = commands.questHandInBegin;
+export const getQuestHandInState = commands.questHandInState;
+export const waitForNextQuestHandInClump = commands.questHandInWait;
+export const cancelQuestHandIn = commands.questHandInCancel;
+export const confirmQuestHandIn = commands.questHandInConfirm;
+
 export async function cancelQuest(id: string, undoReward = false): Promise<Quest> {
 	return commands.questCancel(Number(id), undoReward);
 }

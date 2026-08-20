@@ -55,9 +55,8 @@ const COMBAT_MESSAGE_PREFIXES: [&str; 12] = [
 pub type QuestRewardFilter =
     Arc<dyn Fn(&str, &[Value], &[Value], bool) -> Option<Value> + Send + Sync>;
 
-/// One loot line of a mission-less tick, as the signal probe sees it:
-/// the item name plus the line's stacked quantity (one marker per
-/// unit, so a stacked pair of markers pays for two runs).
+/// One raw loot line of a mission-less tick, before the ordinary loot
+/// blacklist or a signal-reward suppression can remove it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalLoot {
     pub item_name: String,
@@ -65,13 +64,20 @@ pub struct SignalLoot {
     pub value_ped: Ped,
 }
 
-/// The signal-loot probe: receives the loot lines of a tick that
-/// carried NO mission completion (a mission tick is the mission
-/// machinery's to route). Fire-and-forget by contract: the tail thread
-/// never blocks on it, so an implementation dispatches its own async
-/// work. Injected after construction (composition wires it once the
-/// quest service exists), like the quest service's own sinks.
-pub type SignalLootProbe = Arc<dyn Fn(Vec<SignalLoot>) + Send + Sync>;
+/// Stable raw evidence for one mission-less loot clump. `source_id` also
+/// rides the ordinary loot-group event internally, allowing a later manual
+/// hand-in confirmation to reclassify exactly that acquisition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawLootClump {
+    pub source_id: String,
+    pub timestamp: Option<String>,
+    pub items: Vec<SignalLoot>,
+}
+
+/// The raw-loot probe: receives a tick carrying no mission completion.
+/// Fire-and-forget by contract: the tail thread never blocks on it, so an
+/// implementation dispatches its own async work.
+pub type SignalLootProbe = Arc<dyn Fn(RawLootClump) + Send + Sync>;
 pub type SignalRewardFilter = Arc<dyn Fn(&[Value]) -> Option<Value> + Send + Sync>;
 
 /// One mission completion a flushed tick carried, handed to the
@@ -676,9 +682,11 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
     // cannot masquerade as a boss marker. The probe runs only after every
     // publish below, allowing the clump to stamp into the declared stretch
     // before the completion closes it.
-    let signal_loot: Option<Vec<SignalLoot>> = if completes.is_empty() && !loot_events.is_empty() {
-        shared.signal_loot_probe.get().map(|_| {
-            loot_events
+    let loot_source_id = (!loot_events.is_empty()).then(|| uuid::Uuid::new_v4().to_string());
+    let raw_loot_clump: Option<RawLootClump> = if completes.is_empty() && !loot_events.is_empty() {
+        shared.signal_loot_probe.get().and_then(|_| {
+            let source_id = loot_source_id.clone()?;
+            let items = loot_events
                 .iter()
                 .filter_map(|e| {
                     Some(SignalLoot {
@@ -692,7 +700,12 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
                         value_ped: Ped(e.data.get("value").and_then(Value::as_f64).unwrap_or(0.0)),
                     })
                 })
-                .collect()
+                .collect();
+            Some(RawLootClump {
+                source_id,
+                timestamp: tick_ts.map(timestamp_string),
+                items,
+            })
         })
     } else {
         None
@@ -766,6 +779,7 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
         }
         shared.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
             kind: LootTag,
+            source_id: loot_source_id,
             timestamp: tick_ts.map(timestamp_string),
             items,
             total_ped: eo_wire::normalizer::round_half_even(total, 4),
@@ -816,10 +830,10 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
             }));
         }
     }
-    if let (Some(loot), Some(probe)) = (signal_loot, shared.signal_loot_probe.get()) {
-        if !loot.is_empty() {
+    if let (Some(clump), Some(probe)) = (raw_loot_clump, shared.signal_loot_probe.get()) {
+        if !clump.items.is_empty() {
             let probe = probe.clone();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(loot)));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(clump)));
         }
     }
 
@@ -1288,7 +1302,7 @@ mod tests {
         // One ordered log for both observers: bus taps and probe calls
         // interleave in dispatch order.
         let order = Arc::new(Mutex::new(Vec::<String>::new()));
-        let probed = Arc::new(Mutex::new(Vec::<Vec<SignalLoot>>::new()));
+        let probed = Arc::new(Mutex::new(Vec::<RawLootClump>::new()));
         let sink = probed.clone();
         let probe_order = order.clone();
         pipeline
@@ -1315,9 +1329,12 @@ mod tests {
             ],
         );
         drain(&pipeline, 3);
+        let evidence = probed.lock().unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert!(!evidence[0].source_id.is_empty());
         assert_eq!(
-            *probed.lock().unwrap(),
-            vec![vec![
+            evidence[0].items,
+            vec![
                 SignalLoot {
                     item_name: "Shrapnel".to_string(),
                     quantity: 4639,
@@ -1328,9 +1345,10 @@ mod tests {
                     quantity: 1,
                     value_ped: Ped::ZERO,
                 },
-            ]],
+            ],
             "each entry carries its line's stacked quantity"
         );
+        drop(evidence);
         {
             let order = order.lock().unwrap();
             let probe_at = order.iter().position(|entry| entry == "probe");

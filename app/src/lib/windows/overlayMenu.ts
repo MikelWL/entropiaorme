@@ -2,6 +2,7 @@ import type {
 	ActivityOption,
 	ActivityOptionsResult,
 	ManualMobSuggestion,
+	QuestHandInState,
 	SessionDefinition,
 } from '$lib/api';
 
@@ -13,13 +14,20 @@ export const OVERLAY_MENU_SELECT_EVENT = 'overlay-menu:select';
 export const OVERLAY_MENU_CLOSED_EVENT = 'overlay-menu:closed';
 export const OVERLAY_MENU_INTERACT_EVENT = 'overlay-menu:interact';
 
-export type OverlayMenuKind = 'definition' | 'mob' | 'trifecta' | 'activities';
+export type OverlayMenuKind = 'definition' | 'mob' | 'trifecta' | 'activities' | 'questHandIn';
 
 export type OverlayMenuState =
 	| OverlayTrifectaMenuState
 	| OverlayDefinitionMenuState
 	| OverlayMobMenuState
-	| OverlayActivitiesMenuState;
+	| OverlayActivitiesMenuState
+	| OverlayQuestHandInMenuState;
+
+export interface OverlayQuestHandInMenuState {
+	kind: 'questHandIn';
+	width: number;
+	handIn: QuestHandInState;
+}
 
 export interface OverlayTrifectaMenuState {
 	kind: 'trifecta';
@@ -80,7 +88,9 @@ export type OverlayMenuSelection =
 	| { kind: 'mob'; species: string; maturity: string }
 	| { kind: 'activities'; action: 'toggle'; key: string }
 	| { kind: 'activities'; action: 'coActivate'; key: string }
-	| { kind: 'activities'; action: 'declare'; label: string };
+	| { kind: 'activities'; action: 'declare'; label: string }
+	| { kind: 'activities'; action: 'handIn'; key: string }
+	| { kind: 'questHandIn'; action: 'completed' | 'cancelled' };
 
 /** The widest label's rendered width in the overlay menus' font, for
  * sizing a satellite menu to its content. Falls back to a character
@@ -134,8 +144,25 @@ export function menuRowCount(state: OverlayMenuState): number {
 		const entry = state.adHocSegments ? 1 : 0;
 		return Math.max(1, state.options.length + entry);
 	}
+	if (state.kind === 'questHandIn') {
+		// The waiting view can become a multi-item candidate without a new
+		// parent-window show event. Reserve the satellite's existing maximum
+		// height up front so that transition never clips the confirmation.
+		return 7;
+	}
 	if (state.loading || state.error) return 1;
 	return Math.max(1, state.mobSuggestions.length);
+}
+
+export function buildQuestHandInMenuState(
+	anchorWidth: number,
+	handIn: QuestHandInState,
+): OverlayQuestHandInMenuState {
+	return {
+		kind: 'questHandIn',
+		width: Math.max(300, Math.min(OVERLAY_MENU_MAX_WIDTH, Math.ceil(anchorWidth))),
+		handIn,
+	};
 }
 
 /** The session picker's menu state over the fetched definitions.

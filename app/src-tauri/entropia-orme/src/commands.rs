@@ -55,7 +55,7 @@ use eo_api::protection::{
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
+    QuestHandInState, QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -475,6 +475,49 @@ pub async fn quest_start(app: tauri::AppHandle, quest_id: i64) -> Result<Quest, 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn quest_complete(app: tauri::AppHandle, quest_id: i64) -> Result<Quest, ApiError> {
     facade(&app)?.quest_complete(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_begin(
+    app: tauri::AppHandle,
+    quest_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?.quest_hand_in_begin(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_state(
+    app: tauri::AppHandle,
+    quest_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?.quest_hand_in_state(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_wait(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    after_clump_id: i64,
+) -> Result<QuestHandInState, ApiError> {
+    facade(&app)?
+        .quest_hand_in_wait(quest_id, after_clump_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_cancel(app: tauri::AppHandle, quest_id: i64) -> Result<(), ApiError> {
+    facade(&app)?.quest_hand_in_cancel(quest_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn quest_hand_in_confirm(
+    app: tauri::AppHandle,
+    quest_id: i64,
+    clump_id: i64,
+) -> Result<(), ApiError> {
+    facade(&app)?
+        .quest_hand_in_confirm(quest_id, clump_id)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1875,6 +1918,11 @@ mod tests {
         "quest_delete",
         "quest_start",
         "quest_complete",
+        "quest_hand_in_begin",
+        "quest_hand_in_state",
+        "quest_hand_in_wait",
+        "quest_hand_in_cancel",
+        "quest_hand_in_confirm",
         "quest_rewards_unresolved",
         "quest_reward_review",
         "quest_cancel",

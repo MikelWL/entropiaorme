@@ -57,7 +57,7 @@ use crate::protection::{
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
+    QuestHandInState, QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use crate::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -529,6 +529,58 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(i64)),
             }],
             returns: Some(schema(schema_for!(Quest))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_begin",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_state",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_wait",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "after_clump_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(QuestHandInState))),
+        },
+        CommandSpec {
+            name: "quest_hand_in_cancel",
+            args: vec![ArgSpec {
+                name: "quest_id",
+                schema: schema(schema_for!(i64)),
+            }],
+            returns: None,
+        },
+        CommandSpec {
+            name: "quest_hand_in_confirm",
+            args: vec![
+                ArgSpec {
+                    name: "quest_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "clump_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: None,
         },
         CommandSpec {
             name: "quest_rewards_unresolved",

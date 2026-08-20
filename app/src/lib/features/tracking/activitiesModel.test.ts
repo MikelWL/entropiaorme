@@ -14,6 +14,8 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		unavailableReason: null,
 		availableFrom: null,
 		offRoster: false,
+		manualHandIn: false,
+		handInWaiting: false,
 		...overrides,
 	};
 }

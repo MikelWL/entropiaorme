@@ -73,6 +73,11 @@ pub use crate::tracking_models::LootItem;
 pub struct LootGroupPayload {
     #[serde(rename = "type")]
     pub kind: LootTag,
+    /// Internal identity shared with the raw-clump evidence probe. It is
+    /// deliberately absent from the event-stream wire shape, whose frozen
+    /// fingerprints predate manual reward capture.
+    #[serde(skip)]
+    pub source_id: Option<String>,
     pub timestamp: Option<String>,
     pub items: Vec<LootItem>,
     pub total_ped: f64,
@@ -302,6 +307,7 @@ mod tests {
     fn loot_group_matches_the_previous_map_shape_including_null_timestamp() {
         let event = BusEvent::LootGroup(LootGroupPayload {
             kind: LootTag,
+            source_id: None,
             timestamp: Some("2026-01-01T00:00:02".into()),
             items: vec![LootItem {
                 item_name: "Shrapnel".into(),
@@ -325,6 +331,7 @@ mod tests {
         // A tick with no timestamp serialises it as null, not omitted.
         let no_ts = BusEvent::LootGroup(LootGroupPayload {
             kind: LootTag,
+            source_id: None,
             timestamp: None,
             items: vec![],
             total_ped: 0.0,

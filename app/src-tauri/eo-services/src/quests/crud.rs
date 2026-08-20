@@ -22,7 +22,7 @@ const QUEST_SELECT: &str = "\
            q.notes, q.chain_name, q.chain_position, q.chain_total, \
            q.started_at, q.is_active, q.created_at, q.category, \
            q.reward_description, q.updated_at, q.signal_loot_item, \
-           q.completion_trigger, q.reward_policy, \
+           q.completion_mode AS completion_trigger, q.reward_policy, \
            q.family_id, q.cooldown_anchor, q.last_started_at, \
            f.name AS family_name, \
            f.cooldown_hours AS family_cooldown_hours, \
@@ -107,7 +107,7 @@ impl QuestService {
 
     /// Create a quest and return it.
     pub async fn create_quest(&self, data: &Value) -> Result<Value, QuestError> {
-        let signal_loot_item = normalize_signal_loot_item(data.get("signal_loot_item"));
+        let mut signal_loot_item = normalize_signal_loot_item(data.get("signal_loot_item"));
         let completion_trigger = normalize_completion_trigger(
             data.get("completion_trigger"),
             signal_loot_item.as_deref(),
@@ -120,11 +120,18 @@ impl QuestService {
             .get("reward_policy")
             .cloned()
             .or_else(|| aris_daily.then(|| json!("named_items")));
-        let reward_policy = normalize_reward_policy(
-            reward_policy_value.as_ref(),
-            data.get("reward_ped"),
-            data.get("reward_is_skill"),
-        )?;
+        if completion_trigger == "manual_hand_in" {
+            signal_loot_item = None;
+        }
+        let reward_policy = if completion_trigger == "manual_hand_in" {
+            "completion_clump".to_string()
+        } else {
+            normalize_reward_policy(
+                reward_policy_value.as_ref(),
+                data.get("reward_ped"),
+                data.get("reward_is_skill"),
+            )?
+        };
         let mut reward_item_names = normalize_reward_item_names(data.get("reward_item_names"))?;
         if aris_daily && reward_item_names.is_empty() {
             reward_item_names.push("Hyperion Daily Voucher".to_string());
@@ -209,7 +216,7 @@ impl QuestService {
                      reward_ped, reward_is_skill, expected_reward_markup_percent, \
                      notes, chain_name, chain_position, chain_total, \
                      category, reward_description, signal_loot_item, \
-                     completion_trigger, reward_policy, \
+                     completion_mode, reward_policy, \
                      family_id, cooldown_anchor) \
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params_from_iter(params),
@@ -240,7 +247,7 @@ impl QuestService {
             return Ok(None);
         };
 
-        const ALLOWED: [&str; 16] = [
+        const ALLOWED: [&str; 15] = [
             "name",
             "planet",
             "waypoint",
@@ -255,7 +262,6 @@ impl QuestService {
             "reward_description",
             "expected_reward_markup_percent",
             "signal_loot_item",
-            "completion_trigger",
             "reward_policy",
         ];
         let mut updates: Vec<(&str, Value)> = Vec::new();
@@ -292,7 +298,7 @@ impl QuestService {
             updates.push(("cooldown_anchor", json!(anchor.as_str())));
         }
 
-        let merged_signal = match data.get("signal_loot_item") {
+        let mut merged_signal = match data.get("signal_loot_item") {
             Some(value) => normalize_signal_loot_item(Some(value)),
             None => existing
                 .get("signal_loot_item")
@@ -304,6 +310,17 @@ impl QuestService {
                 .or_else(|| existing.get("completion_trigger")),
             merged_signal.as_deref(),
         )?;
+        if merged_trigger == "manual_hand_in" {
+            merged_signal = None;
+            match updates
+                .iter_mut()
+                .find(|(key, _)| *key == "signal_loot_item")
+            {
+                Some(existing_entry) => *existing_entry = ("signal_loot_item", Value::Null),
+                None => updates.push(("signal_loot_item", Value::Null)),
+            }
+        }
+        updates.push(("completion_mode", json!(merged_trigger.clone())));
         let merged_reward = data
             .get("reward_ped")
             .cloned()
@@ -321,8 +338,19 @@ impl QuestService {
         } else {
             existing.get("reward_policy")
         };
-        let merged_policy =
-            normalize_reward_policy(policy_input, Some(&merged_reward), Some(&merged_skill))?;
+        let merged_policy = if merged_trigger == "manual_hand_in" {
+            "completion_clump".to_string()
+        } else {
+            normalize_reward_policy(policy_input, Some(&merged_reward), Some(&merged_skill))?
+        };
+        if merged_trigger == "manual_hand_in" {
+            match updates.iter_mut().find(|(key, _)| *key == "reward_policy") {
+                Some(existing_entry) => {
+                    *existing_entry = ("reward_policy", json!("completion_clump"));
+                }
+                None => updates.push(("reward_policy", json!("completion_clump"))),
+            }
+        }
         let reward_item_names = match data.get("reward_item_names") {
             Some(value) => Some(normalize_reward_item_names(Some(value))?),
             None => None,
@@ -661,7 +689,7 @@ fn normalize_completion_trigger(
             "mission_log"
         });
     match trigger {
-        "mission_log" | "signal_item" => Ok(trigger.to_string()),
+        "mission_log" | "signal_item" | "manual_hand_in" => Ok(trigger.to_string()),
         _ => Err(QuestError::Invalid(format!(
             "Unknown completion trigger: {trigger}"
         ))),

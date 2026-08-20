@@ -267,6 +267,18 @@ impl HuntTracker {
             .await
     }
 
+    /// Remove one exactly identified raw clump from the active session's
+    /// ordinary-loot aggregate after a manual quest hand-in transaction has
+    /// reclassified it. False means the source belongs to an ended session
+    /// (or was already absent), in which case the database remains canonical.
+    pub async fn reclassify_loot_source(&self, source_id: &str) -> bool {
+        self.call(|reply| TrackerMsg::ReclassifyLootSource {
+            source_id: source_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
     /// Declare the protection loadout in force from now onward. The
     /// actor writes the persisted default, interval, resolved layer
     /// snapshot, and fresh event context as one transition.

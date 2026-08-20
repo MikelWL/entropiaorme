@@ -28,6 +28,7 @@ mod actor;
 mod analytics;
 mod crud;
 mod families;
+mod hand_in;
 mod lifecycle;
 mod linking;
 mod missions;
@@ -39,6 +40,7 @@ mod review;
 mod tests;
 
 pub use families::CooldownAnchor;
+pub use hand_in::{HandInCandidate, HandInRewardItem, HandInState};
 pub use missions::{normalize_quest_name, FUZZY_THRESHOLD};
 pub use offers::{read_quest_offers, QuestOffer};
 
@@ -56,6 +58,13 @@ pub use offers::{read_quest_offers, QuestOffer};
 /// banked port-equivalence captures cannot move.
 pub type QuestStretchCloser = Arc<
     dyn Fn(i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
+>;
+
+/// The live tracker's in-memory half of an exact reward reclassification.
+/// The quest transaction owns persistence; this sink keeps the running
+/// overlay aggregate in step immediately after that commit.
+pub type QuestLootReclassifier = Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 pub use playlists::{PLAYLIST_GROUP_IMMEDIATE, PLAYLIST_GROUP_LONG_HORIZON};
 
@@ -107,6 +116,7 @@ pub struct QuestService {
     /// composition has wired it. Absent in every test and composition
     /// that has no tracker, which is why every report is best-effort.
     stretch_closer: OnceLock<QuestStretchCloser>,
+    loot_reclassifier: OnceLock<QuestLootReclassifier>,
 }
 
 impl QuestService {
@@ -143,6 +153,7 @@ impl QuestService {
             session: session_rx,
             pump: pump.clone(),
             stretch_closer: OnceLock::new(),
+            loot_reclassifier: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -181,6 +192,12 @@ impl QuestService {
         let _ = self.stretch_closer.set(closer);
     }
 
+    /// Wire the live aggregate correction sink. Composition calls this once
+    /// after the tracker exists; a second call is ignored.
+    pub fn set_loot_reclassifier(&self, reclassifier: QuestLootReclassifier) {
+        let _ = self.loot_reclassifier.set(reclassifier);
+    }
+
     /// Report a quest's completion to the interval layer, if anything
     /// is listening, so a declared stretch of it closes.
     ///
@@ -191,6 +208,12 @@ impl QuestService {
     pub(super) async fn report_stretch_closed(&self, quest_id: i64) {
         if let Some(closer) = self.stretch_closer.get() {
             closer(quest_id).await;
+        }
+    }
+
+    pub(super) async fn report_loot_reclassified(&self, source_id: String) {
+        if let Some(reclassifier) = self.loot_reclassifier.get() {
+            reclassifier(source_id).await;
         }
     }
 

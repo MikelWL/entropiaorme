@@ -60,6 +60,10 @@ export interface ActiveActivityView {
 	name: string;
 	/** The quest whose stretch is standing; null for a segment, whose name is its only identity. */
 	questId: number | null;
+	/** The standing quest exposes the contextual hand-in action. */
+	manualHandIn: boolean;
+	/** The hand-in flow is armed for the next raw loot clump. */
+	handInWaiting: boolean;
 }
 
 /**
@@ -120,6 +124,8 @@ export interface ActivityOption {
 	availableFrom: number | null;
 	/** Surfaced as a fact rather than offered by the roster. */
 	offRoster: boolean;
+	manualHandIn: boolean;
+	handInWaiting: boolean;
 }
 
 /**
@@ -2280,7 +2286,7 @@ export interface QuestAnalyticsRow {
 	totalPes: number;
 }
 
-export type QuestCompletionTrigger = 'mission_log' | 'signal_item';
+export type QuestCompletionTrigger = 'mission_log' | 'signal_item' | 'manual_hand_in';
 
 /**
  * When a cooldown timer starts: `pickup` runs it from the last
@@ -2324,6 +2330,26 @@ export interface QuestFamilyInput {
 	planet?: string;
 	cooldown_hours?: number | null;
 	cooldown_anchor?: QuestCooldownAnchor | null;
+}
+
+export interface QuestHandInCandidate {
+	id: number;
+	observedAt: string;
+	items: QuestHandInItem[];
+	totalPed: number;
+}
+
+export interface QuestHandInItem {
+	itemName: string;
+	quantity: number;
+	valuePed: number;
+}
+
+export interface QuestHandInState {
+	questId: number;
+	questName: string;
+	waiting: boolean;
+	candidate: QuestHandInCandidate | null;
 }
 
 /**
@@ -3348,6 +3374,26 @@ export async function questStart(questId: number): Promise<Quest> {
 
 export async function questComplete(questId: number): Promise<Quest> {
 	return invokeCommand('quest_complete', { quest_id: questId });
+}
+
+export async function questHandInBegin(questId: number): Promise<QuestHandInState> {
+	return invokeCommand('quest_hand_in_begin', { quest_id: questId });
+}
+
+export async function questHandInState(questId: number): Promise<QuestHandInState> {
+	return invokeCommand('quest_hand_in_state', { quest_id: questId });
+}
+
+export async function questHandInWait(questId: number, afterClumpId: number): Promise<QuestHandInState> {
+	return invokeCommand('quest_hand_in_wait', { quest_id: questId, after_clump_id: afterClumpId });
+}
+
+export async function questHandInCancel(questId: number): Promise<void> {
+	return invokeCommand('quest_hand_in_cancel', { quest_id: questId });
+}
+
+export async function questHandInConfirm(questId: number, clumpId: number): Promise<void> {
+	return invokeCommand('quest_hand_in_confirm', { quest_id: questId, clump_id: clumpId });
 }
 
 export async function questRewardsUnresolved(): Promise<UnresolvedQuestReward[]> {

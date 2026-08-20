@@ -223,6 +223,7 @@ pub enum QuestCooldownAnchor {
 pub enum QuestCompletionTrigger {
     MissionLog,
     SignalItem,
+    ManualHandIn,
 }
 
 impl QuestCompletionTrigger {
@@ -230,12 +231,14 @@ impl QuestCompletionTrigger {
         match self {
             Self::MissionLog => "mission_log",
             Self::SignalItem => "signal_item",
+            Self::ManualHandIn => "manual_hand_in",
         }
     }
 
     fn from_service(value: &Value) -> Self {
         match value.as_str() {
             Some("signal_item") => Self::SignalItem,
+            Some("manual_hand_in") => Self::ManualHandIn,
             _ => Self::MissionLog,
         }
     }
@@ -338,6 +341,59 @@ pub struct Quest {
     /// The family-wide cooldown expiry: availability is the LATER of
     /// this and `cooldownExpiresAt` (the quest's own window).
     pub family_cooldown_expires_at: Nullable<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestHandInItem {
+    pub item_name: String,
+    pub quantity: i64,
+    pub value_ped: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestHandInCandidate {
+    pub id: i64,
+    pub observed_at: String,
+    pub items: Vec<QuestHandInItem>,
+    pub total_ped: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestHandInState {
+    pub quest_id: i64,
+    pub quest_name: String,
+    pub waiting: bool,
+    pub candidate: Nullable<QuestHandInCandidate>,
+}
+
+impl QuestHandInState {
+    fn from_service(state: eo_services::quests::HandInState) -> Self {
+        Self {
+            quest_id: state.quest_id,
+            quest_name: state.quest_name,
+            waiting: state.waiting,
+            candidate: state
+                .candidate
+                .map(|candidate| QuestHandInCandidate {
+                    id: candidate.id,
+                    observed_at: eo_services::time::to_iso_utc(candidate.observed_at),
+                    items: candidate
+                        .items
+                        .into_iter()
+                        .map(|item| QuestHandInItem {
+                            item_name: item.item_name,
+                            quantity: item.quantity,
+                            value_ped: round_half_even(item.value_ped, 4),
+                        })
+                        .collect(),
+                    total_ped: round_half_even(candidate.total_ped, 4),
+                })
+                .into(),
+        }
+    }
 }
 
 impl Quest {
@@ -865,6 +921,54 @@ impl Api {
             Some(quest) => Ok(Quest::from_service(&quest)),
             None => Err(quest_not_found()),
         }
+    }
+
+    /// Open the contextual manual hand-in flow. With no retrospective
+    /// candidate this arms the quest for the next raw clump.
+    pub async fn quest_hand_in_begin(&self, quest_id: i64) -> Result<QuestHandInState, ApiError> {
+        self.quests
+            .hand_in_begin(quest_id)
+            .await
+            .map(QuestHandInState::from_service)
+            .map_err(quest_error("quest hand-in begin"))
+    }
+
+    pub async fn quest_hand_in_state(&self, quest_id: i64) -> Result<QuestHandInState, ApiError> {
+        self.quests
+            .hand_in_state(quest_id)
+            .await
+            .map(QuestHandInState::from_service)
+            .map_err(quest_error("quest hand-in state"))
+    }
+
+    pub async fn quest_hand_in_wait(
+        &self,
+        quest_id: i64,
+        after_clump_id: i64,
+    ) -> Result<QuestHandInState, ApiError> {
+        self.quests
+            .hand_in_wait(quest_id, after_clump_id)
+            .await
+            .map(QuestHandInState::from_service)
+            .map_err(quest_error("quest hand-in wait"))
+    }
+
+    pub async fn quest_hand_in_cancel(&self, quest_id: i64) -> Result<(), ApiError> {
+        self.quests
+            .hand_in_cancel(quest_id)
+            .await
+            .map_err(quest_error("quest hand-in cancel"))
+    }
+
+    pub async fn quest_hand_in_confirm(
+        &self,
+        quest_id: i64,
+        clump_id: i64,
+    ) -> Result<(), ApiError> {
+        self.quests
+            .hand_in_confirm(quest_id, clump_id)
+            .await
+            .map_err(quest_error("quest hand-in confirm"))
     }
 
     /// Cancel a quest; `undo_reward` reverses a recorded completion. A

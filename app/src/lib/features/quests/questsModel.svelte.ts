@@ -435,7 +435,10 @@ export function createQuestsModel() {
 				: null,
 			reward_is_skill: questForm.reward_policy === 'fixed_pes',
 			completion_trigger: questForm.completion_trigger,
-			reward_policy: questForm.reward_policy,
+			reward_policy:
+				questForm.completion_trigger === 'manual_hand_in'
+					? 'completion_clump'
+					: questForm.reward_policy,
 			reward_item_names: questForm.reward_item_names,
 			expected_reward_markup_percent:
 				questForm.reward_policy === 'fixed_ped' && (questForm.reward_ped ?? 0) > 0

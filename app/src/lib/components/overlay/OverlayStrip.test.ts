@@ -648,8 +648,22 @@ describe('activities control', () => {
 					status: 'active',
 					activities: activities({
 						active: [
-							{ key: 'quest:11', kind: 'quest', name: 'Daily: Carabok', questId: 11 },
-							{ key: 'segment:Boss lap', kind: 'segment', name: 'Boss lap', questId: null },
+							{
+								key: 'quest:11',
+								kind: 'quest',
+								name: 'Daily: Carabok',
+								questId: 11,
+								manualHandIn: false,
+								handInWaiting: false,
+							},
+							{
+								key: 'segment:Boss lap',
+								kind: 'segment',
+								name: 'Boss lap',
+								questId: null,
+								manualHandIn: false,
+								handInWaiting: false,
+							},
 						],
 					}),
 				}),
@@ -666,7 +680,16 @@ describe('activities control', () => {
 				data: liveData({
 					status: 'active',
 					activities: activities({
-						active: [{ key: 'quest:11', kind: 'quest', name: 'Daily: Carabok', questId: 11 }],
+						active: [
+							{
+								key: 'quest:11',
+								kind: 'quest',
+								name: 'Daily: Carabok',
+								questId: 11,
+								manualHandIn: false,
+								handInWaiting: false,
+							},
+						],
 					}),
 				}),
 				onActivitiesTrigger,

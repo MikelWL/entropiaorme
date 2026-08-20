@@ -52,6 +52,9 @@ impl ToolStats {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Kill {
     pub id: String,
+    /// Stable identity of the raw chat-log clump that created this row.
+    /// None for records written outside the live watcher path.
+    pub loot_source_id: Option<String>,
     pub session_id: String,
     /// "Unknown" when no declared mob is in force.
     pub mob_name: String,
@@ -99,6 +102,9 @@ pub struct Kill {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HarvestEvent {
     pub id: String,
+    /// Stable identity of the raw chat-log clump that created this row.
+    /// Failed swings and legacy/test records carry none.
+    pub loot_source_id: Option<String>,
     pub session_id: String,
     /// Epoch seconds (UTC), same representation as `Kill::timestamp`.
     pub timestamp: f64,

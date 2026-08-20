@@ -2,6 +2,7 @@
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
 	import OverlayMenuPanel from '$lib/components/overlay/OverlayMenuPanel.svelte';
+	import QuestHandInPanel from '$lib/components/overlay/QuestHandInPanel.svelte';
 	import {
 		OVERLAY_MENU_CLOSED_EVENT,
 		OVERLAY_MENU_HIDE_EVENT,
@@ -99,18 +100,26 @@
 {#if menuState}
 	<div
 		class="overlay-menu-shell"
-		role="menu"
+		role={menuState.kind === 'questHandIn' ? 'dialog' : 'menu'}
 		tabindex="-1"
 		style:width={`${popupWidth}px`}
 		style:height={`${popupHeight}px`}
 		onpointerdown={signalInteraction}
 		onwheel={signalInteraction}
 	>
-		<OverlayMenuPanel
-			{menuState}
-			onSelect={handleSelection}
-			onActivitySelect={handleActivitySelection}
-		/>
+		{#if menuState.kind === 'questHandIn'}
+			<QuestHandInPanel
+				initialState={menuState.handIn}
+				onComplete={() => handleSelection({ kind: 'questHandIn', action: 'completed' })}
+				onCancel={() => handleSelection({ kind: 'questHandIn', action: 'cancelled' })}
+			/>
+		{:else}
+			<OverlayMenuPanel
+				{menuState}
+				onSelect={handleSelection}
+				onActivitySelect={handleActivitySelection}
+			/>
+		{/if}
 	</div>
 {/if}
 

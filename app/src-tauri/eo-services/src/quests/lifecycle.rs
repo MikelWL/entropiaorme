@@ -28,6 +28,24 @@ pub(super) struct RewardCapture {
     pub unresolved_reason: Option<String>,
     pub evidence_json: Option<String>,
     pub had_tracked_loot: bool,
+    pub manual_clump: Option<ManualClumpClaim>,
+}
+
+/// Exact source ownership carried from the hand-in candidate read into the
+/// completion transaction. Every field is revalidated under the writer lock.
+#[derive(Debug, Clone)]
+pub(super) struct ManualClumpClaim {
+    pub clump_id: i64,
+    pub source_id: String,
+    pub source_kind: String,
+    pub source_record_id: String,
+    pub session_id: String,
+}
+
+enum CompletionWrite {
+    Applied,
+    Skipped,
+    Refused(String),
 }
 
 /// The overlay-event vocabulary the quest flows record: a started
@@ -140,13 +158,18 @@ impl QuestService {
         let attribution = self
             .completion_attribution(session_id.as_deref(), quest_id)
             .await?;
+        let manual_hand_in = capture
+            .as_ref()
+            .is_some_and(|capture| capture.manual_clump.is_some());
         // A declared stretch of this quest (when the user declared one)
         // closes at the completion moment, before the reward is
         // recorded, so it bounds the quest's own play and not the
         // bookkeeping that follows it. Only this quest's stretch
         // closes; a sibling daily's stretch keeps running. With no
         // stretch declared this is a no-op.
-        self.report_stretch_closed(quest_id).await;
+        if !manual_hand_in {
+            self.report_stretch_closed(quest_id).await;
+        }
 
         let policy = quest
             .get("reward_policy")
@@ -160,6 +183,7 @@ impl QuestService {
                 unresolved_reason: None,
                 evidence_json: None,
                 had_tracked_loot: false,
+                manual_clump: None,
             },
             "fixed_ped" | "fixed_pes" => RewardCapture {
                 outcome: "confirmed",
@@ -168,6 +192,7 @@ impl QuestService {
                 unresolved_reason: None,
                 evidence_json: None,
                 had_tracked_loot: false,
+                manual_clump: None,
             },
             _ => RewardCapture {
                 outcome: "unresolved",
@@ -178,6 +203,7 @@ impl QuestService {
                 ),
                 evidence_json: None,
                 had_tracked_loot: false,
+                manual_clump: None,
             },
         });
         let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
@@ -213,8 +239,11 @@ impl QuestService {
         let unresolved_reason = capture.unresolved_reason;
         let evidence_json = capture.evidence_json;
         let reward_items = capture.items;
+        let manual_clump = capture.manual_clump;
+        let reclassified_source_id = manual_clump.as_ref().map(|claim| claim.source_id.clone());
         let ledger_id_for_write = ledger_id.clone();
-        self.db
+        let resolution = self
+            .db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
                 let run: Option<(i64, f64)> = {
@@ -238,6 +267,49 @@ impl QuestService {
                         (tx.last_insert_rowid(), now)
                     }
                 };
+                if let Some(claim) = &manual_clump {
+                    let valid = tx.query_row(
+                        "SELECT EXISTS( \
+                         SELECT 1 FROM quest_reward_clumps c \
+                         JOIN session_context_intervals sci ON sci.context_id = c.context_id \
+                         JOIN session_intervals i ON i.id = sci.interval_id \
+                         WHERE c.id = ? AND c.source_id = ? AND c.source_kind = ? \
+                           AND c.source_record_id = ? AND c.session_id = ? \
+                           AND c.claimed_completion_id IS NULL \
+                           AND i.kind = 'quest' AND i.ref_id = ? \
+                           AND c.observed_at >= ? \
+                           AND ( \
+                             (c.source_kind = 'kill' AND EXISTS( \
+                               SELECT 1 FROM kills k \
+                               WHERE k.id = c.source_record_id \
+                                 AND k.loot_source_id = c.source_id \
+                                 AND k.session_id = c.session_id \
+                                 AND k.context_id = c.context_id)) \
+                             OR \
+                             (c.source_kind = 'harvest' AND EXISTS( \
+                               SELECT 1 FROM harvest_events h \
+                               WHERE h.id = c.source_record_id \
+                                 AND h.loot_source_id = c.source_id \
+                                 AND h.session_id = c.session_id \
+                                 AND h.context_id = c.context_id)) \
+                           ))",
+                        rusqlite::params![
+                            claim.clump_id,
+                            claim.source_id,
+                            claim.source_kind,
+                            claim.source_record_id,
+                            claim.session_id,
+                            quest_id,
+                            run_started_at,
+                        ],
+                        |row| row.get::<_, i64>(0),
+                    )? != 0;
+                    if !valid {
+                        return Ok(CompletionWrite::Refused(
+                            "That loot clump is no longer available for this quest".to_string(),
+                        ));
+                    }
+                }
                 tx.execute(
                     "UPDATE quests SET started_at = NULL WHERE id = ?",
                     rusqlite::params![quest_id],
@@ -269,7 +341,7 @@ impl QuestService {
                 )?;
                 if inserted == 0 {
                     tx.commit()?;
-                    return Ok(());
+                    return Ok(CompletionWrite::Skipped);
                 }
                 let completion_id = tx.last_insert_rowid();
                 tx.execute(
@@ -296,6 +368,51 @@ impl QuestService {
                             item.value_ped.value().max(0.0),
                         ],
                     )?;
+                }
+                if let Some(claim) = &manual_clump {
+                    match claim.source_kind.as_str() {
+                        "kill" => {
+                            tx.execute(
+                                "UPDATE kill_loot_items SET deactivated_at = ? \
+                                 WHERE kill_id = ? AND deactivated_at IS NULL",
+                                rusqlite::params![now, claim.source_record_id],
+                            )?;
+                            tx.execute(
+                                "UPDATE kills SET loot_total_ped = 0 \
+                                 WHERE id = ? AND loot_source_id = ?",
+                                rusqlite::params![claim.source_record_id, claim.source_id],
+                            )?;
+                        }
+                        "harvest" => {
+                            tx.execute(
+                                "UPDATE harvest_loot_items SET deactivated_at = ? \
+                                 WHERE harvest_id = ? AND deactivated_at IS NULL",
+                                rusqlite::params![now, claim.source_record_id],
+                            )?;
+                            tx.execute(
+                                "UPDATE harvest_events SET loot_total_ped = 0 \
+                                 WHERE id = ? AND loot_source_id = ?",
+                                rusqlite::params![claim.source_record_id, claim.source_id],
+                            )?;
+                        }
+                        _ => {
+                            return Ok(CompletionWrite::Refused(
+                                "The loot clump has an unsupported source".to_string(),
+                            ));
+                        }
+                    }
+                    let claimed = tx.execute(
+                        "UPDATE quest_reward_clumps SET claimed_completion_id = ? \
+                         WHERE id = ? AND claimed_completion_id IS NULL",
+                        rusqlite::params![completion_id, claim.clump_id],
+                    )?;
+                    if claimed != 1 {
+                        return Ok(CompletionWrite::Refused(
+                            "That loot clump has already been used".to_string(),
+                        ));
+                    }
+                    crate::session_rollup::recompute_session(&tx, &claim.session_id)?;
+                    crate::daily_rollup::refresh_session_days(&tx, &claim.session_id)?;
                 }
                 if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
                     if reward_is_skill {
@@ -337,9 +454,21 @@ impl QuestService {
                     }
                 }
                 tx.commit()?;
-                Ok(())
+                Ok(CompletionWrite::Applied)
             })
             .await?;
+        match resolution {
+            CompletionWrite::Refused(message) => return Err(QuestError::Invalid(message)),
+            CompletionWrite::Applied => {
+                if let Some(source_id) = reclassified_source_id {
+                    self.report_loot_reclassified(source_id).await;
+                }
+                if manual_hand_in {
+                    self.report_stretch_closed(quest_id).await;
+                }
+            }
+            CompletionWrite::Skipped => {}
+        }
         self.get_quest(quest_id).await
     }
 

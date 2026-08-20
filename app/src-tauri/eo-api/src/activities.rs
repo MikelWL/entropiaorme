@@ -72,6 +72,10 @@ pub struct ActiveActivityView {
     /// The quest whose stretch is standing; null for a segment, whose
     /// name is its only identity.
     pub quest_id: Nullable<i64>,
+    /// The standing quest exposes the contextual hand-in action.
+    pub manual_hand_in: bool,
+    /// The hand-in flow is armed for the next raw loot clump.
+    pub hand_in_waiting: bool,
 }
 
 /// The acknowledgement both verbs echo: the standing set now in force,
@@ -132,6 +136,8 @@ pub struct ActivityOption {
     pub available_from: Nullable<f64>,
     /// Surfaced as a fact rather than offered by the roster.
     pub off_roster: bool,
+    pub manual_hand_in: bool,
+    pub hand_in_waiting: bool,
 }
 
 /// What the Activities control shows.
@@ -198,7 +204,7 @@ fn quest_availability(offer: &QuestOffer, now: f64) -> (bool, Option<&'static st
     // A signal quest's in-progress state IS the declaration, so an
     // uncooled one is always startable; a mission-log quest has to be
     // in the log first, and nothing here can put it there.
-    if offer.signal_quest {
+    if offer.signal_quest || offer.manual_hand_in {
         (true, None)
     } else {
         (false, Some(REASON_NOT_RECEIVED))
@@ -227,7 +233,7 @@ fn family_available_from(offers: &[QuestOffer], family_id: i64) -> Option<f64> {
 }
 
 /// The standing set in wire shape.
-fn active_views(standing: &[ActiveActivity]) -> Vec<ActiveActivityView> {
+fn active_views(standing: &[ActiveActivity], offers: &[QuestOffer]) -> Vec<ActiveActivityView> {
     standing
         .iter()
         .map(|activity| match activity.kind {
@@ -236,12 +242,24 @@ fn active_views(standing: &[ActiveActivity]) -> Vec<ActiveActivityView> {
                 kind: ActivityTargetKind::Quest,
                 name: activity.name.clone(),
                 quest_id: activity.quest_id.into(),
+                manual_hand_in: activity.quest_id.is_some_and(|quest_id| {
+                    offers
+                        .iter()
+                        .any(|offer| offer.id == quest_id && offer.manual_hand_in)
+                }),
+                hand_in_waiting: activity.quest_id.is_some_and(|quest_id| {
+                    offers
+                        .iter()
+                        .any(|offer| offer.id == quest_id && offer.hand_in_waiting)
+                }),
             },
             _ => ActiveActivityView {
                 key: segment_key(&activity.name),
                 kind: ActivityTargetKind::Segment,
                 name: activity.name.clone(),
                 quest_id: None.into(),
+                manual_hand_in: false,
+                hand_in_waiting: false,
             },
         })
         .collect()
@@ -297,7 +315,7 @@ pub(crate) async fn activity_picture(
         Some(active) => &active.active_activities,
         None => &[],
     };
-    let standing = active_views(running);
+    let standing = active_views(running, &offers);
     let standing_quests: Vec<i64> = running
         .iter()
         .filter_map(|activity| activity.quest_id)
@@ -337,6 +355,8 @@ pub(crate) async fn activity_picture(
                     unavailable_reason: None.into(),
                     available_from: None.into(),
                     off_roster: false,
+                    manual_hand_in: false,
+                    hand_in_waiting: false,
                 });
             }
             RosterEntryKind::Quest => {
@@ -362,6 +382,8 @@ pub(crate) async fn activity_picture(
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: offer.available_from.into(),
                     off_roster: false,
+                    manual_hand_in: offer.manual_hand_in,
+                    hand_in_waiting: offer.hand_in_waiting,
                 });
             }
             RosterEntryKind::QuestFamily => {
@@ -400,6 +422,8 @@ pub(crate) async fn activity_picture(
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: available_from.into(),
                     off_roster: false,
+                    manual_hand_in: serving.is_some_and(|offer| offer.manual_hand_in),
+                    hand_in_waiting: serving.is_some_and(|offer| offer.hand_in_waiting),
                 });
             }
         }
@@ -428,6 +452,8 @@ pub(crate) async fn activity_picture(
             unavailable_reason: None.into(),
             available_from: offer.available_from.into(),
             off_roster: true,
+            manual_hand_in: offer.manual_hand_in,
+            hand_in_waiting: offer.hand_in_waiting,
         });
     }
     for activity in running {
@@ -450,6 +476,8 @@ pub(crate) async fn activity_picture(
             unavailable_reason: None.into(),
             available_from: None.into(),
             off_roster: true,
+            manual_hand_in: false,
+            hand_in_waiting: false,
         });
     }
 
@@ -570,8 +598,11 @@ impl Api {
         if let Some(name) = promoting {
             self.promote_named_segment(&name).await?;
         }
+        let offers = read_quest_offers(&self.db)
+            .await
+            .map_err(ApiError::internal("activity state offers"))?;
         Ok(ActivityStateResult {
-            active: active_views(&standing),
+            active: active_views(&standing, &offers),
         })
     }
 
@@ -598,8 +629,11 @@ impl Api {
             .deactivate_activity(target)
             .await
             .map_err(tracker_conflict)?;
+        let offers = read_quest_offers(&self.db)
+            .await
+            .map_err(ApiError::internal("activity state offers"))?;
         Ok(ActivityStateResult {
-            active: active_views(&standing),
+            active: active_views(&standing, &offers),
         })
     }
 
@@ -621,7 +655,11 @@ impl Api {
             // starts it (and its signal loot will complete it). A
             // mission-log quest still refuses, because play cannot be
             // toward a quest the log does not carry.
-            if quest["signal_loot_item"].is_null() {
+            let completion_trigger = quest
+                .get("completion_trigger")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("mission_log");
+            if completion_trigger == "mission_log" {
                 return Err(ApiError::bad_request(
                     "Quest is not in progress; start it before playing toward it",
                 ));
@@ -629,7 +667,7 @@ impl Api {
             self.quests
                 .start_quest(quest_id)
                 .await
-                .map_err(ApiError::internal("signal quest start"))?;
+                .map_err(ApiError::internal("declaration-started quest"))?;
         }
         Ok(quest["name"].as_str().unwrap_or_default().to_string())
     }

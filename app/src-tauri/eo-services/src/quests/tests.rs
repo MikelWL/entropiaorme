@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 use crate::bus_events::{
     BusEvent, MissionReceivedPayload, MissionReceivedTag, SessionLifecyclePayload,
 };
-use crate::chatlog_watcher::{MissionCompletion, SignalLoot};
+use crate::chatlog_watcher::{MissionCompletion, RawLootClump, SignalLoot};
 use crate::db::Db;
 
 use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
@@ -2084,6 +2084,301 @@ fn marker_value(item_name: &str, quantity: i64, value_ped: f64) -> SignalLoot {
         quantity,
         value_ped: Ped(value_ped),
     }
+}
+
+/// Manual hand-in preserves filtered raw items, offers retrospective and
+/// prospective candidates through one state machine, and atomically replaces
+/// the exact ordinary source clump on confirmation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_hand_in_confirms_one_exact_raw_clump() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db, _clock, bus) = service_with_clock(dir.path()).await;
+    let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let closed_sink = closed.clone();
+    svc.set_stretch_closer(Arc::new(move |quest_id| {
+        closed_sink.lock().unwrap().push(quest_id);
+        Box::pin(async {})
+    }));
+    let quest = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Daily terminal",
+            "completion_trigger": "manual_hand_in",
+            "reward_policy": "none",
+        }))
+        .await
+        .unwrap(),
+    );
+    let created = svc.get_quest(quest).await.unwrap().unwrap();
+    assert_eq!(created["completion_trigger"], "manual_hand_in");
+    assert_eq!(created["reward_policy"], "completion_clump");
+    svc.start_quest(quest).await.unwrap();
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('s-manual', 1772366400.0, 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at) \
+             VALUES(501, 's-manual', 'quest', 'Daily terminal', ?, 1772366400.0)",
+            params![quest],
+        )?;
+        conn.execute(
+            "INSERT INTO session_contexts(id, session_id, created_at) \
+             VALUES(502, 's-manual', 1772366400.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_context_intervals(context_id, interval_id) VALUES(502, 501)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kills(id, loot_source_id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
+             VALUES('k-old', 'clump-old', 's-manual', 'Unknown', 1772366450.0, 502, 0.0023)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped) \
+             VALUES('k-old', 'Blazar Fragment', 100, 0.0023)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+        session_id: "s-manual".into(),
+    }));
+
+    svc.raw_loot_clump_check(&RawLootClump {
+        source_id: "clump-old".to_string(),
+        timestamp: Some("2026-03-01T12:00:50".to_string()),
+        items: vec![
+            marker_value("Universal Ammo", 100_000, 10.0),
+            marker_value("Blazar Fragment", 100, 0.0023),
+        ],
+    })
+    .await
+    .unwrap();
+    let retrospective = svc.hand_in_begin(quest).await.unwrap();
+    let old = retrospective.candidate.expect("latest clump offered");
+    assert_eq!(old.items.len(), 2, "filtered ammo remains in raw evidence");
+
+    let waiting = svc.hand_in_wait(quest, old.id).await.unwrap();
+    assert!(waiting.waiting);
+    assert!(waiting.candidate.is_none());
+    svc.hand_in_cancel(quest).await.unwrap();
+    let cancelled = svc.hand_in_state(quest).await.unwrap();
+    assert!(!cancelled.waiting);
+    assert_eq!(cancelled.candidate.expect("candidate preserved").id, old.id);
+    assert!(svc.get_quest(quest).await.unwrap().unwrap()["started_at"].is_number());
+    assert!(closed.lock().unwrap().is_empty());
+    svc.hand_in_wait(quest, old.id).await.unwrap();
+
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO kills(id, loot_source_id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
+             VALUES('k-new', 'clump-new', 's-manual', 'Unknown', 1772366460.0, 502, 0.0023)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped) \
+             VALUES('k-new', 'Blazar Fragment', 238, 0.0023)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    svc.raw_loot_clump_check(&RawLootClump {
+        source_id: "clump-new".to_string(),
+        timestamp: Some("2026-03-01T12:01:00".to_string()),
+        items: vec![
+            marker_value("Universal Ammo", 316_468, 31.64),
+            marker_value("Blazar Fragment", 238, 0.0023),
+        ],
+    })
+    .await
+    .unwrap();
+    let prospective = svc.hand_in_state(quest).await.unwrap();
+    let new = prospective.candidate.expect("next clump offered");
+    assert_eq!(new.source_id, "clump-new");
+
+    let reclassified = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = reclassified.clone();
+    svc.set_loot_reclassifier(Arc::new(move |source_id| {
+        sink.lock().unwrap().push(source_id);
+        Box::pin(async {})
+    }));
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kills SET loot_source_id = 'clump-detached' WHERE id = 'k-new'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let refused = svc.hand_in_confirm(quest, new.id).await.unwrap_err();
+    assert!(matches!(refused, QuestError::Invalid(_)));
+    assert!(
+        closed.lock().unwrap().is_empty(),
+        "a refusal keeps the stretch open"
+    );
+    assert!(reclassified.lock().unwrap().is_empty());
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) FROM session_quest_completions WHERE quest_id > 0"
+        )
+        .await,
+        0
+    );
+    db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kills SET loot_source_id = 'clump-new' WHERE id = 'k-new'",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    svc.hand_in_confirm(quest, new.id).await.unwrap();
+    assert_eq!(*reclassified.lock().unwrap(), vec!["clump-new"]);
+    assert_eq!(*closed.lock().unwrap(), vec![quest]);
+
+    let evidence = db
+        .with_reader(move |conn| {
+            let reward_items = conn
+                .prepare(
+                    "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                     FROM session_quest_completion_reward_items ri \
+                     JOIN session_quest_completions c ON c.id = ri.completion_id \
+                     WHERE c.quest_id = ? ORDER BY ri.id",
+                )?
+                .query_map(params![quest], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let source = conn.query_row(
+                "SELECT k.loot_total_ped, li.deactivated_at IS NOT NULL, \
+                        c.claimed_completion_id IS NOT NULL \
+                 FROM kills k JOIN kill_loot_items li ON li.kill_id = k.id \
+                 JOIN quest_reward_clumps c ON c.source_id = k.loot_source_id \
+                 WHERE k.id = 'k-new'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, f64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+            Ok((reward_items, source))
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        evidence.0,
+        vec![
+            ("Universal Ammo".to_string(), 316_468, 31.64),
+            ("Blazar Fragment".to_string(), 238, 0.0023),
+        ]
+    );
+    assert_eq!(evidence.1, (0.0, 1, 1));
+    assert!(svc.get_quest(quest).await.unwrap().unwrap()["started_at"].is_null());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_hand_in_does_not_reuse_an_overlapping_signal_reward_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db, _clock, bus) = service_with_clock(dir.path()).await;
+    let manual = quest_id(
+        &svc.create_quest(&json!({
+            "name": "AI Daily terminal",
+            "completion_trigger": "manual_hand_in",
+        }))
+        .await
+        .unwrap(),
+    );
+    let signal = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Hyperion Boss",
+            "completion_trigger": "signal_item",
+            "signal_loot_item": "Hyperion Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Hyperion Daily Voucher"],
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(manual).await.unwrap();
+    svc.start_quest(signal).await.unwrap();
+    db.with_writer(move |conn| {
+        conn.execute(
+            "INSERT INTO tracking_sessions(id, started_at, is_active) \
+             VALUES('s-overlap', 1772366400.0, 1)",
+            [],
+        )?;
+        for (id, quest_id, name) in [
+            (601, manual, "AI Daily terminal"),
+            (602, signal, "Hyperion Boss"),
+        ] {
+            conn.execute(
+                "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at) \
+                 VALUES(?, 's-overlap', 'quest', ?, ?, 1772366400.0)",
+                params![id, name, quest_id],
+            )?;
+        }
+        conn.execute(
+            "INSERT INTO session_contexts(id, session_id, created_at) \
+             VALUES(603, 's-overlap', 1772366400.0)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO session_context_intervals(context_id, interval_id) \
+             VALUES(603, 601), (603, 602)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO kills(id, loot_source_id, session_id, mob_name, timestamp, context_id) \
+             VALUES('k-overlap', 'clump-overlap', 's-overlap', 'Unknown', 1772366450.0, 603)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+        session_id: "s-overlap".into(),
+    }));
+
+    svc.raw_loot_clump_check(&RawLootClump {
+        source_id: "clump-overlap".to_string(),
+        timestamp: Some("2026-03-01T12:00:50".to_string()),
+        items: vec![
+            marker_value("Universal Ammo", 316_468, 31.64),
+            marker("Hyperion Daily Voucher", 1),
+        ],
+    })
+    .await
+    .unwrap();
+
+    let candidate = svc
+        .hand_in_begin(manual)
+        .await
+        .unwrap()
+        .candidate
+        .expect("manual candidate");
+    assert_eq!(candidate.items.len(), 1);
+    assert_eq!(candidate.items[0].item_name, "Universal Ammo");
+    assert!(svc.get_quest(signal).await.unwrap().unwrap()["started_at"].is_null());
 }
 
 /// The signal path end to end at the service: an in-progress signal
