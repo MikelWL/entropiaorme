@@ -152,6 +152,7 @@
 	);
 	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
 	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
+	const trackingWarning = $derived(data.warnings?.at(-1)?.description ?? null);
 
 	function formatElapsed(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -235,6 +236,17 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if trackingWarning}
+			<div
+				class="flex flex-col shrink-0 border-l border-amber-300/25 pl-3 max-w-[260px]"
+				data-testid="tracking-warning"
+				title={trackingWarning}
+			>
+				<span class="facet-label text-amber-300/70">Accounting warning</span>
+				<span class="truncate text-[10px] leading-tight text-amber-200">{trackingWarning}</span>
+			</div>
+		{/if}
 
 		<!-- Session facets: the independent, co-recorded attributions a
 			 session carries. Each control here declares gameplay from now on,

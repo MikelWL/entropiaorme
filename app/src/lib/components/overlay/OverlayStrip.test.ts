@@ -188,6 +188,23 @@ describe('attribution warning', () => {
 	});
 });
 
+describe('tracking warnings', () => {
+	it('keeps accounting degradation visible without replacing the live stop control', () => {
+		const warning = 'Protection accounting degraded: defensive evidence could not be saved';
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					status: 'active',
+					warnings: [{ type: 'warning', description: warning, value: 0 }],
+				}),
+			},
+		});
+
+		expect(screen.getByTestId('tracking-warning').textContent).toContain(warning);
+		expect(screen.getByTitle('Stop tracking')).toBeTruthy();
+	});
+});
+
 describe('session facets and declared mob', () => {
 	it('disables the session chip during an unnamed active session: the session is session-grain', () => {
 		render(OverlayStrip, {

@@ -123,12 +123,12 @@
 					{@const window = model.lastOutcome.costWindow}
 					<div class="space-y-2">
 						<p class="text-sm font-medium text-text">
-							{window.status === 'booked' ? 'Protection cost allocated' : 'Measurement saved without matching evidence'}
+							{window.status === 'booked' ? 'Protection cost allocated' : window.costKnown ? 'Measurement saved without matching evidence' : 'Prior protection cost needs correction'}
 						</p>
 						<div class="grid grid-cols-3 gap-4 border-y border-border/70 py-3">
-							<div><span class="eyebrow block">TT consumed</span><span class="tabular-nums text-sm text-text">{window.consumedTtPed?.toFixed(4)} PED</span></div>
+							<div><span class="eyebrow block">TT consumed</span><span class="tabular-nums text-sm text-text">{window.costKnown ? `${window.consumedTtPed?.toFixed(4)} PED` : 'Unknown'}</span></div>
 							<div><span class="eyebrow block">Markup basis</span><span class="tabular-nums text-sm text-text">{window.markupPercent?.toFixed(2)}%</span></div>
-							<div><span class="eyebrow block">Cost</span><span class="tabular-nums text-sm font-semibold text-accent">{window.costPed.toFixed(4)} PED</span></div>
+							<div><span class="eyebrow block">Cost</span><span class="tabular-nums text-sm font-semibold text-accent">{window.costKnown ? `${window.costPed.toFixed(4)} PED` : 'Unknown'}</span></div>
 						</div>
 						{#if window.allocations.length > 0}<p class="text-xs text-text-tertiary">Spread across {window.allocations.length} {window.allocations.length === 1 ? 'session' : 'sessions'} using recorded incoming damage.</p>{/if}
 						{#if window.reason}<p class="text-xs text-warning">{window.reason}</p>{/if}

@@ -50,6 +50,7 @@ beforeEach(() => {
 			consumedTtPed: null,
 			markupPercent: null,
 			costPed: 1.5,
+			costKnown: true,
 			status: 'booked',
 			reason: null,
 			createdAt: 1,

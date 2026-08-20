@@ -2083,6 +2083,7 @@ export interface ProtectionCostWindow {
 	consumedTtPed: number | null;
 	markupPercent: number | null;
 	costPed: number;
+	costKnown: boolean;
 	status: ProtectionReconciliationStatus;
 	reason: string | null;
 	createdAt: number;

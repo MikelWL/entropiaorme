@@ -195,6 +195,7 @@ pub struct ProtectionCostWindow {
     pub consumed_tt_ped: Nullable<f64>,
     pub markup_percent: Nullable<f64>,
     pub cost_ped: f64,
+    pub cost_known: bool,
     pub status: ProtectionReconciliationStatus,
     pub reason: Nullable<String>,
     pub created_at: f64,
@@ -608,6 +609,7 @@ impl From<ServiceCostWindow> for ProtectionCostWindow {
             consumed_tt_ped: value.consumed_tt_ped.into(),
             markup_percent: value.markup_percent.into(),
             cost_ped: value.cost_ped,
+            cost_known: value.cost_known,
             status: match value.status {
                 ServiceReconciliationStatus::Booked => ProtectionReconciliationStatus::Booked,
                 ServiceReconciliationStatus::Pending => ProtectionReconciliationStatus::Pending,

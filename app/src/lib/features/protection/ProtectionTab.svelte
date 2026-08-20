@@ -169,8 +169,8 @@
 						{@const set = model.overview.sets.find((candidate) => candidate.id === window.setId)}
 						<div class="grid grid-cols-[minmax(0,1fr)_100px_110px_100px] items-center gap-4 py-2.5 text-xs">
 							<div class="min-w-0"><span class="font-medium text-text">{set?.name ?? (window.kind === 'repair' ? 'Repair cost' : 'Archived set')}</span><div class="truncate text-text-tertiary">{window.reason ?? `Allocated across ${window.allocations.length} ${window.allocations.length === 1 ? 'session' : 'sessions'}`}</div></div>
-							<div class="tabular-nums text-text-secondary">{window.consumedTtPed === null ? 'Repair' : `${window.consumedTtPed.toFixed(4)} TT`}</div>
-							<div class="tabular-nums font-medium text-text">{window.costPed.toFixed(4)} PED</div>
+							<div class="tabular-nums text-text-secondary">{!window.costKnown ? 'Unknown' : window.consumedTtPed === null ? 'Repair' : `${window.consumedTtPed.toFixed(4)} TT`}</div>
+							<div class="tabular-nums font-medium text-text">{window.costKnown ? `${window.costPed.toFixed(4)} PED` : 'Unknown'}</div>
 							<div class="text-right"><Badge variant={window.status === 'booked' ? 'positive' : 'warning'}>{window.status === 'booked' ? 'Allocated' : 'Pending'}</Badge></div>
 						</div>
 					{/each}

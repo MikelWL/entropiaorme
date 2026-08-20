@@ -16,6 +16,7 @@ import type {
 	TrackingSnapshot,
 	TrackingState,
 	TrifectaAttribution,
+	Warning,
 	WeaponAttribution,
 } from './commands.gen';
 import * as commands from './commands.gen';
@@ -59,6 +60,7 @@ export interface TrackingLive {
 	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
+	warnings?: Warning[] | null;
 	recentEvents?: {
 		type: NotableEventCategory;
 		eventType?: NotableEventType;

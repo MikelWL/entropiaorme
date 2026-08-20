@@ -170,11 +170,15 @@ pub struct ProtectionCostWindow {
     pub consumed_tt_ped: Option<f64>,
     pub markup_percent: Option<f64>,
     pub cost_ped: f64,
+    pub cost_known: bool,
     pub status: ReconciliationStatus,
     pub reason: Option<String>,
     pub created_at: f64,
     pub allocations: Vec<ProtectionCostAllocation>,
 }
+
+const RESET_UNPRICED_REASON: &str =
+    "Baseline reset left prior defensive evidence without a measurable cost";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProtectionReconciliation {
@@ -659,7 +663,7 @@ impl ProtectionService {
                         source_text,
                         raw_text,
                         now,
-                        reset_reason,
+                        reset_reason.as_deref(),
                         closing_cursor
                     ],
                 )?;
@@ -689,6 +693,27 @@ impl ProtectionService {
                             },
                         )?;
                     }
+                } else if let Some((opening_id, _opening_value, _opening_at, opening_cursor)) =
+                    previous
+                {
+                    create_unpriced_reset_window(
+                        &tx,
+                        CostWindowSpec {
+                            kind: "limited_decay",
+                            set_id: Some(set_id),
+                            armour_set_id: None,
+                            plate_set_id: None,
+                            opening_observation_id: Some(opening_id),
+                            closing_observation_id: Some(observation_id),
+                            opening_cursor,
+                            closing_cursor: Some(closing_cursor),
+                            consumed_tt_ped: Some(0.0),
+                            markup_percent: Some(markup),
+                            cost_ped: 0.0,
+                            client_token: None,
+                            created_at: now,
+                        },
+                    )?;
                 }
                 tx.commit()?;
                 read_observation_outcome(conn, observation_id)
@@ -1006,6 +1031,40 @@ fn create_cost_window(
         crate::session_summary::write_session_summary(tx, &session_id)?;
     }
     Ok(window_id)
+}
+
+fn create_unpriced_reset_window(
+    tx: &rusqlite::Transaction<'_>,
+    spec: CostWindowSpec,
+) -> Result<Option<i64>, DbError> {
+    let candidates = read_eligible_evidence(tx, &spec)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    tx.execute(
+        "INSERT INTO protection_cost_windows \
+         (kind, set_id, opening_observation_id, closing_observation_id, consumed_tt_ped, \
+          markup_percent, cost_ped, status, reason, created_at) \
+         VALUES ('limited_decay', ?1, ?2, ?3, 0, ?4, 0, 'pending', ?5, ?6)",
+        rusqlite::params![
+            spec.set_id,
+            spec.opening_observation_id,
+            spec.closing_observation_id,
+            spec.markup_percent,
+            RESET_UNPRICED_REASON,
+            spec.created_at,
+        ],
+    )?;
+    let window_id = tx.last_insert_rowid();
+    for event in candidates {
+        tx.execute(
+            "INSERT INTO protection_cost_evidence \
+             (window_id, set_id, defence_event_id) VALUES (?1, ?2, ?3)",
+            rusqlite::params![window_id, spec.set_id, event.event_id],
+        )?;
+    }
+    Ok(Some(window_id))
 }
 
 fn read_eligible_evidence(
@@ -1342,6 +1401,7 @@ fn read_cost_window(
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let cost_known = row.9.as_deref() != Some(RESET_UNPRICED_REASON);
     Ok(ProtectionCostWindow {
         id: row.0,
         kind: row.1,
@@ -1351,6 +1411,7 @@ fn read_cost_window(
         consumed_tt_ped: row.5,
         markup_percent: row.6,
         cost_ped: row.7,
+        cost_known,
         status: ReconciliationStatus::parse(&row.8)?,
         reason: row.9,
         created_at: row.10,
@@ -1886,15 +1947,22 @@ mod tests {
             )
             .await
             .expect("reset baseline");
-        assert!(reset.cost_window.is_none());
+        let reset_window = reset.cost_window.expect("unpriced reset window");
+        assert_eq!(reset_window.status, ReconciliationStatus::Pending);
+        assert!(!reset_window.cost_known);
+        assert!(reset_window.allocations.is_empty());
         let overview = service.overview().await.expect("overview after reset");
         let measured = overview
             .sets
             .iter()
             .find(|candidate| candidate.id == measured.id)
             .expect("measured set");
-        assert_eq!(measured.unsettled_damage, 100.0);
-        assert_eq!(measured.unsettled_sessions, 1);
+        assert_eq!(measured.unsettled_damage, 0.0);
+        assert_eq!(measured.unsettled_sessions, 0);
+        assert_eq!(
+            measured.pending_reconciliations, 2,
+            "the no-match measurement and unpriced reset both remain pending"
+        );
     }
 
     #[tokio::test]
