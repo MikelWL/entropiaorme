@@ -1841,6 +1841,7 @@ mod tests {
         "protection_loadout_archive",
         "protection_select",
         "protection_observation_confirm",
+        "protection_repair_confirm",
         "protection_trade_terminal_scan",
         "character_calibration",
         "character_stats",
