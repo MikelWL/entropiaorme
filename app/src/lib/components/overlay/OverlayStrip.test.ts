@@ -189,18 +189,26 @@ describe('attribution warning', () => {
 });
 
 describe('tracking warnings', () => {
-	it('keeps accounting degradation visible without replacing the live stop control', () => {
-		const warning = 'Protection accounting degraded: defensive evidence could not be saved';
+	it('keeps every warning visible without replacing the live stop control', () => {
+		const accountingWarning =
+			'Protection accounting degraded: defensive evidence could not be saved';
+		const healingWarning = 'Healing detected: no heal tool equipped via hotbar';
 		render(OverlayStrip, {
 			props: {
 				data: liveData({
 					status: 'active',
-					warnings: [{ type: 'warning', description: warning, value: 0 }],
+					warnings: [
+						{ type: 'warning', description: accountingWarning, value: 0 },
+						{ type: 'warning', description: healingWarning, value: 0 },
+					],
 				}),
 			},
 		});
 
-		expect(screen.getByTestId('tracking-warning').textContent).toContain(warning);
+		const warningSurface = screen.getByTestId('tracking-warning');
+		expect(warningSurface.textContent).toContain('Tracking warnings');
+		expect(warningSurface.textContent).toContain(accountingWarning);
+		expect(warningSurface.textContent).toContain(healingWarning);
 		expect(screen.getByTitle('Stop tracking')).toBeTruthy();
 	});
 });

@@ -152,7 +152,7 @@
 	);
 	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
 	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
-	const trackingWarning = $derived(data.warnings?.at(-1)?.description ?? null);
+	const trackingWarnings = $derived(data.warnings ?? []);
 
 	function formatElapsed(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -237,14 +237,18 @@
 			{/if}
 		</div>
 
-		{#if trackingWarning}
+		{#if trackingWarnings.length > 0}
 			<div
 				class="flex flex-col shrink-0 border-l border-amber-300/25 pl-3 max-w-[260px]"
 				data-testid="tracking-warning"
-				title={trackingWarning}
+				title={trackingWarnings.map((warning) => warning.description).join('\n')}
 			>
-				<span class="facet-label text-amber-300/70">Accounting warning</span>
-				<span class="truncate text-[10px] leading-tight text-amber-200">{trackingWarning}</span>
+				<span class="facet-label text-amber-300/70"
+					>{trackingWarnings.length === 1 ? 'Tracking warning' : 'Tracking warnings'}</span
+				>
+				{#each trackingWarnings as warning}
+					<span class="truncate text-[10px] leading-tight text-amber-200">{warning.description}</span>
+				{/each}
 			</div>
 		{/if}
 
