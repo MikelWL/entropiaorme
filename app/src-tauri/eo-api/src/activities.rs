@@ -138,12 +138,17 @@ pub struct ActivityOption {
     pub off_roster: bool,
     pub manual_hand_in: bool,
     pub hand_in_waiting: bool,
+    /// Authored position in the session definition. Off-roster facts have no
+    /// position; consumers may apply their own finding order without losing it.
+    pub roster_order: Nullable<i64>,
 }
 
 /// What the Activities control shows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityOptionsResult {
+    pub definition_id: Nullable<i64>,
+    pub definition_name: Nullable<String>,
     /// Whether the control appears at all.
     pub visible: bool,
     /// Whether this session's definition opts into naming segments in
@@ -333,10 +338,12 @@ pub(crate) async fn activity_picture(
     // repeated below as an off-roster row.
     let mut represented: Vec<i64> = Vec::new();
 
-    for entry in definition
+    for (roster_order, entry) in definition
         .as_ref()
         .map(|definition| definition.roster.as_slice())
         .unwrap_or_default()
+        .iter()
+        .enumerate()
     {
         match entry.kind {
             RosterEntryKind::Segment => {
@@ -357,6 +364,7 @@ pub(crate) async fn activity_picture(
                     off_roster: false,
                     manual_hand_in: false,
                     hand_in_waiting: false,
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
             RosterEntryKind::Quest => {
@@ -384,6 +392,7 @@ pub(crate) async fn activity_picture(
                     off_roster: false,
                     manual_hand_in: offer.manual_hand_in,
                     hand_in_waiting: offer.hand_in_waiting,
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
             RosterEntryKind::QuestFamily => {
@@ -424,6 +433,7 @@ pub(crate) async fn activity_picture(
                     off_roster: false,
                     manual_hand_in: serving.is_some_and(|offer| offer.manual_hand_in),
                     hand_in_waiting: serving.is_some_and(|offer| offer.hand_in_waiting),
+                    roster_order: Some(roster_order as i64).into(),
                 });
             }
         }
@@ -454,6 +464,7 @@ pub(crate) async fn activity_picture(
             off_roster: true,
             manual_hand_in: offer.manual_hand_in,
             hand_in_waiting: offer.hand_in_waiting,
+            roster_order: None.into(),
         });
     }
     for activity in running {
@@ -478,6 +489,7 @@ pub(crate) async fn activity_picture(
             off_roster: true,
             manual_hand_in: false,
             hand_in_waiting: false,
+            roster_order: None.into(),
         });
     }
 
@@ -496,6 +508,11 @@ pub(crate) async fn activity_picture(
         .filter(|option| option.available && !option.active)
         .count() as i64;
     Ok(ActivityOptionsResult {
+        definition_id: definition_id.into(),
+        definition_name: definition
+            .as_ref()
+            .map(|definition| definition.name.clone())
+            .into(),
         // A session that offers nothing gets no surface. The only thing
         // that overrides that is a stretch already recording, which the
         // control cannot honestly hide.

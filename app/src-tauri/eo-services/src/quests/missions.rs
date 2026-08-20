@@ -531,7 +531,7 @@ fn reward_decision(
         evidence_json,
     };
     match policy.as_str() {
-        "none" | "fixed_ped" => {}
+        "none" => {}
         "fixed_pes" => {
             if !skill_gains.is_empty() {
                 decision.skill_indices.push(0);

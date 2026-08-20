@@ -435,7 +435,7 @@ impl ProducerState {
     }
 
     /// A handle to the composed quest service. The typed-command facade
-    /// serves the quest and playlist families over this same
+    /// serves the quest family over this same
     /// `Arc<QuestService>`: cloned into the facade at the composition
     /// handoff, so the bus-fed flows (session tracking, mission
     /// auto-start, reward suppression) and the command surface share one

@@ -24,6 +24,7 @@ export const PIE_C = 2 * Math.PI * PIE_R;
 
 const segmentColors: Record<string, string> = {
 	lootTt: '#38bdf8',
+	questItemTt: '#34d399',
 	item_sale: '#fbbf24',
 	quest_reward: '#a78bfa',
 	inventory_sale: '#f472b6',
@@ -32,6 +33,7 @@ const segmentColors: Record<string, string> = {
 
 const tagLabels: Record<string, string> = {
 	lootTt: 'TT Loot',
+	questItemTt: 'Quest Item TT',
 	item_sale: 'Auction Sales',
 	quest_reward: 'Quest Rewards',
 	inventory_sale: 'Mayhem',
@@ -114,7 +116,7 @@ export function createOverviewModel() {
 	}
 
 	function dayGains(d: TimelineDay): number {
-		let total = d.lootTt;
+		let total = d.lootTt + d.questItemTt;
 		total += sumRecord(d.ledgerGains, config.gainTags);
 		return total;
 	}
@@ -122,7 +124,7 @@ export function createOverviewModel() {
 		return d.trackingCost + sumRecord(d.ledgerLosses, config.lossTags);
 	}
 	function monthGains(m: MonthlyEntry): number {
-		let total = m.lootTt;
+		let total = m.lootTt + m.questItemTt;
 		total += sumRecord(m.ledgerGains, config.gainTags);
 		return total;
 	}
@@ -138,6 +140,7 @@ export function createOverviewModel() {
 		// Build gain sources from config
 		const sources: { key: string; ped: number }[] = [];
 		if (rb.lootTt > 0) sources.push({ key: 'lootTt', ped: rb.lootTt });
+		if (rb.questItemTt > 0) sources.push({ key: 'questItemTt', ped: rb.questItemTt });
 		for (const [tag, amount] of Object.entries(rb.ledger)) {
 			if (config.gainTags[tag] && amount > 0) sources.push({ key: tag, ped: amount });
 		}

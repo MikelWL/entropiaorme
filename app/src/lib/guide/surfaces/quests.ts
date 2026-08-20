@@ -3,10 +3,9 @@ import type { GuideSurface } from '../types';
 
 /** Quests-surface demoApi method names (declared here for documentation). */
 type QuestsDemoApi = {
-	setView(view: 'quests' | 'families' | 'playlists' | 'review' | 'analytics'): void;
+	setView(view: 'quests' | 'families' | 'review' | 'analytics'): void;
 	openNewQuestModal(): void;
 	closeNewQuestModal(): void;
-	closePlaylistModal(): void;
 	closeFamilyModal(): void;
 };
 
@@ -21,7 +20,6 @@ export const questsSurface: GuideSurface = {
 		const api = demoApi as Partial<QuestsDemoApi>;
 		api.setView?.('quests');
 		api.closeNewQuestModal?.();
-		api.closePlaylistModal?.();
 		api.closeFamilyModal?.();
 	},
 	steps: [
@@ -36,7 +34,7 @@ export const questsSurface: GuideSurface = {
 						items: [
 							'Cooldown timers.',
 							'Automatically detecting quest starts and completions, with the configured extra reward kept separate from ordinary activity loot.',
-							'Analysing cost/reward of completing a quest or a quest playlist.',
+							'Analysing the observed rewards and play attributed to each quest.',
 						],
 					},
 				],
@@ -55,7 +53,7 @@ export const questsSurface: GuideSurface = {
 						kind: 'ul',
 						items: [
 							'The name must match the in-game quest name. chat.log is read to automatically detect when a quest has been started/completed.',
-							'Choose what proves completion, then define whether the extra reward is fixed PED, fixed PES, specific items, an isolated hand-in payout, or nothing separate.',
+							'Choose what proves completion, then define whether the extra reward is fixed PES, specific items, an isolated hand-in payout, or nothing separate.',
 							'Additional details are for your convenience.',
 						],
 					},
@@ -89,27 +87,10 @@ export const questsSurface: GuideSurface = {
 			},
 		},
 		{
-			id: 'playlists-overview',
-			anchor: () =>
-				document.querySelector<HTMLElement>('[data-guide-anchor="quests-playlists-view"]'),
-			prose: {
-				title: 'Playlists',
-				body: 'By creating playlists, you can access them in the Quests dashboard widget to have them handy during gameplay, as well as analysing quest playlist rewards as one unit.',
-			},
-			async play({ demoApi, wait }) {
-				const api = demoApi as Partial<QuestsDemoApi>;
-				api.setView?.('playlists');
-				await wait(500);
-			},
-			resetDemo() {
-				questsApi().setView?.('quests');
-			},
-		},
-		{
 			id: 'analytics-tip',
 			prose: {
 				title: 'Quest analytics',
-				body: 'Tip: While tracking, declare which quest your play is toward from the overlay quest picker. Analytics aggregate the sessions that recorded a declared stretch of a quest, so the picker is what turns gameplay into quest and playlist economics.',
+				body: 'Tip: Add quests to a session definition, then declare the quest you are playing from the Activities control. The same authored roster appears on the dashboard, and those exact stretches drive quest attribution.',
 			},
 			async play({ demoApi, wait }) {
 				const api = demoApi as Partial<QuestsDemoApi>;

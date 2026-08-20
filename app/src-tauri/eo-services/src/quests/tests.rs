@@ -16,7 +16,6 @@ use crate::bus_events::{
 use crate::chatlog_watcher::{MissionCompletion, RawLootClump, SignalLoot};
 use crate::db::Db;
 
-use super::lifecycle::{delete_latest_quest_claim, delete_latest_quest_reward_entry};
 use super::payload::json_truthy;
 use super::{QuestError, QuestService};
 use crate::ped::Ped;
@@ -88,102 +87,11 @@ fn quest_id(value: &Value) -> i64 {
 fn full_quest_payload() -> Value {
     json!({
         "name": "Atrox Cull", "planet": "Foma", "waypoint": "/wp 1,2",
-        "cooldown_hours": 24, "reward_ped": 12.5, "reward_is_skill": false,
-        "expected_reward_markup_percent": 150.0, "notes": "bring fap",
+        "cooldown_hours": 24, "notes": "bring fap",
         "chain_name": "Cull", "chain_position": 1, "chain_total": 3,
         "category": "hunt", "reward_description": "ammo",
         "mobs": [" Atrox ", "", "Atrax", "Atrox"],
     })
-}
-
-#[tokio::test]
-async fn quest_claim_undo_relands_the_days_rollups() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Db::open(&dir.path().join("entropia_orme.db"))
-        .await
-        .unwrap();
-
-    // A historical skill-reward claim and a liquid-reward ledger
-    // entry, both two days behind the heal watermark.
-    let claimed_at = 999_700_000.0; // inside 2001-09-05 UTC
-    db.with_writer(move |conn| {
-        conn.execute(
-            "INSERT INTO quest_claims (quest_id, quest_name, ped_value, claimed_at) \
-             VALUES (7, 'Iron Atrox', 2.5, ?1)",
-            params![claimed_at],
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    db.with_writer(move |conn| {
-        conn.execute(
-            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-             VALUES ('q1', '2001-09-05', 'markup', 'Quest: Daily Feffoid', 4.0, 'quest_reward')",
-            [],
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    db.with_writer(move |conn| {
-        crate::daily_rollup::heal_rollups(conn, claimed_at + 3.0 * 86_400.0)
-    })
-    .await
-    .unwrap();
-    let day = crate::daily_rollup::epoch_day(claimed_at);
-    let day_for_read = day.clone();
-    let quest_pes: Option<f64> = db
-        .with_reader(move |conn| {
-            conn.query_row(
-                "SELECT quest_pes FROM daily_rollups WHERE day = ?1",
-                params![day_for_read],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
-    assert_eq!(quest_pes, Some(2.5));
-
-    // Both undo paths reland their day inside the caller's commit
-    // semantics.
-    let (claim_undone, reward_undone) = db
-        .with_writer(move |conn| {
-            let claim_undone = delete_latest_quest_claim(conn, 7)?;
-            let reward_undone = delete_latest_quest_reward_entry(conn, "Daily Feffoid", Ped(4.0))?;
-            Ok((claim_undone, reward_undone))
-        })
-        .await
-        .unwrap();
-    assert!(claim_undone);
-    assert!(reward_undone);
-    let day_for_read = day.clone();
-    let quest_pes: Option<f64> = db
-        .with_reader(move |conn| {
-            conn.query_row(
-                "SELECT quest_pes FROM daily_rollups WHERE day = ?1",
-                params![day_for_read],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
-    assert_eq!(quest_pes, None, "the undone claim left the day");
-    let day_for_read = day.clone();
-    let ledger_rows: i64 = db
-        .with_reader(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM daily_ledger_rollups WHERE day = ?1 AND tag = 'quest_reward'",
-                params![day_for_read],
-                |row| row.get(0),
-            )
-            .map_err(Into::into)
-        })
-        .await
-        .unwrap();
-    assert_eq!(ledger_rows, 0, "the undone reward left the day");
 }
 
 #[tokio::test]
@@ -227,17 +135,16 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "family_name": null, "family_cooldown_hours": null,
             "family_cooldown_anchor": null, "last_completed_at": null,
             "cooldown_expires_at": null, "family_cooldown_expires_at": null,
-            "mobs": [], "playlist_ids": [], "reward_item_names": [],
+            "mobs": [], "reward_item_names": [],
         })
     );
 
     // The full quest: mobs strip, drop empties, dedupe, and read
-    // back sorted; the integer cooldown stores as REAL; a liquid
-    // positive reward keeps its markup.
+    // back sorted; the integer cooldown stores as REAL.
     let q2_fresh = svc.get_quest(q2).await.unwrap().unwrap();
     assert_eq!(q2_fresh["planet"], "Foma");
     assert_eq!(q2_fresh["cooldown_hours"], json!(24.0));
-    assert_eq!(q2_fresh["expected_reward_markup_percent"], json!(150.0));
+    assert_eq!(q2_fresh["expected_reward_markup_percent"], Value::Null);
     assert_eq!(q2_fresh["mobs"], json!(["Atrax", "Atrox"]));
     assert_eq!(q2_fresh["reward_is_skill"], json!(0));
     assert_eq!(q2_fresh["chain_position"], json!(1));
@@ -272,110 +179,6 @@ async fn cooldown_derives_from_the_latest_completion() {
         json!("2026-03-02T12:00:00+00:00"),
         "completion instant plus 24 hours, rendered as a UTC ISO instant"
     );
-}
-
-#[tokio::test]
-async fn updates_merge_and_renormalise_the_markup() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge"}))
-            .await
-            .unwrap(),
-    );
-
-    // Setting a positive liquid reward with a markup keeps it.
-    let updated = svc
-        .update_quest(
-            q1,
-            &json!({"reward_ped": 10.0, "expected_reward_markup_percent": 130.0}),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated["reward_ped"], json!(10.0));
-    assert_eq!(updated["expected_reward_markup_percent"], json!(130.0));
-
-    // Flipping to a skill reward re-normalises the merged picture:
-    // the stored markup clears even though the update names only
-    // the flag.
-    let updated = svc
-        .update_quest(q1, &json!({"reward_is_skill": true}))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated["reward_is_skill"], json!(1));
-    assert_eq!(updated["expected_reward_markup_percent"], Value::Null);
-
-    // Clearing the fixed amount without naming a replacement policy must
-    // re-infer the policy from the merged reward picture.
-    let updated = svc
-        .update_quest(q1, &json!({"reward_ped": null, "reward_is_skill": false}))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated["reward_policy"], json!("none"));
-
-    assert_eq!(
-        svc.update_quest(9999, &json!({"name": "x"})).await.unwrap(),
-        None
-    );
-}
-
-#[tokio::test]
-async fn cancelling_a_completion_removes_its_run_intervals_without_foreign_keys() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
-    let quest = quest_id(
-        &svc.create_quest(&json!({
-            "name": "Interval-backed daily",
-            "cooldown_hours": 24,
-        }))
-        .await
-        .unwrap(),
-    );
-
-    db.with_writer(move |conn| {
-        conn.execute(
-            "INSERT INTO tracking_sessions(id, started_at, is_active) \
-             VALUES('s-run', 1772366300.0, 0)",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at, ended_at) \
-             VALUES(901, 's-run', 'quest', 'Interval-backed daily', ?, \
-                    1772366300.0, 1772366400.0)",
-            params![quest],
-        )?;
-        conn.execute(
-            "INSERT INTO session_quest_completions(id, session_id, quest_id, completed_at, reward_outcome) \
-             VALUES(902, 's-run', ?, 1772366400.0, 'none')",
-            params![quest],
-        )?;
-        conn.execute(
-            "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at, completion_id) \
-             VALUES(903, ?, 'completed', 1772366300.0, 1772366400.0, 902)",
-            params![quest],
-        )?;
-        conn.execute(
-            "UPDATE session_quest_completions SET quest_run_id = 903 WHERE id = 902",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO quest_run_intervals(run_id, interval_id) VALUES(903, 901)",
-            [],
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-
-    svc.cancel_quest(quest, false).await.unwrap();
-    assert_eq!(
-        count_rows(&db, "SELECT COUNT(*) FROM quest_run_intervals").await,
-        0
-    );
-    assert_eq!(count_rows(&db, "SELECT COUNT(*) FROM quest_runs").await, 0);
 }
 
 #[tokio::test]
@@ -488,223 +291,6 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
 }
 
 #[tokio::test]
-async fn deletes_are_soft_and_detach_playlist_items() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge"}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", q1, 1000.0).await;
-    let q2 = quest_id(&svc.create_quest(&full_quest_payload()).await.unwrap());
-    pin_ts(&db, "quests", q2, 1001.0).await;
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1, q2]}))
-            .await
-            .unwrap(),
-    );
-
-    assert!(svc.delete_quest(q2).await.unwrap());
-    assert!(!svc.delete_quest(q2).await.unwrap(), "already inactive");
-
-    let active: Vec<i64> = svc
-        .get_quests(true)
-        .await
-        .unwrap()
-        .iter()
-        .map(quest_id)
-        .collect();
-    assert_eq!(active, [q1]);
-    let all: Vec<i64> = svc
-        .get_quests(false)
-        .await
-        .unwrap()
-        .iter()
-        .map(quest_id)
-        .collect();
-    assert_eq!(all, [q1, q2]);
-
-    // The deleted quest left the playlist.
-    let playlist = svc.get_playlist(p1).await.unwrap().unwrap();
-    assert_eq!(playlist["quest_ids"], json!([q1]));
-
-    // Mob autocomplete reads active quests only.
-    assert_eq!(svc.get_all_mob_names().await.unwrap(), Vec::<String>::new());
-}
-
-#[tokio::test]
-async fn playlists_classify_items_and_split_groups() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge"}))
-            .await
-            .unwrap(),
-    );
-    let q2 = quest_id(&svc.create_quest(&full_quest_payload()).await.unwrap());
-
-    // A bare id list classifies everything immediate, with the
-    // planet and duration defaults.
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1, q2]}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quest_playlists", p1, 2000.0).await;
-    let p1_fresh = svc.get_playlist(p1).await.unwrap().unwrap();
-    assert_eq!(
-        p1_fresh,
-        json!({
-            "id": 1, "name": "Morning Run", "planet": "Calypso",
-            "estimated_minutes": 30, "is_active": 1, "created_at": 2000.0,
-            "updated_at": 2000.0, "quest_ids": [1, 2],
-            "immediate_quest_ids": [1, 2], "long_horizon_quest_ids": [],
-            "items": [
-                {"quest_id": 1, "description": null, "group_type": "immediate"},
-                {"quest_id": 2, "description": null, "group_type": "immediate"},
-            ],
-        })
-    );
-
-    // Classified items keep their groups; immediate items list
-    // ahead of long-horizon ones regardless of insertion order.
-    let p2 = quest_id(
-        &svc.create_playlist(&json!({
-            "name": "Big Loop", "planet": "Foma", "estimated_minutes": 90,
-            "items": [
-                {"quest_id": q2, "description": "warmup", "group_type": "immediate"},
-                {"quest_id": q1, "group_type": "long_horizon"},
-            ],
-        }))
-        .await
-        .unwrap(),
-    );
-    let p2_fresh = svc.get_playlist(p2).await.unwrap().unwrap();
-    assert_eq!(p2_fresh["quest_ids"], json!([q2, q1]));
-    assert_eq!(p2_fresh["immediate_quest_ids"], json!([q2]));
-    assert_eq!(p2_fresh["long_horizon_quest_ids"], json!([q1]));
-    assert_eq!(
-        p2_fresh["items"],
-        json!([
-            {"quest_id": q2, "description": "warmup", "group_type": "immediate"},
-            {"quest_id": q1, "description": null, "group_type": "long_horizon"},
-        ])
-    );
-
-    // Updates rewrite items from either payload shape, and soft
-    // deletes clear them.
-    let updated = svc
-        .update_playlist(p1, &json!({"name": "Dawn Run", "quest_ids": [q2]}))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated["name"], "Dawn Run");
-    assert_eq!(updated["quest_ids"], json!([q2]));
-    assert!(svc.delete_playlist(p2).await.unwrap());
-    assert!(!svc.delete_playlist(p2).await.unwrap());
-    assert_eq!(svc.get_playlists(true).await.unwrap().len(), 1);
-    assert_eq!(svc.get_playlists(false).await.unwrap().len(), 2);
-    assert_eq!(svc.get_playlist(9999).await.unwrap(), None);
-    assert_eq!(
-        svc.update_playlist(9999, &json!({"name": "x"}))
-            .await
-            .unwrap(),
-        None
-    );
-
-    // The active quest's playlist membership reflects only live
-    // playlists.
-    let q2_now = svc.get_quest(q2).await.unwrap().unwrap();
-    assert_eq!(q2_now["playlist_ids"], json!([p1]));
-}
-
-#[tokio::test]
-async fn invalid_groups_reject_verbatim_and_leave_no_trace() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge"}))
-            .await
-            .unwrap(),
-    );
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1]}))
-            .await
-            .unwrap(),
-    );
-
-    let error = svc
-        .create_playlist(&json!({
-            "name": "Bad",
-            "items": [{"quest_id": q1, "group_type": "weekly"}],
-        }))
-        .await
-        .unwrap_err();
-    assert_eq!(error.to_string(), "Invalid playlist group type: weekly");
-
-    // A present-but-null group is rendered the way the original's
-    // message renders None.
-    let error = svc
-        .update_playlist(
-            p1,
-            &json!({"items": [{"quest_id": q1, "group_type": null}]}),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.to_string(), "Invalid playlist group type: None");
-
-    // The failed writes roll back whole: no phantom playlist, and
-    // the failed item rewrite keeps the prior items. (The original
-    // leaves these partial writes pending on its shared connection
-    // for a later commit to ratify; the pooled port repairs that
-    // by construction, per the migration's settled architecture.)
-    let playlists = svc.get_playlists(true).await.unwrap();
-    assert_eq!(playlists.len(), 1);
-    assert_eq!(playlists[0]["name"], "Morning Run");
-    assert_eq!(playlists[0]["quest_ids"], json!([q1]));
-}
-
-#[tokio::test]
-async fn present_null_lists_refuse_and_leave_state_untouched() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge", "mobs": ["Atrox"]}))
-            .await
-            .unwrap(),
-    );
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1]}))
-            .await
-            .unwrap(),
-    );
-
-    // An explicit-null quest_ids update refuses (the original
-    // crashes iterating it, with no surviving write) instead of
-    // clearing the playlist.
-    let error = svc
-        .update_playlist(p1, &json!({"quest_ids": null}))
-        .await
-        .unwrap_err();
-    assert_eq!(error.to_string(), "'quest_ids' must be a list of quest ids");
-    let playlist = svc.get_playlist(p1).await.unwrap().unwrap();
-    assert_eq!(playlist["quest_ids"], json!([q1]));
-
-    // An explicit-null mobs update refuses likewise; the mob rows
-    // survive (the original's crash leaves its mob delete pending
-    // for the next commit to ratify silently; the typed refusal
-    // plus rollback is the sanctioned repair shape).
-    let error = svc
-        .update_quest(q1, &json!({"mobs": null}))
-        .await
-        .unwrap_err();
-    assert_eq!(error.to_string(), "'mobs' must be a list of mob names");
-    let quest = svc.get_quest(q1).await.unwrap().unwrap();
-    assert_eq!(quest["mobs"], json!(["Atrox"]));
-}
-
-#[tokio::test]
 async fn create_quest_ignores_a_falsy_mobs_payload_without_dereferencing_it() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
@@ -731,8 +317,7 @@ async fn soft_deleting_a_quest_keeps_its_mob_rows() {
     );
 
     assert!(svc.delete_quest(q1).await.unwrap());
-    // The soft delete detaches playlist items only; the mob rows
-    // stay (the autocomplete reader filters by active quests, so
+    // The mob rows stay (the autocomplete reader filters by active quests, so
     // they vanish from that surface without being destroyed).
     let mobs: i64 = db
         .with_reader(move |conn| {
@@ -788,652 +373,6 @@ async fn a_zero_hour_cooldown_never_produces_an_expiry() {
         Value::Null,
         "the expiry derives only from a strictly positive cooldown"
     );
-}
-
-#[tokio::test]
-async fn a_null_items_payload_clears_the_playlist() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-    let q1 = quest_id(
-        &svc.create_quest(&json!({"name": "Iron Challenge"}))
-            .await
-            .unwrap(),
-    );
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Morning Run", "quest_ids": [q1]}))
-            .await
-            .unwrap(),
-    );
-
-    // The original's is-not-None test routes a present-null items
-    // payload to the quest_ids leg, which is absent, so the
-    // rewrite clears every item; null items is the documented
-    // clear-all shape, unlike null quest_ids which refuses.
-    let updated = svc
-        .update_playlist(p1, &json!({"items": null}))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated["quest_ids"], json!([]));
-    assert_eq!(updated["items"], json!([]));
-}
-
-/// One walk through the lifecycle, mirroring the original's run
-/// over identical payloads, clock advances, and identifier
-/// streams; every expected value below is the original's output.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_lifecycle_walkthrough_matches_the_original() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db, clock, bus) = service_with_clock(dir.path()).await;
-
-    let qa = quest_id(
-        &svc.create_quest(
-            &json!({"name": "Iron Challenge", "reward_ped": 2.5, "cooldown_hours": 24}),
-        )
-        .await
-        .unwrap(),
-    );
-    pin_ts(&db, "quests", qa, 1000.0).await;
-    let qb = quest_id(
-        &svc.create_quest(&json!({"name": "Daily Hunt: Atrox", "reward_ped": 5.0,
-                                   "reward_is_skill": true, "cooldown_hours": 1}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qb, 1001.0).await;
-    let qc = quest_id(
-        &svc.create_quest(&json!({"name": "G\u{e9}ologist Survey"}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qc, 1002.0).await;
-    let qe = quest_id(
-        &svc.create_quest(&json!({"name": "Zero Bounty", "reward_ped": 0}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qe, 1003.0).await;
-
-    // Start legs.
-    assert_eq!(svc.start_quest(9999).await.unwrap(), None);
-    let started = svc.start_quest(qa).await.unwrap().unwrap();
-    assert_eq!(started["started_at"], json!(1772366400.0));
-
-    // A session-less completion: a ledger row (liquid reward) and
-    // a synthetic manual completion key.
-    clock.advance(60.0).unwrap();
-    let done = svc.complete_quest(qa).await.unwrap().unwrap();
-    assert_eq!(done["started_at"], Value::Null);
-    assert_eq!(done["last_completed_at"], json!(1772366460.0));
-    assert_eq!(
-        done["cooldown_expires_at"],
-        json!("2026-03-02T12:01:00+00:00")
-    );
-    let ledger = |sql: &'static str| {
-        let db = db.clone();
-        async move {
-            db.with_reader(move |conn| {
-                let mut stmt = conn.prepare(sql)?;
-                let rows = stmt
-                    .query_map([], |row| {
-                        Ok(json!([
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, f64>(3)?,
-                            row.get::<_, String>(4)?,
-                        ]))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows)
-            })
-            .await
-            .unwrap()
-        }
-    };
-    assert_eq!(
-        ledger("SELECT id, date, description, amount, tag FROM ledger_entries ORDER BY id").await,
-        vec![json!([
-            "fixed-0001",
-            "2026-03-01T12:01:00+00:00",
-            "Quest: Iron Challenge",
-            2.5,
-            "quest_reward"
-        ])]
-    );
-    let completions = |db: Db| async move {
-        db.with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT session_id, quest_id, completed_at FROM session_quest_completions ORDER BY id",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(json!([
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, f64>(2)?,
-                    ]))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap()
-    };
-    assert_eq!(
-        completions(db.clone()).await,
-        vec![json!(["manual-fixed-0002", qa, 1772366460.0])]
-    );
-    let reward_provenance = db
-        .with_reader(move |conn| {
-            Ok(conn.query_row(
-                "SELECT reward_source, reward_ped, ledger_entry_id, quest_claim_id \
-                 FROM session_quest_completions WHERE quest_id = ?",
-                params![qa],
-                |row| {
-                    Ok(json!([
-                        row.get::<_, String>(0)?,
-                        row.get::<_, f64>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, Option<i64>>(3)?,
-                    ]))
-                },
-            )?)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        reward_provenance,
-        json!(["ledger", 2.5, "fixed-0001", null])
-    );
-
-    // The bus feeds the active session; a session-scoped skill
-    // completion writes a claim, and a repeat in the same session is
-    // idempotent across both the completion and its linked reward.
-    let attribution_db = db.clone();
-    attribution_db
-        .with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO tracking_sessions(id, started_at, is_active) \
-                 VALUES('sess-abc', 1772366400.0, 1)",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO session_intervals(id, session_id, kind, label, ref_id, started_at) \
-                 VALUES(901, 'sess-abc', 'quest', 'Daily Hunt: Atrox', ?1, 1772366400.0)",
-                params![qb],
-            )?;
-            conn.execute(
-                "INSERT INTO session_contexts(id, session_id, created_at) \
-                 VALUES(902, 'sess-abc', 1772366400.0)",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO session_context_intervals(context_id, interval_id) VALUES(902, 901)",
-                [],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
-        session_id: "sess-abc".into(),
-    }));
-    clock.advance(60.0).unwrap();
-    svc.complete_quest(qb).await.unwrap().unwrap();
-    clock.advance(60.0).unwrap();
-    svc.complete_quest(qb).await.unwrap().unwrap();
-    let claims = db
-        .with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT quest_id, quest_name, ped_value, claimed_at FROM quest_claims ORDER BY id",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(json!([
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, f64>(2)?,
-                        row.get::<_, f64>(3)?,
-                    ]))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        claims,
-        vec![json!([qb, "Daily Hunt: Atrox", 5.0, 1772366520.0])]
-    );
-    assert_eq!(
-        completions(db.clone()).await,
-        vec![
-            json!(["manual-fixed-0002", qa, 1772366460.0]),
-            json!(["sess-abc", qb, 1772366520.0]),
-        ]
-    );
-    let captured_activity = db
-        .with_reader(move |conn| {
-            Ok(conn.query_row(
-                "SELECT activity_context_id, activity_interval_id, reward_source, quest_claim_id \
-                 FROM session_quest_completions WHERE session_id = 'sess-abc'",
-                [],
-                |row| {
-                    Ok(json!([
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ]))
-                },
-            )?)
-        })
-        .await
-        .unwrap();
-    assert_eq!(captured_activity, json!([902, 901, "skill", 1]));
-
-    // Cancel legs: a started quest clears; a quest neither started
-    // nor cooling passes through; a cooling quest resets its
-    // cooldown and (optionally) undoes the reward.
-    svc.start_quest(qc).await.unwrap().unwrap();
-    let cancelled = svc.cancel_quest(qc, false).await.unwrap().unwrap();
-    assert_eq!(cancelled["started_at"], Value::Null);
-    let passthrough = svc.cancel_quest(qc, false).await.unwrap().unwrap();
-    assert_eq!(passthrough["id"], json!(qc));
-    clock.advance(60.0).unwrap();
-    svc.cancel_quest(qb, true).await.unwrap().unwrap();
-    let claim_count = count_rows(&db, "SELECT COUNT(*) FROM quest_claims").await;
-    assert_eq!(claim_count, 0, "the linked claim is undone exactly");
-    svc.cancel_quest(qa, true).await.unwrap().unwrap();
-    let ledger_count = count_rows(&db, "SELECT COUNT(*) FROM ledger_entries").await;
-    assert_eq!(ledger_count, 0, "the reward ledger entry is undone");
-
-    // The suggestion tree, reason by reason.
-    let sugg = |s: Value, t: &str, r: &str| {
-        assert_eq!(s["suggestion_type"], t, "type for {r}");
-        assert_eq!(s["reason"], r);
-        s
-    };
-    sugg(
-        svc.get_session_link_suggestion("sess-none").await.unwrap(),
-        "none",
-        "no_completions",
-    );
-    for (session, quest, at) in [
-        ("sess-one", qa, 5000.0),
-        ("sess-two", qa, 5001.0),
-        ("sess-two", qb, 5002.0),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![session, quest, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    let single = sugg(
-        svc.get_session_link_suggestion("sess-one").await.unwrap(),
-        "quest",
-        "single_quest",
-    );
-    assert_eq!(single["quest_name"], "Iron Challenge");
-    svc.create_playlist(&json!({"name": "Pair Run", "quest_ids": [qa, qb]}))
-        .await
-        .unwrap();
-    let pl = sugg(
-        svc.get_session_link_suggestion("sess-two").await.unwrap(),
-        "playlist",
-        "exact_playlist",
-    );
-    assert_eq!(pl["playlist_name"], "Pair Run");
-    clock.advance(60.0).unwrap();
-    // Historical link rows still gate the read: nothing writes the
-    // demoted table any more (the recorded quest stretch superseded
-    // it), so the already-linked and declined branches are exercised
-    // over rows inserted as the legacy data they now are.
-    for (session, link_type) in [("sess-two", "playlist"), ("sess-decl", "declined")] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_analytics_links \
-                 (session_id, link_type, quest_id, playlist_id, linked_at) \
-                 VALUES (?1, ?2, NULL, NULL, 1772366700.0)",
-                params![session, link_type],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    sugg(
-        svc.get_session_link_suggestion("sess-two").await.unwrap(),
-        "none",
-        "already_linked",
-    );
-    sugg(
-        svc.get_session_link_suggestion("sess-decl").await.unwrap(),
-        "none",
-        "declined",
-    );
-    for (session, quest, at) in [("sess-three", qa, 5003.0), ("sess-three", qc, 5004.0)] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![session, quest, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    sugg(
-        svc.get_session_link_suggestion("sess-three").await.unwrap(),
-        "none",
-        "unclean",
-    );
-    svc.create_playlist(&json!({"name": "Pair Run B", "quest_ids": [qa, qb]}))
-        .await
-        .unwrap();
-    for (session, quest, at) in [("sess-five", qa, 5005.0), ("sess-five", qb, 5006.0)] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![session, quest, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    sugg(
-        svc.get_session_link_suggestion("sess-five").await.unwrap(),
-        "none",
-        "ambiguous_playlist",
-    );
-    // Mission matching: exact (case/space), accent folding,
-    // repeatable suffix, containment, fuzzy at the threshold, and
-    // a miss below it.
-    let match_id = |name: &'static str| {
-        let svc = svc.clone();
-        async move {
-            svc.match_quest_by_mission_name(name, false)
-                .await
-                .unwrap()
-                .map(|quest| quest["id"].as_i64().unwrap())
-        }
-    };
-    assert_eq!(match_id("  IRON CHALLENGE ").await, Some(qa));
-    assert_eq!(match_id("Geologist Survey").await, Some(qc));
-    assert_eq!(match_id("Iron Challenge (Repeatable)").await, Some(qa));
-    assert_eq!(match_id("Mission: Iron Challenge Part II").await, Some(qa));
-    assert_eq!(match_id("Iron Chalenge").await, Some(qa));
-    assert_eq!(match_id("Totally Different").await, None);
-
-    // Mission auto-start: unknown ignores, a fuzzy match starts
-    // once, and an already-started quest skips.
-    clock.advance(60.0).unwrap();
-    svc.start_quest_from_mission("Unknown Mission")
-        .await
-        .unwrap();
-    svc.start_quest_from_mission("Iron Chalenge").await.unwrap();
-    assert!(json_truthy(
-        svc.get_quest(qa).await.unwrap().unwrap().get("started_at")
-    ));
-    svc.start_quest_from_mission("Iron Challenge")
-        .await
-        .unwrap();
-
-    // The reward filter's five legs, each now a pre-publish
-    // suppression answer paired with the post-publish completion
-    // check (the tick's loot must reach the consumers before the
-    // completion closes anything, so the two are separate calls);
-    // the suppression decisions and the overlay trail they leave
-    // are the original's. The filter's in-progress gate means each
-    // leg starts its quest first, as the mission log would have.
-    let complete_tick = |mission: &'static str, loot: Vec<Value>, skills: Vec<Value>| {
-        let svc = svc.clone();
-        async move {
-            svc.mission_complete_check(&[MissionCompletion {
-                mission_name: mission.to_string(),
-                loot_items: loot,
-                skill_gains: skills,
-                isolated: true,
-            }])
-            .await
-            .unwrap();
-        }
-    };
-    clock.advance(60.0).unwrap();
-    svc.start_quest(qb).await.unwrap().unwrap();
-    let atrox_skills = vec![json!({"skill_name": "Rifle", "amount": 1.0})];
-    assert_eq!(
-        svc.quest_reward_filter("Daily Hunt: Atrox", &[], &atrox_skills)
-            .await
-            .unwrap(),
-        Some(json!({"suppress_loot_indices": [], "suppress_skill_indices": [0]}))
-    );
-    complete_tick("Daily Hunt: Atrox", vec![], atrox_skills).await;
-    clock.advance(60.0).unwrap();
-    svc.update_quest(
-        qa,
-        &json!({
-            "reward_policy": "named_items",
-            "reward_item_names": ["Universal Ammo"],
-            "reward_ped": null,
-            "reward_is_skill": false,
-        }),
-    )
-    .await
-    .unwrap();
-    assert!(json_truthy(
-        svc.get_quest(qa).await.unwrap().unwrap().get("started_at")
-    ));
-    let iron_loot = vec![
-        json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1}),
-        json!({"item_name": "Universal Ammo", "quantity": 1, "value": 2.51}),
-    ];
-    assert_eq!(
-        svc.quest_reward_filter("Iron Challenge", &iron_loot, &[])
-            .await
-            .unwrap(),
-        Some(json!({"suppress_loot_indices": [1], "suppress_skill_indices": []}))
-    );
-    complete_tick("Iron Challenge", iron_loot, vec![]).await;
-    clock.advance(60.0).unwrap();
-    db.with_writer(|conn| {
-        conn.execute(
-            "INSERT INTO tracking_sessions(id, started_at, is_active) \
-             VALUES('sess-def', 1772366940.0, 1)",
-            [],
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
-        session_id: "sess-abc".into(),
-    }));
-    bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
-        session_id: "sess-def".into(),
-    }));
-    svc.start_quest(qa).await.unwrap().unwrap();
-    let bare_loot = vec![json!({"item_name": "Shrapnel", "quantity": 100, "value": 0.1})];
-    assert_eq!(
-        svc.quest_reward_filter("Iron Challenge", &bare_loot, &[])
-            .await
-            .unwrap(),
-        None
-    );
-    complete_tick("Iron Challenge", bare_loot, vec![]).await;
-    clock.advance(60.0).unwrap();
-    svc.update_quest(qe, &json!({"reward_policy": "completion_clump"}))
-        .await
-        .unwrap();
-    svc.start_quest(qe).await.unwrap().unwrap();
-    let bounty_loot = vec![
-        json!({"item_name": "A", "value": 0.5}),
-        json!({"item_name": "B", "value": 0.2}),
-        json!({"item_name": "C", "value": 0.9}),
-    ];
-    assert_eq!(
-        svc.quest_reward_filter("Zero Bounty", &bounty_loot, &[])
-            .await
-            .unwrap(),
-        Some(json!({"suppress_loot_indices": [0, 1, 2], "suppress_skill_indices": []}))
-    );
-    complete_tick("Zero Bounty", bounty_loot, vec![]).await;
-    clock.advance(60.0).unwrap();
-    svc.start_quest(qc).await.unwrap().unwrap();
-    let survey_loot = vec![json!({"item_name": "A", "value": 0.5})];
-    assert_eq!(
-        svc.quest_reward_filter("Geologist Survey", &survey_loot, &[])
-            .await
-            .unwrap(),
-        None
-    );
-    complete_tick("Geologist Survey", survey_loot, vec![]).await;
-    // A completion line for a quest the log does not carry as in
-    // progress is not ours to act on: no suppression, no completion.
-    assert_eq!(
-        svc.quest_reward_filter("Iron Challenge", &[], &[])
-            .await
-            .unwrap(),
-        None
-    );
-    let trail_before = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
-    complete_tick("Iron Challenge", vec![], vec![]).await;
-    let trail_after = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
-    assert_eq!(trail_after, trail_before, "an idle quest never completes");
-
-    // The overlay trail, exactly as the original recorded it.
-    let events = db
-        .with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT session_id, kill_id, event_type, mob_or_item, value_ped, timestamp \
-                 FROM notable_events ORDER BY id",
-            )?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(json!([
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, f64>(4)?,
-                        row.get::<_, f64>(5)?,
-                    ]))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        events,
-        vec![
-            json!([
-                "sess-abc",
-                null,
-                "quest_started",
-                "Iron Challenge",
-                0.0,
-                1772366760.0
-            ]),
-            json!([
-                "sess-abc",
-                null,
-                "quest_completed_pes",
-                "Daily Hunt: Atrox: skill reward separated",
-                5.0,
-                1772366820.0
-            ]),
-            json!([
-                "sess-abc",
-                null,
-                "quest_completed",
-                "Iron Challenge: 1 reward item line(s) separated",
-                0.0,
-                1772366880.0
-            ]),
-            json!([
-                "sess-def",
-                null,
-                "quest_completed",
-                "Iron Challenge",
-                0.0,
-                1772366940.0
-            ]),
-            json!([
-                "sess-def",
-                null,
-                "quest_completed",
-                "Zero Bounty: 3 completion reward line(s) separated",
-                0.0,
-                1772367000.0
-            ]),
-            json!([
-                "sess-def",
-                null,
-                "quest_completed",
-                "G\u{e9}ologist Survey",
-                0.0,
-                1772367060.0
-            ]),
-        ]
-    );
-
-    // The final ledger carries only the separately liquid completion;
-    // suppressed reward items remain item provenance rather than cash.
-    let final_ledger: Vec<String> = db
-        .with_reader(move |conn| {
-            let mut stmt = conn.prepare("SELECT id FROM ledger_entries ORDER BY id")?;
-            let rows = stmt
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap();
-    assert!(final_ledger.is_empty());
-    let reward_items: Vec<(String, i64, f64)> = db
-        .with_reader(move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT ri.item_name, ri.quantity, ri.value_ped \
-                 FROM session_quest_completion_reward_items ri \
-                 JOIN session_quest_completions c ON c.id = ri.completion_id \
-                 WHERE c.quest_id = ? ORDER BY ri.id",
-            )?;
-            let rows = stmt
-                .query_map(params![qa], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        reward_items,
-        [("Universal Ammo".to_string(), 1, 2.51)],
-        "the actual suppressed item is immutable reward evidence"
-    );
-
-    // A session stop clears the tracked session: notable events
-    // stop recording.
-    bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
-        session_id: "s1".into(),
-    }));
-    svc.start_quest_from_mission("Geologist Survey")
-        .await
-        .unwrap();
-    let count = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
-    assert_eq!(count, 6, "no session, no overlay event");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1500,82 +439,6 @@ async fn equal_fuzzy_scores_keep_the_first_quest() {
 }
 
 #[tokio::test]
-async fn fixed_and_zero_rewards_never_identify_loot_by_tt_proximity() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, _db) = service(dir.path()).await;
-    let tie = quest_id(
-        &svc.create_quest(&json!({"name": "Tie Quest", "reward_ped": 2.5}))
-            .await
-            .unwrap(),
-    );
-    let zed = quest_id(
-        &svc.create_quest(&json!({"name": "Zed Bounty", "reward_ped": 0}))
-            .await
-            .unwrap(),
-    );
-    svc.start_quest(tie).await.unwrap().unwrap();
-    svc.start_quest(zed).await.unwrap().unwrap();
-
-    // A fixed value is accounting, never item identity.
-    assert_eq!(
-        svc.quest_reward_filter(
-            "Tie Quest",
-            &[
-                json!({"item_name": "A", "value": 2.49}),
-                json!({"item_name": "B", "value": 2.51}),
-            ],
-            &[]
-        )
-        .await
-        .unwrap(),
-        None
-    );
-    // A no-reward policy likewise leaves every loot line ordinary.
-    assert_eq!(
-        svc.quest_reward_filter(
-            "Zed Bounty",
-            &[
-                json!({"item_name": "A", "value": 0.3}),
-                json!({"item_name": "B", "value": 0.3}),
-            ],
-            &[]
-        )
-        .await
-        .unwrap(),
-        None
-    );
-}
-
-#[tokio::test]
-async fn playlist_matching_requires_completions_within_scope() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
-    let qa = quest_id(&svc.create_quest(&json!({"name": "Alpha"})).await.unwrap());
-    let qc = quest_id(&svc.create_quest(&json!({"name": "Gamma"})).await.unwrap());
-    svc.create_playlist(&json!({"name": "Solo Run", "quest_ids": [qc]}))
-        .await
-        .unwrap();
-    for (quest, at) in [(qa, 5003.0), (qc, 5004.0)] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES ('s3', ?1, ?2)",
-                params![quest, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-
-    // The playlist's immediate set is complete, but the session
-    // also completed a quest outside its scope: both subset tests
-    // must hold, so the suggestion stays unclean.
-    let suggestion = svc.get_session_link_suggestion("s3").await.unwrap();
-    assert_eq!(suggestion["reason"], "unclean");
-}
-
-#[tokio::test]
 async fn cancelling_outside_the_cooldown_window_keeps_completions() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, db) = service(dir.path()).await;
@@ -1636,384 +499,6 @@ async fn an_empty_session_id_skips_overlay_events() {
         .unwrap();
     let count = count_rows(&db, "SELECT COUNT(*) FROM notable_events").await;
     assert_eq!(count, 0);
-}
-
-/// The analytics readers over a seeded economy. The numeric behaviours
-/// (engine numeric types preserved: integer zeros from NULL sums, REAL
-/// zeros from real columns, active-session exclusion, reward and markup
-/// arithmetic) descend from the original implementation; membership is
-/// the recorded quest stretch (`session_intervals`), which deliberately
-/// superseded the curated link table, so the session sets aggregate by
-/// what each session actually ran.
-#[tokio::test]
-async fn analytics_match_the_original_over_a_seeded_economy() {
-    let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
-
-    let qa = quest_id(
-        &svc.create_quest(&json!({"name": "Alpha", "reward_ped": 2.5,
-                                   "expected_reward_markup_percent": 150.0}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qa, 1000.0).await;
-    let qb = quest_id(
-        &svc.create_quest(&json!({"name": "Beta", "reward_ped": 5.0,
-                                   "reward_is_skill": true}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qb, 1001.0).await;
-    let qc = quest_id(&svc.create_quest(&json!({"name": "Gamma"})).await.unwrap());
-    pin_ts(&db, "quests", qc, 1002.0).await;
-    let qd = quest_id(
-        &svc.create_quest(&json!({"name": "Delta", "reward_ped": 1.25}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qd, 1003.0).await;
-
-    let p1 = quest_id(
-        &svc.create_playlist(&json!({"name": "Mixed Run", "items": [
-            {"quest_id": qa, "group_type": "immediate"},
-            {"quest_id": qb, "group_type": "immediate"},
-            {"quest_id": qd, "group_type": "long_horizon"},
-        ]}))
-        .await
-        .unwrap(),
-    );
-    pin_ts(&db, "quest_playlists", p1, 2000.0).await;
-    let p2 = quest_id(
-        &svc.create_playlist(&json!({"name": "Bonus Only", "items": [
-            {"quest_id": qc, "group_type": "long_horizon"},
-        ]}))
-        .await
-        .unwrap(),
-    );
-    pin_ts(&db, "quest_playlists", p2, 2001.0).await;
-
-    for (sid, st, en, active, heal, armour) in [
-        ("sess-1", 1000.0, Some(4600.0), 0i64, Some(1.5), Some(0.25)),
-        ("sess-2", 5000.0, Some(5030.5), 0, None, Some(0.0)),
-        ("sess-3", 6000.0, None, 1, Some(2.0), None),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![sid, st, en, active, heal, armour],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    for (kid, sid, mob, ts, enh, loot) in [
-        ("k1", "sess-1", "Atrox", 1100.0, 0.5, 12.75),
-        ("k2", "sess-1", "Atrox", 1200.0, 0.0, 3.0),
-        ("k3", "sess-2", "Snable", 5010.0, 0.1, 0.0),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO kills (id, session_id, mob_name, timestamp, shots_fired, damage_dealt, \
-                 damage_taken, critical_hits, cost_ped, enhancer_cost, loot_total_ped) \
-                 VALUES (?1, ?2, ?3, ?4, 10, 100.0, 5.0, 1, 0.3, ?5, ?6)",
-                params![kid, sid, mob, ts, enh, loot],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    for (kid, tool, shots, cps) in [
-        ("k1", "LR-32", 40i64, 0.05),
-        ("k1", "Fap-90", 5, 0.02),
-        ("k3", "LR-32", 12, 0.05),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO kill_tool_stats (kill_id, tool_name, shots_fired, damage_dealt, \
-                 critical_hits, cost_per_shot) VALUES (?1, ?2, ?3, 50.0, 0, ?4)",
-                params![kid, tool, shots, cps],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    for (sid, skill, ped) in [("sess-1", "Rifle", 0.8), ("sess-2", "Anatomy", 0.2)] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
-                 VALUES (?1, 1100.0, ?2, 1.0, ?3)",
-                params![sid, skill, ped],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    for (sid, qid, at) in [
-        ("sess-1", qa, 1500.0),
-        ("sess-1", qb, 1600.0),
-        ("sess-1", qd, 1700.0),
-        ("sess-2", qa, 5020.0),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![sid, qid, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    let qn = quest_id(&svc.create_quest(&json!({"name": "Nul"})).await.unwrap());
-    pin_ts(&db, "quests", qn, 1004.0).await;
-    let qz = quest_id(
-        &svc.create_quest(&json!({"name": "Zed", "reward_ped": 0,
-                                   "expected_reward_markup_percent": 120.0}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qz, 1005.0).await;
-    let qe2 = quest_id(
-        &svc.create_quest(&json!({"name": "Echo", "reward_ped": 3.0}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quests", qe2, 1006.0).await;
-    for (sid, st, en, active, heal) in [
-        ("sess-n", 7000.0, Some(7050.0), 0i64, Some(0.0)),
-        ("sess-z", 7100.0, Some(7160.0), 0, Some(0.0)),
-        ("sess-act", 8000.0, None, 1, None),
-        ("sess-solo", 8100.0, Some(8200.0), 0, Some(0.5)),
-    ] {
-        let armour = heal.map(|_| 0.0);
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active, heal_cost, armour_cost) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![sid, st, en, active, heal, armour],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    for (sid, qid, at) in [("sess-n", qn, 7040.0), ("sess-z", qz, 7150.0)] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_quest_completions (session_id, quest_id, completed_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![sid, qid, at],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-    let p3 = quest_id(
-        &svc.create_playlist(&json!({"name": "Solo Immediate", "quest_ids": [qc]}))
-            .await
-            .unwrap(),
-    );
-    pin_ts(&db, "quest_playlists", p3, 2002.0).await;
-    // Membership is the recorded quest stretch: intervals as the
-    // lifecycle would have auto-recorded them, one per quest a session
-    // actually ran. An active session's stretch is still open (NULL
-    // end); sess-solo STARTED Gamma without completing it, which is the
-    // real-session-stats-beside-zero-rewards case the curated model
-    // used to reach with a completion-less playlist link.
-    for (sid, qid, start, end) in [
-        ("sess-1", qa, 1400.0, Some(1550.0)),
-        ("sess-1", qb, 1450.0, Some(1650.0)),
-        ("sess-1", qd, 1500.0, Some(1750.0)),
-        ("sess-2", qa, 5005.0, Some(5025.0)),
-        ("sess-3", qa, 6010.0, None),
-        ("sess-n", qn, 7010.0, Some(7045.0)),
-        ("sess-z", qz, 7110.0, Some(7155.0)),
-        ("sess-act", qe2, 8010.0, None),
-        ("sess-solo", qc, 8110.0, Some(8190.0)),
-    ] {
-        db.with_writer(move |conn| {
-            conn.execute(
-                "INSERT INTO session_intervals \
-                 (session_id, kind, label, ref_id, started_at, ended_at) \
-                 VALUES (?1, 'quest', 'Quest', ?2, ?3, ?4)",
-                params![sid, qid, start, end],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    }
-
-    // Per-quest, name-ordered, over recorded-stretch membership: every
-    // quest a session ran shares that session's economics, so Alpha,
-    // Beta and Delta all carry sess-1's aggregates (Alpha adds sess-2's;
-    // its still-active sess-3 stretch is excluded from the completed
-    // stats), Gamma carries the started-but-never-completed sess-solo
-    // (real session stats beside integer-zero rewards), and the
-    // NULL-reward and zero-reward quests keep their INTEGER zeros on
-    // the wire; Echo (recorded only by an active session) is excluded
-    // entirely.
-    assert_eq!(
-        svc.get_quest_analytics().await.unwrap(),
-        vec![
-            json!({
-                "quest_id": qa, "quest_name": "Alpha", "planet": "Calypso",
-                "category": null, "reward_ped": 2.5, "reward_is_skill": false,
-                "expected_reward_markup_percent": 150.0,
-                "total_expected_reward_ped": 7.5,
-                "recorded_completions": 2, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 2, "total_duration": 3630.5,
-                "weapon_cost": 2.7, "heal_cost": 1.5,
-                "enhancer_cost": 0.6, "armour_cost": 0.25, "loot_tt": 15.75,
-                "skill_tt": 1.0,
-            }),
-            json!({
-                "quest_id": qb, "quest_name": "Beta", "planet": "Calypso",
-                "category": null, "reward_ped": 5.0, "reward_is_skill": true,
-                "expected_reward_markup_percent": null,
-                "total_expected_reward_ped": 5.0,
-                "recorded_completions": 1, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 1, "total_duration": 3600.0,
-                "weapon_cost": 2.1, "heal_cost": 1.5,
-                "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
-                "skill_tt": 0.8,
-            }),
-            json!({
-                "quest_id": qd, "quest_name": "Delta", "planet": "Calypso",
-                "category": null, "reward_ped": 1.25, "reward_is_skill": false,
-                "expected_reward_markup_percent": null,
-                "total_expected_reward_ped": 1.25,
-                "recorded_completions": 1, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 1, "total_duration": 3600.0,
-                "weapon_cost": 2.1, "heal_cost": 1.5,
-                "enhancer_cost": 0.5, "armour_cost": 0.25, "loot_tt": 15.75,
-                "skill_tt": 0.8,
-            }),
-            json!({
-                "quest_id": qc, "quest_name": "Gamma", "planet": "Calypso",
-                "category": null, "reward_ped": 0, "reward_is_skill": false,
-                "expected_reward_markup_percent": null,
-                "total_expected_reward_ped": 0,
-                "recorded_completions": 0, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 1, "total_duration": 100.0,
-                "weapon_cost": 0, "heal_cost": 0.5,
-                "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
-                "skill_tt": 0,
-            }),
-            json!({
-                "quest_id": qn, "quest_name": "Nul", "planet": "Calypso",
-                "category": null, "reward_ped": 0, "reward_is_skill": false,
-                "expected_reward_markup_percent": null,
-                "total_expected_reward_ped": 0,
-                "recorded_completions": 1, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 1, "total_duration": 50.0,
-                "weapon_cost": 0, "heal_cost": 0.0,
-                "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
-                "skill_tt": 0,
-            }),
-            json!({
-                "quest_id": qz, "quest_name": "Zed", "planet": "Calypso",
-                "category": null, "reward_ped": 0, "reward_is_skill": false,
-                // The zero reward normalised its markup away at
-                // creation, exactly as the original stores it.
-                "expected_reward_markup_percent": null,
-                "total_expected_reward_ped": 0,
-                "recorded_completions": 1, "confirmed_completions": 0,
-                "unresolved_completions": 0, "total_recorded_reward_tt": 0.0,
-                "total_recorded_reward_pes": 0.0, "total_recorded_item_tt": 0.0,
-                "recorded_reward_items": [],
-                "linked_sessions": 1, "total_duration": 60.0,
-                "weapon_cost": 0, "heal_cost": 0.0,
-                "enhancer_cost": 0, "armour_cost": 0.0, "loot_tt": 0,
-                "skill_tt": 0,
-            }),
-        ]
-    );
-
-    // An immediate-only playlist with a linked session that
-    // completed nothing in scope: real session stats beside
-    // integer-zero reward sums (the empty long-horizon set
-    // short-circuits without touching SQL).
-    assert_eq!(
-        svc.get_playlist_analytics(p3).await.unwrap().unwrap(),
-        json!({
-            "playlist_id": p3, "playlist_name": "Solo Immediate", "quest_count": 1,
-            "long_horizon_quest_count": 0,
-            "total_reward_ped": 0, "total_immediate_reward_ped": 0,
-            "total_bonus_reward_ped": 0, "total_skill_reward_ped": 0,
-            "total_immediate_skill_reward_ped": 0, "total_bonus_skill_reward_ped": 0,
-            "total_expected_reward_ped": 0, "total_expected_immediate_reward_ped": 0,
-            "total_expected_bonus_reward_ped": 0,
-            "matched_sessions": 1, "linked_sessions": 1, "total_duration": 100.0,
-            "weapon_cost": 0, "heal_cost": 0.5, "enhancer_cost": 0,
-            "armour_cost": 0.0, "loot_tt": 0, "skill_tt": 0,
-        })
-    );
-
-    let p1_stats = svc.get_playlist_analytics(p1).await.unwrap().unwrap();
-    assert_eq!(
-        p1_stats,
-        json!({
-            "playlist_id": p1, "playlist_name": "Mixed Run", "quest_count": 2,
-            "long_horizon_quest_count": 1,
-            "total_reward_ped": 11.25, "total_immediate_reward_ped": 10.0,
-            "total_bonus_reward_ped": 1.25, "total_skill_reward_ped": 5.0,
-            "total_immediate_skill_reward_ped": 5.0, "total_bonus_skill_reward_ped": 0,
-            "total_expected_reward_ped": 13.75,
-            "total_expected_immediate_reward_ped": 12.5,
-            "total_expected_bonus_reward_ped": 1.25,
-            "matched_sessions": 2, "linked_sessions": 2, "total_duration": 3630.5,
-            "weapon_cost": 2.7, "heal_cost": 1.5, "enhancer_cost": 0.6,
-            "armour_cost": 0.25, "loot_tt": 15.75, "skill_tt": 1.0,
-        })
-    );
-
-    // An empty immediate set is the zeroed early-return shape
-    // (which carries matched_sessions but no linked_sessions).
-    let p2_stats = svc.get_playlist_analytics(p2).await.unwrap().unwrap();
-    assert_eq!(
-        p2_stats,
-        json!({
-            "playlist_id": p2, "playlist_name": "Bonus Only", "quest_count": 0,
-            "long_horizon_quest_count": 1, "matched_sessions": 0,
-            "total_reward_ped": 0, "total_immediate_reward_ped": 0,
-            "total_bonus_reward_ped": 0, "total_skill_reward_ped": 0,
-            "total_immediate_skill_reward_ped": 0, "total_bonus_skill_reward_ped": 0,
-            "total_expected_reward_ped": 0, "total_expected_immediate_reward_ped": 0,
-            "total_expected_bonus_reward_ped": 0, "total_duration": 0,
-            "weapon_cost": 0, "heal_cost": 0, "enhancer_cost": 0,
-            "armour_cost": 0, "loot_tt": 0, "skill_tt": 0,
-        })
-    );
-
-    let p3_stats = svc.get_playlist_analytics(p3).await.unwrap().unwrap();
-    assert_eq!(
-        svc.get_all_playlist_analytics().await.unwrap(),
-        vec![p1_stats, p2_stats, p3_stats]
-    );
-    assert_eq!(svc.get_playlist_analytics(9999).await.unwrap(), None);
 }
 
 #[test]
@@ -2092,7 +577,7 @@ fn marker_value(item_name: &str, quantity: i64, value_ped: f64) -> SignalLoot {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manual_hand_in_confirms_one_exact_raw_clump() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, db, _clock, bus) = service_with_clock(dir.path()).await;
+    let (svc, db, clock, bus) = service_with_clock(dir.path()).await;
     let closed = Arc::new(std::sync::Mutex::new(Vec::new()));
     let closed_sink = closed.clone();
     svc.set_stretch_closer(Arc::new(move |quest_id| {
@@ -2150,6 +635,7 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
     bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
         session_id: "s-manual".into(),
     }));
+    clock.advance(60.0).unwrap();
 
     svc.raw_loot_clump_check(&RawLootClump {
         source_id: "clump-old".to_string(),
@@ -2252,7 +738,8 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
         .with_reader(move |conn| {
             let reward_items = conn
                 .prepare(
-                    "SELECT ri.item_name, ri.quantity, ri.value_ped \
+                    "SELECT ri.item_name, ri.quantity, ri.value_ped, ri.accounting_kind, \
+                            ri.ledger_entry_id IS NOT NULL \
                      FROM session_quest_completion_reward_items ri \
                      JOIN session_quest_completions c ON c.id = ri.completion_id \
                      WHERE c.quest_id = ? ORDER BY ri.id",
@@ -2262,6 +749,8 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, f64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -2280,18 +769,44 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
                     ))
                 },
             )?;
-            Ok((reward_items, source))
+            let liquid_gain = conn.query_row(
+                "SELECT amount FROM ledger_entries WHERE tag = 'quest_reward'",
+                [],
+                |row| row.get::<_, f64>(0),
+            )?;
+            let attribution_weight = conn.query_row(
+                "SELECT weight FROM quest_reward_attributions a \
+                 JOIN session_quest_completions c ON c.id = a.completion_id \
+                 WHERE c.quest_id = ?",
+                params![quest],
+                |row| row.get::<_, f64>(0),
+            )?;
+            Ok((reward_items, source, liquid_gain, attribution_weight))
         })
         .await
         .unwrap();
     assert_eq!(
         evidence.0,
         vec![
-            ("Universal Ammo".to_string(), 316_468, 31.64),
-            ("Blazar Fragment".to_string(), 238, 0.0023),
+            (
+                "Universal Ammo".to_string(),
+                316_468,
+                31.64,
+                "liquid".to_string(),
+                1
+            ),
+            (
+                "Blazar Fragment".to_string(),
+                238,
+                0.0023,
+                "stock".to_string(),
+                0
+            ),
         ]
     );
     assert_eq!(evidence.1, (0.0, 1, 1));
+    assert!((evidence.2 - 31.64).abs() < 1e-9);
+    assert!((evidence.3 - 1.0).abs() < 1e-9);
     assert!(svc.get_quest(quest).await.unwrap().unwrap()["started_at"].is_null());
 }
 
@@ -2473,9 +988,104 @@ async fn a_signal_loot_tick_completes_the_in_progress_signal_quest() {
     )
     .await;
     assert_eq!(
-        remaining_reward_items, 0,
-        "cancel removes linked reward evidence"
+        remaining_reward_items, 1,
+        "cooldown reset preserves the reward fact"
     );
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_cooldown_resets").await,
+        1
+    );
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reversals").await,
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reward_undo_is_append_only_and_waits_for_stock_dependants() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db, clock, _bus) = service_with_clock(dir.path()).await;
+    let analytics = crate::analytics::AnalyticsService::new(db.clone(), clock);
+    let quest = quest_id(
+        &svc.create_quest(&json!({
+            "name": "Voucher boss",
+            "completion_trigger": "signal_item",
+            "signal_loot_item": "AI Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["AI Daily Voucher"],
+            "cooldown_hours": 20,
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(quest).await.unwrap();
+    svc.signal_loot_check(&[marker_value("AI Daily Voucher", 1, 0.0)])
+        .await
+        .unwrap();
+
+    let inventory = analytics
+        .stock_positions(crate::analytics::Profession::Inventory)
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory
+            .iter()
+            .find(|item| item.item_name == "AI Daily Voucher")
+            .expect("confirmed reward stock")
+            .quantity,
+        1.0,
+    );
+    analytics
+        .create_private_sale(
+            crate::analytics::Profession::Inventory,
+            "AI Daily Voucher",
+            1.0,
+            2.0,
+            Some("2026-03-01"),
+        )
+        .await
+        .unwrap();
+
+    let refused = svc.cancel_quest(quest, true).await.unwrap_err();
+    assert!(refused
+        .to_string()
+        .contains("listed, sold, converted, or removed"));
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reversals").await,
+        0
+    );
+
+    let sale_id = analytics
+        .activity_history(crate::analytics::Profession::Inventory)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.kind == "trade")
+        .expect("sale history")
+        .id;
+    assert!(analytics.undo_private_sale(&sale_id).await.unwrap());
+    svc.cancel_quest(quest, true).await.unwrap();
+
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reversals").await,
+        1
+    );
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) FROM session_quest_completion_reward_items"
+        )
+        .await,
+        1,
+        "undo preserves immutable reward evidence",
+    );
+    let inventory = analytics
+        .stock_positions(crate::analytics::Profession::Inventory)
+        .await
+        .unwrap();
+    assert!(inventory
+        .iter()
+        .all(|item| item.item_name != "AI Daily Voucher"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2733,23 +1343,24 @@ async fn an_umbrella_line_never_completes_a_variant_quest() {
 }
 
 /// Completion evidence and reward policy are independent: a signal item may
-/// prove completion while the quest pays fixed PED or names that same item as
-/// its additional reward.
+/// prove completion while the quest grants PES or names that same item as its
+/// additional reward.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_signal_quest_accepts_an_independent_reward_policy() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, _db) = service(dir.path()).await;
 
-    let fixed = svc
+    let skill = svc
         .create_quest(&json!({
             "name": "Boss",
             "signal_loot_item": "Hyperion Daily Voucher",
             "reward_ped": 2.0,
+            "reward_is_skill": true,
         }))
         .await
         .unwrap();
-    assert_eq!(fixed["completion_trigger"], json!("signal_item"));
-    assert_eq!(fixed["reward_policy"], json!("fixed_ped"));
+    assert_eq!(skill["completion_trigger"], json!("signal_item"));
+    assert_eq!(skill["reward_policy"], json!("fixed_pes"));
 
     let named = svc
         .create_quest(&json!({

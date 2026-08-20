@@ -1,6 +1,6 @@
 /**
  * The tracking family: session lifecycle, the consolidated snapshot,
- * session reads and post-hoc edits, mob locking, and the quest-link
+ * session reads and post-hoc edits, and mob locking
  * flow. Thin wrappers over the generated typed commands; the session
  * and snapshot reads swap onto the parallel `demo_*` commands while the
  * guide is active (see `./guide`).

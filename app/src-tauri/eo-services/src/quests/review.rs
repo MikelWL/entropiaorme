@@ -10,7 +10,14 @@ enum ReviewResolution {
     Refused(String),
 }
 
-type CompletionReviewEvidence = (String, Option<i64>, f64, Option<String>, Option<String>);
+type CompletionReviewEvidence = (
+    String,
+    Option<i64>,
+    f64,
+    Option<String>,
+    Option<String>,
+    String,
+);
 
 impl QuestService {
     /// List unresolved completion evidence that has no append-only review.
@@ -99,10 +106,12 @@ impl QuestService {
                 let tx = conn.transaction()?;
                 let completion: Option<CompletionReviewEvidence> = tx
                     .query_row(
-                        "SELECT session_id, activity_context_id, completed_at, \
-                                reward_policy_snapshot, reward_evidence_json \
-                         FROM session_quest_completions WHERE id = ? \
-                           AND reward_outcome = 'unresolved'",
+                        "SELECT c.session_id, c.activity_context_id, c.completed_at, \
+                                c.reward_policy_snapshot, c.reward_evidence_json, q.name \
+                         FROM session_quest_completions c \
+                         JOIN quests q ON q.id = c.quest_id \
+                         WHERE c.id = ? \
+                           AND c.reward_outcome = 'unresolved'",
                         rusqlite::params![completion_id],
                         |row| {
                             Ok((
@@ -111,11 +120,12 @@ impl QuestService {
                                 row.get(2)?,
                                 row.get(3)?,
                                 row.get(4)?,
+                                row.get(5)?,
                             ))
                         },
                     )
                     .optional()?;
-                let Some((session_id, context_id, completed_at, policy, evidence)) = completion
+                let Some((session_id, context_id, completed_at, policy, evidence, quest_name)) = completion
                 else {
                     return Ok(ReviewResolution::Refused(
                         "unresolved completion not found".to_string(),
@@ -227,6 +237,7 @@ impl QuestService {
                     ],
                 )?;
                 let review_id = tx.last_insert_rowid();
+                let has_item_reward = !sources.is_empty();
                 for (source_id, item_name, quantity, value_ped) in sources {
                     tx.execute(
                         "INSERT INTO quest_reward_review_items \
@@ -234,10 +245,14 @@ impl QuestService {
                          VALUES (?, ?, ?, ?, ?)",
                         rusqlite::params![review_id, source_id, item_name, quantity, value_ped],
                     )?;
-                    tx.execute(
-                        "INSERT INTO session_quest_completion_reward_items \
-                         (completion_id, item_name, quantity, value_ped) VALUES (?, ?, ?, ?)",
-                        rusqlite::params![completion_id, item_name, quantity, value_ped],
+                    super::lifecycle::insert_reward_item(
+                        &tx,
+                        completion_id,
+                        &quest_name,
+                        completed_at,
+                        &item_name,
+                        quantity,
+                        value_ped,
                     )?;
                     tx.execute(
                         "UPDATE kill_loot_items SET deactivated_at = ? WHERE id = ?",
@@ -246,6 +261,12 @@ impl QuestService {
                 }
                 crate::session_rollup::recompute_session(&tx, &session_id)?;
                 crate::daily_rollup::refresh_session_days(&tx, &session_id)?;
+                if has_item_reward {
+                    crate::daily_rollup::refresh_days(
+                        &tx,
+                        [crate::daily_rollup::epoch_day(completed_at)],
+                    )?;
+                }
                 tx.commit()?;
                 Ok(ReviewResolution::Applied)
             })

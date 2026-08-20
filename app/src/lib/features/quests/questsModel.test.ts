@@ -4,7 +4,6 @@ import { createQuestsModel } from './questsModel.svelte';
 
 vi.mock('$lib/api', () => ({
 	getQuests: vi.fn(),
-	getPlaylists: vi.fn(),
 	getQuestFamilies: vi.fn(),
 	createQuest: vi.fn(),
 	updateQuest: vi.fn(),
@@ -13,7 +12,6 @@ vi.mock('$lib/api', () => ({
 	completeQuest: vi.fn(),
 	cancelQuest: vi.fn(),
 	getQuestAnalytics: vi.fn(),
-	getPlaylistAnalytics: vi.fn(),
 	getAnalyticsOverview: vi.fn(),
 	getMarketHuntMarkups: vi.fn(),
 }));
@@ -34,17 +32,15 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		cooldownExpiresAt: null,
 		reward: 1.2,
 		rewardIsSkill: false,
-		expectedRewardMarkupPercent: 130,
 		rewardDescription: '',
 		notes: '',
 		chainName: null,
 		chainPosition: null,
 		chainTotal: null,
-		playlistIds: [],
 		startedAt: null,
 		signalLootItem: null,
 		completionTrigger: 'mission_log',
-		rewardPolicy: 'fixed_ped',
+		rewardPolicy: 'named_items',
 		rewardItemNames: [],
 		cooldownAnchor: 'completion',
 		lastStartedAt: null,
@@ -62,13 +58,12 @@ const NOW = Date.parse('2026-07-07T12:00:00Z');
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocked.getQuests.mockResolvedValue([]);
-	mocked.getPlaylists.mockResolvedValue([]);
 	mocked.getQuestFamilies.mockResolvedValue([]);
 	mocked.getMarketHuntMarkups.mockResolvedValue({ nanocubeMarkupPct: null, items: [] });
 });
 
 describe('loadData', () => {
-	it('loads quests and playlists and collapses every category once', async () => {
+	it('loads quests and collapses every category once', async () => {
 		const rows = [
 			quest({ id: '1', category: 'Iron' }),
 			quest({ id: '2', category: 'Daily' }),
@@ -115,9 +110,8 @@ describe('analytics', () => {
 	it('preserves the last market snapshot when its independent refresh fails', async () => {
 		const first = { nanocubeMarkupPct: 123, items: [] } as never;
 		mocked.getQuestAnalytics.mockResolvedValue([]);
-		mocked.getPlaylistAnalytics.mockResolvedValue([]);
 		mocked.getAnalyticsOverview.mockResolvedValue({
-			returnsBreakdown: { lootTt: 0, pes: 0, codexPes: 0, questPes: 0, ledger: {} },
+			returnsBreakdown: { lootTt: 0, questItemTt: 0, pes: 0, codexPes: 0, questPes: 0, ledger: {} },
 			lossesBreakdown: { trackingCost: 0, cycledBreakdown: {}, ledger: {} },
 		} as never);
 		mocked.getMarketHuntMarkups.mockResolvedValueOnce(first);
@@ -133,7 +127,7 @@ describe('analytics', () => {
 });
 
 describe('refresh', () => {
-	it('replaces quests and playlists on success', async () => {
+	it('replaces quests on success', async () => {
 		const model = createQuestsModel();
 		mocked.getQuests.mockResolvedValue([quest({ id: '9' })]);
 		await model.refresh();
@@ -308,7 +302,6 @@ describe('guide mode', () => {
 		expect(model.analyticsLoaded).toBe(true);
 
 		mocked.getQuests.mockResolvedValue([]);
-		mocked.getPlaylists.mockResolvedValue([]);
 		await model.loadData(false);
 		expect(model.analyticsLoaded).toBe(false);
 	});
@@ -360,20 +353,6 @@ describe('quest form', () => {
 		await model.saveQuest();
 		expect(mocked.createQuest).toHaveBeenLastCalledWith(
 			expect.objectContaining({ cooldown_hours: null }),
-		);
-	});
-
-	it('saveQuest strips the reward markup for skill quests and zero rewards', async () => {
-		mocked.createQuest.mockResolvedValue(quest({ id: '7' }));
-		const model = createQuestsModel();
-		model.openNewQuest();
-		model.questForm.name = 'Skill';
-		model.questForm.reward_ped = 5;
-		model.questForm.reward_is_skill = true;
-		model.questForm.expected_reward_markup_percent = 130;
-		await model.saveQuest();
-		expect(mocked.createQuest).toHaveBeenCalledWith(
-			expect.objectContaining({ expected_reward_markup_percent: null }),
 		);
 	});
 

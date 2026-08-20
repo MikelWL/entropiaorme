@@ -193,9 +193,7 @@
 		selectDefinition: (id) => selectDefinition(id)
 	});
 
-	// The Activities control: what the session offers and the two writes
-	// that move between offered and standing. The strip renders its chips
-	// off the tracking frame; this model feeds the menu.
+	// Activities owns offered/standing transitions; the strip reads live chips.
 	const activities = createActivitiesModel({
 		readOptions: getActivityOptions,
 		activateQuest: (questId, additive) =>
@@ -204,6 +202,7 @@
 			activateActivity('segment', null, label, additive),
 		deactivateQuest: (questId) => deactivateActivity('quest', questId, null),
 		deactivateSegment: (label) => deactivateActivity('segment', null, label),
+		beginHandIn: beginQuestHandIn,
 		refresh: () => snapshot.hydrate()
 	});
 
@@ -423,20 +422,14 @@
 		await openActivitiesMenu(anchor);
 	}
 
-	async function openQuestHandIn(questId: number) {
-		if (!activitiesAnchor?.isConnected) return;
-		try {
-			const handIn = await beginQuestHandIn(questId);
-			await snapshot.hydrate();
-			const state = buildQuestHandInMenuState(
-				activitiesAnchor.getBoundingClientRect().width,
-				handIn,
-			);
-			facets.facetError = null;
-			await showOverlayMenu('questHandIn', activitiesAnchor, state, { focusPopup: true });
-		} catch (error) {
-			facets.facetError = describeOverlayMenuError(error);
-		}
+	async function openQuestHandIn(key: string) {
+		const anchor = activitiesAnchor;
+		const option = activities.find(key);
+		if (!anchor?.isConnected || !option) return;
+		const handIn = await activities.beginHandIn(option);
+		facets.facetError = activities.error;
+		if (!handIn) return;
+		await showOverlayMenu('questHandIn', anchor, buildQuestHandInMenuState(anchor.getBoundingClientRect().width, handIn), { focusPopup: true });
 	}
 
 	/** An Activities action keeps the control open (declaring one thing
@@ -454,13 +447,6 @@
 			await openActivitiesMenu(activitiesAnchor);
 		}
 		if (failure) facets.facetError = failure;
-	}
-
-	/** The row an Activities selection names, matched on the key the menu
-	 * was presented with. A row that vanished between the present and the
-	 * tap (a completion landing, a definition edit) simply does nothing. */
-	function selectedActivity(key: string) {
-		return activities.options?.options.find((option) => option.key === key) ?? null;
 	}
 
 	async function showArmourCost(anchor: HTMLElement) {
@@ -728,10 +714,7 @@
 				if (event.payload.kind === 'activities') {
 					const payload = event.payload;
 					if (payload.action === 'handIn') {
-						const option = selectedActivity(payload.key);
-						if (option?.questId !== null && option?.questId !== undefined) {
-							await openQuestHandIn(Number(option.questId));
-						}
+						await openQuestHandIn(payload.key);
 						return;
 					}
 					await handleActivityAction(() => {
@@ -739,7 +722,7 @@
 							activities.segmentDraft = payload.label;
 							return activities.declareTyped();
 						}
-						const option = selectedActivity(payload.key);
+						const option = activities.find(payload.key);
 						if (!option) return Promise.resolve(false);
 						return payload.action === 'toggle'
 							? activities.toggle(option)
@@ -750,8 +733,7 @@
 
 				if (event.payload.kind === 'questHandIn') {
 					overlayMenuKind = null;
-					await snapshot.hydrate();
-					await activities.load();
+					await activities.refresh();
 					return;
 				}
 

@@ -23,7 +23,7 @@
 		familyGated?: boolean;
 		/** Whether this quest is showing the Keep/Undo reward cancel choice. */
 		pendingCancelChoice: boolean;
-		/** Quest-row style two-line remaining readout; playlist items use the inline span. */
+		/** Quest-row style two-line remaining readout. */
 		remainingDetail?: boolean;
 		onStart: () => void;
 		onComplete: () => void;

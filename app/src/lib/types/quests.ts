@@ -5,23 +5,17 @@
  */
 
 export type {
-	PlaylistAnalyticsRow,
-	PlaylistInput as PlaylistCreateData,
-	PlaylistInput as PlaylistUpdateData,
-	PlaylistItem,
-	PlaylistItemGroup,
 	Quest,
 	QuestAnalyticsRow,
 	QuestCompletionTrigger,
 	QuestCooldownAnchor,
 	QuestFamily,
+	QuestFamilyInput as QuestFamilyCreateData,
+	QuestFamilyInput as QuestFamilyUpdateData,
 	QuestHandInCandidate,
 	QuestHandInItem,
 	QuestHandInState,
-	QuestFamilyInput as QuestFamilyCreateData,
-	QuestFamilyInput as QuestFamilyUpdateData,
 	QuestInput as QuestCreateData,
 	QuestInput as QuestUpdateData,
-	QuestPlaylist,
 	QuestRewardPolicy,
 } from '$lib/api/commands.gen';

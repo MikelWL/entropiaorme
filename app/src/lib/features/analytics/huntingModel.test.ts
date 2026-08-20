@@ -56,6 +56,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 		returns: 90,
 		lootRate: 0.9,
 		confirmedRewardPed: 15,
+		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
 		rewardedReturns: 105,
 		rewardedRate: 1.05,

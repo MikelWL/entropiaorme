@@ -32,17 +32,21 @@ const QUEST_SELECT: &str = "\
            (SELECT MAX(c.completed_at) \
             FROM session_quest_completions c \
             JOIN quests m ON m.id = c.quest_id \
-            WHERE m.family_id = q.family_id) AS family_last_completed_at, \
-           (SELECT MAX(completed_at) \
-            FROM session_quest_completions \
-            WHERE quest_id = q.id) AS last_completed_at \
+            WHERE m.family_id = q.family_id \
+              AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
+                              WHERE r.completion_id = c.id)) AS family_last_completed_at, \
+           (SELECT MAX(c.completed_at) \
+            FROM session_quest_completions c \
+            WHERE c.quest_id = q.id \
+              AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
+                              WHERE r.completion_id = c.id)) AS last_completed_at \
     FROM quests q \
     LEFT JOIN quest_families f ON f.id = q.family_id AND f.is_active = 1";
 
 impl QuestService {
     // ── Quest CRUD ──────────────────────────────────────────────────
 
-    /// List all quests, enriched with mobs and playlist membership.
+    /// List all quests, enriched with mobs and reward configuration.
     pub async fn get_quests(&self, active_only: bool) -> Result<Vec<Value>, QuestError> {
         let where_clause = if active_only {
             "WHERE q.is_active = 1"
@@ -95,10 +99,6 @@ impl QuestService {
         let quest_id = quest["id"].as_i64().expect("integer quest id");
         quest.insert("mobs".into(), json!(self.quest_mobs(quest_id).await?));
         quest.insert(
-            "playlist_ids".into(),
-            json!(self.quest_playlist_ids(quest_id).await?),
-        );
-        quest.insert(
             "reward_item_names".into(),
             json!(self.quest_reward_item_names(quest_id).await?),
         );
@@ -142,11 +142,6 @@ impl QuestService {
                 "Signal-item completion requires a signal loot item".to_string(),
             ));
         }
-        let markup = normalize_expected_reward_markup(
-            data.get("reward_ped"),
-            data.get("reward_is_skill"),
-            data.get("expected_reward_markup_percent"),
-        );
         // The cooldown anchor: absent (or null) keeps the pre-family
         // default; a string must parse the vocabulary.
         let cooldown_anchor = match data.get("cooldown_anchor").and_then(Value::as_str) {
@@ -184,7 +179,7 @@ impl QuestService {
             value_to_sql(data.get("cooldown_hours").unwrap_or(&Value::Null)),
             value_to_sql(data.get("reward_ped").unwrap_or(&Value::Null)),
             rusqlite::types::Value::Integer(i64::from(json_truthy(data.get("reward_is_skill")))),
-            value_to_sql(&json!(markup)),
+            rusqlite::types::Value::Null,
             value_to_sql(data.get("notes").unwrap_or(&Value::Null)),
             value_to_sql(data.get("chain_name").unwrap_or(&Value::Null)),
             value_to_sql(data.get("chain_position").unwrap_or(&Value::Null)),
@@ -247,7 +242,7 @@ impl QuestService {
             return Ok(None);
         };
 
-        const ALLOWED: [&str; 15] = [
+        const ALLOWED: [&str; 14] = [
             "name",
             "planet",
             "waypoint",
@@ -260,7 +255,6 @@ impl QuestService {
             "chain_total",
             "category",
             "reward_description",
-            "expected_reward_markup_percent",
             "signal_loot_item",
             "reward_policy",
         ];
@@ -372,34 +366,6 @@ impl QuestService {
             ));
         }
 
-        // A change to any reward field re-normalises the stored markup
-        // from the merged (incoming-over-existing) reward picture.
-        let reward_keys = [
-            "reward_ped",
-            "reward_is_skill",
-            "expected_reward_markup_percent",
-        ];
-        if reward_keys.iter().any(|key| data.get(key).is_some()) {
-            let merged = |key: &str| {
-                data.get(key)
-                    .cloned()
-                    .unwrap_or_else(|| existing.get(key).cloned().unwrap_or(Value::Null))
-            };
-            let markup = normalize_expected_reward_markup(
-                Some(&merged("reward_ped")),
-                Some(&merged("reward_is_skill")),
-                Some(&merged("expected_reward_markup_percent")),
-            );
-            let entry = ("expected_reward_markup_percent", json!(markup));
-            match updates
-                .iter_mut()
-                .find(|(key, _)| *key == "expected_reward_markup_percent")
-            {
-                Some(existing_entry) => *existing_entry = entry,
-                None => updates.push(entry),
-            }
-        }
-
         // A present-but-null mobs payload refuses: the original crashes
         // after its mob delete, and the next commit on the shared
         // connection silently ratifies the wipe; the typed refusal plus
@@ -453,7 +419,7 @@ impl QuestService {
         self.get_quest(quest_id).await
     }
 
-    /// Soft-delete a quest, detaching it from every playlist.
+    /// Soft-delete a quest.
     pub async fn delete_quest(&self, quest_id: i64) -> Result<bool, QuestError> {
         let affected = self
             .db
@@ -464,19 +430,7 @@ impl QuestService {
                 )?)
             })
             .await?;
-        if affected > 0 {
-            self.db
-                .with_writer(move |conn| {
-                    conn.execute(
-                        "DELETE FROM quest_playlist_items WHERE quest_id = ?",
-                        rusqlite::params![quest_id],
-                    )?;
-                    Ok(())
-                })
-                .await?;
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(affected > 0)
     }
 
     // ── Mob autocomplete ────────────────────────────────────────────
@@ -708,16 +662,15 @@ fn normalize_reward_policy(
         if json_truthy(reward_is_skill) {
             "fixed_pes"
         } else {
-            "fixed_ped"
+            "none"
         }
     } else {
         "none"
     };
     let policy = value.and_then(Value::as_str).unwrap_or(inferred);
     match policy {
-        "none" | "fixed_ped" | "fixed_pes" | "named_items" | "completion_clump" => {
-            Ok(policy.to_string())
-        }
+        "fixed_ped" => Ok("none".to_string()),
+        "none" | "fixed_pes" | "named_items" | "completion_clump" => Ok(policy.to_string()),
         _ => Err(QuestError::Invalid(format!(
             "Unknown quest reward policy: {policy}"
         ))),
@@ -754,7 +707,7 @@ fn validate_reward_policy(
     reward_ped: Option<&Value>,
 ) -> Result<(), QuestError> {
     let amount = reward_ped.and_then(Value::as_f64).unwrap_or(0.0);
-    if matches!(policy, "fixed_ped" | "fixed_pes") && amount <= 0.0 {
+    if policy == "fixed_pes" && amount <= 0.0 {
         return Err(QuestError::Invalid(
             "A fixed quest reward requires a positive amount".to_string(),
         ));
@@ -765,25 +718,6 @@ fn validate_reward_policy(
         ));
     }
     Ok(())
-}
-
-/// The stored markup only exists for liquid (non-skill) rewards with a
-/// positive PED value; anything else normalises to null.
-fn normalize_expected_reward_markup(
-    reward_ped: Option<&Value>,
-    reward_is_skill: Option<&Value>,
-    expected_markup: Option<&Value>,
-) -> Option<f64> {
-    if json_truthy(reward_is_skill) {
-        return None;
-    }
-    let reward_ped = reward_ped.filter(|value| !value.is_null())?;
-    let reward_ped = reward_ped.as_f64().expect("numeric reward_ped");
-    if reward_ped <= 0.0 {
-        return None;
-    }
-    let expected_markup = expected_markup.filter(|value| !value.is_null())?;
-    Some(expected_markup.as_f64().expect("numeric expected markup"))
 }
 
 fn set_quest_mobs(

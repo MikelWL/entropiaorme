@@ -54,8 +54,8 @@ use eo_api::protection::{
     ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
 };
 use eo_api::quests::{
-    PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
-    QuestHandInState, QuestInput, QuestPlaylist, QuestRewardReviewInput, UnresolvedQuestReward,
+    Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput, QuestHandInState, QuestInput,
+    QuestRewardReviewInput, UnresolvedQuestReward,
 };
 use eo_api::scan::{
     AcceptResult, CaptureResult, RejectResult, ScanStatus, SkillScanPending, SpacebarResult,
@@ -66,8 +66,8 @@ use eo_api::settings::{AppSettings, OverlayPosition, SettingsPatch};
 use eo_api::tracking::{
     ArmourCostResult, DefinitionSelectResult, LootItemEditResult, ManualMobLockResult,
     ManualMobSuggestion, MobEditResult, ReleaseResult, RepairScanResult, SessionConfigResult,
-    SessionDetail, SessionIntervals, SessionPage, SessionQuestLinkSuggestion,
-    SessionReassignResult, StartResult, StopResult, TrackingSnapshot,
+    SessionDetail, SessionIntervals, SessionPage, SessionReassignResult, StartResult, StopResult,
+    TrackingSnapshot,
 };
 use eo_api::ApiError;
 use eo_api::Nullable;
@@ -552,40 +552,6 @@ pub async fn quest_reward_review(
     input: QuestRewardReviewInput,
 ) -> Result<(), ApiError> {
     facade(&app)?.quest_reward_review(input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlists_list(app: tauri::AppHandle) -> Result<Vec<QuestPlaylist>, ApiError> {
-    facade(&app)?.playlists_list().await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_create(
-    app: tauri::AppHandle,
-    input: PlaylistInput,
-) -> Result<QuestPlaylist, ApiError> {
-    facade(&app)?.playlist_create(input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_update(
-    app: tauri::AppHandle,
-    playlist_id: i64,
-    input: PlaylistInput,
-) -> Result<QuestPlaylist, ApiError> {
-    facade(&app)?.playlist_update(playlist_id, input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlist_delete(app: tauri::AppHandle, playlist_id: i64) -> Result<(), ApiError> {
-    facade(&app)?.playlist_delete(playlist_id).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn playlists_analytics(
-    app: tauri::AppHandle,
-) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
-    facade(&app)?.playlists_analytics().await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1278,16 +1244,6 @@ pub async fn tracking_snapshot(app: tauri::AppHandle) -> Result<TrackingSnapshot
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn tracking_quest_link_suggestion(
-    app: tauri::AppHandle,
-    session_id: String,
-) -> Result<SessionQuestLinkSuggestion, ApiError> {
-    facade(&app)?
-        .tracking_quest_link_suggestion(session_id)
-        .await
-}
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn tracking_start(app: tauri::AppHandle) -> Result<StartResult, ApiError> {
     facade(&app)?.tracking_start().await
 }
@@ -1928,11 +1884,6 @@ mod tests {
         "quest_cancel",
         "quests_mobs",
         "quests_analytics",
-        "playlists_list",
-        "playlist_create",
-        "playlist_update",
-        "playlist_delete",
-        "playlists_analytics",
         "quest_families_list",
         "quest_family_create",
         "quest_family_update",
@@ -2007,7 +1958,6 @@ mod tests {
         "tracking_session_intervals",
         "tracking_manual_mob_suggestions",
         "tracking_snapshot",
-        "tracking_quest_link_suggestion",
         "tracking_start",
         "tracking_stop",
         "tracking_release_mob",

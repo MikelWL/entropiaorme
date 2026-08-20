@@ -1333,9 +1333,12 @@ mod tests {
         // interval-snapshot, and defensive-evidence migration's 7 tables and
         // 7 indexes + deferred protection settlement's 4 tables and 4 indexes
         // + manual hand-in's 2 raw-clump tables and 5 source, journal, and
-        // waiting indexes = 73 tables, 93 indexes, 10 triggers.
-        assert_eq!(count("table").await, 73);
-        assert_eq!(count("index").await, 93);
+        // waiting indexes + canonical quest rewards' 3 attribution,
+        // reversal, and cooldown tables with 3 indexes, plus 2 provenance
+        // indexes on the rebuilt movement ledger = 76 tables, 98 indexes,
+        // 10 triggers.
+        assert_eq!(count("table").await, 76);
+        assert_eq!(count("index").await, 98);
         assert_eq!(count("trigger").await, 10);
 
         let version = db
@@ -1808,11 +1811,12 @@ mod tests {
         // the quest-run ownership migration's 2 indexes and 2 triggers + 8
         // earlier triggers + the protection and deferred-settlement
         // migrations' 11 tables and 11 indexes + the manual-hand-in
-        // migration's 2 tables and 5 indexes (only
+        // migration's 2 tables and 5 indexes + canonical quest rewards'
+        // 3 tables and 5 attribution and provenance indexes (only
         // SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 177);
+        assert_eq!(master.len(), 185);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

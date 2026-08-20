@@ -22,12 +22,15 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		offRoster: false,
 		manualHandIn: false,
 		handInWaiting: false,
+		rosterOrder: 0,
 		...overrides,
 	};
 }
 
 function offerings(overrides: Partial<ActivityOptionsResult> = {}): ActivityOptionsResult {
 	return {
+		definitionId: 1,
+		definitionName: 'Daily Hunt',
 		visible: true,
 		adHocSegments: false,
 		readyCount: 1,

@@ -516,20 +516,6 @@ describe('quests wrappers dispatch typed commands', () => {
 			{ quest_id: 5, undo_reward: true },
 		],
 		['getQuestAnalytics', () => api.getQuestAnalytics(), 'quests_analytics', {}],
-		['getPlaylistAnalytics', () => api.getPlaylistAnalytics(), 'playlists_analytics', {}],
-		['getPlaylists', () => api.getPlaylists(), 'playlists_list', {}],
-		[
-			'createPlaylist',
-			() => api.createPlaylist({ name: 'dailies' } as never),
-			'playlist_create',
-			{ input: { name: 'dailies' } },
-		],
-		[
-			'updatePlaylist',
-			() => api.updatePlaylist('9', { name: 'weeklies' } as never),
-			'playlist_update',
-			{ playlist_id: 9, input: { name: 'weeklies' } },
-		],
 	];
 	it.each(rows)('%s', async (_name, call, command, args) => {
 		await call();
@@ -540,11 +526,6 @@ describe('quests wrappers dispatch typed commands', () => {
 	it('deleteQuest invokes the void typed command and resolves void', async () => {
 		await expect(api.deleteQuest('5')).resolves.toBeUndefined();
 		expect(tauriInvoke).toHaveBeenCalledWith('quest_delete', { quest_id: 5 });
-	});
-
-	it('deletePlaylist invokes the void typed command and resolves void', async () => {
-		await expect(api.deletePlaylist('9')).resolves.toBeUndefined();
-		expect(tauriInvoke).toHaveBeenCalledWith('playlist_delete', { playlist_id: 9 });
 	});
 });
 

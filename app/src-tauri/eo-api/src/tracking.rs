@@ -1,5 +1,5 @@
 //! The tracking family: the session-read surface (list, detail, tag /
-//! manual-mob suggestions, the quest-link suggestion), the live producer
+//! manual-mob suggestions), the live producer
 //! surface (start / stop / release-mob / manual-mob-lock / tag-lock / the
 //! consolidated dashboard snapshot), the post-hoc session edits (rename /
 //! restore mob, loot-item activate / deactivate, re-file under another
@@ -187,28 +187,6 @@ pub enum NotableEventType {
     QuestStarted,
     QuestCompleted,
     QuestCompletedPes,
-}
-
-/// What the quest-link suggestion proposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLinkSuggestionType {
-    Quest,
-    Playlist,
-    None,
-}
-
-/// Why the quest-link suggestion took its shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum QuestLinkReason {
-    SingleQuest,
-    ExactPlaylist,
-    NoCompletions,
-    Unclean,
-    AmbiguousPlaylist,
-    Declined,
-    AlreadyLinked,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────
@@ -407,19 +385,6 @@ pub struct SessionIntervalRow {
 pub struct SessionIntervals {
     pub session_id: String,
     pub intervals: Vec<SessionIntervalRow>,
-}
-
-/// The quest-link suggestion (all seven fields always present).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionQuestLinkSuggestion {
-    pub session_id: String,
-    pub suggestion_type: Nullable<QuestLinkSuggestionType>,
-    pub reason: Nullable<QuestLinkReason>,
-    pub quest_id: Nullable<String>,
-    pub quest_name: Nullable<String>,
-    pub playlist_id: Nullable<String>,
-    pub playlist_name: Nullable<String>,
 }
 
 /// One preset reference inside the trifecta attribution summary.
@@ -938,30 +903,6 @@ impl Api {
             session_id,
             intervals,
         })
-    }
-
-    /// The curated quest-link suggestion for a completed session; an absent
-    /// session is a not-found.
-    ///
-    /// Legacy read: the recorded quest stretch superseded the curated
-    /// link (analytics read intervals, nothing writes the link table,
-    /// and no UI calls this any more), but the suggestion's behaviour
-    /// is pinned by the replay corpus's expected responses, so the
-    /// read stays exactly as the port ratified it.
-    pub async fn tracking_quest_link_suggestion(
-        &self,
-        session_id: String,
-    ) -> Result<SessionQuestLinkSuggestion, ApiError> {
-        if !self.tracking_session_exists(&session_id).await? {
-            return Err(ApiError::not_found("Session not found"));
-        }
-        let suggestion = self
-            .quests
-            .get_session_link_suggestion(&session_id)
-            .await
-            .map_err(ApiError::internal("quest-link suggestion"))?;
-        let value = format_quest_link_suggestion(&session_id, &suggestion);
-        serde_json::from_value(value).map_err(ApiError::internal("quest-link suggestion shaping"))
     }
 
     /// Begin a tracking session. 409 if one is already active (before the

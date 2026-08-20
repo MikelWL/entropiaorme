@@ -1,6 +1,5 @@
-//! The quests + playlists family: the quest CRUD and lifecycle
-//! (start / complete / cancel), the playlist CRUD, the mob-name
-//! autocomplete, and the per-quest and per-playlist analytics.
+//! The quests family: quest CRUD and lifecycle, mob-name autocomplete,
+//! reward review, families, and per-quest analytics.
 //!
 //! The computation stays in `eo_services::quests::QuestService`, which
 //! speaks `serde_json::Value` in **snake_case** and leaves the camelCase
@@ -64,8 +63,6 @@ pub struct QuestInput {
     #[serde(default)]
     pub reward_is_skill: bool,
     #[serde(default)]
-    pub expected_reward_markup_percent: Option<f64>,
-    #[serde(default)]
     pub reward_description: Option<String>,
     #[serde(default)]
     pub completion_trigger: Option<QuestCompletionTrigger>,
@@ -114,7 +111,6 @@ impl QuestInput {
             "cooldown_hours": self.cooldown_hours,
             "reward_ped": self.reward_ped,
             "reward_is_skill": self.reward_is_skill,
-            "expected_reward_markup_percent": self.expected_reward_markup_percent,
             "reward_description": self.reward_description,
             "reward_item_names": self.reward_item_names,
             "notes": self.notes,
@@ -141,67 +137,8 @@ impl QuestInput {
     }
 }
 
-/// A playlist create or update payload, in the frontend's snake_case
-/// casing. The sole client sends `name` / `planet` / `estimated_minutes`
-/// / `items` for both operations (never `quest_ids`); the service derives
-/// membership from `items` whenever it is present, so the facade sends
-/// exactly those keys and omits the vestigial `quest_ids`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct PlaylistInput {
-    pub name: String,
-    #[serde(default = "default_planet")]
-    pub planet: String,
-    #[serde(default = "default_estimated_minutes")]
-    pub estimated_minutes: i64,
-    #[serde(default)]
-    pub items: Vec<PlaylistItemInput>,
-}
-
-impl PlaylistInput {
-    /// The snake_case service payload: the classified item list drives
-    /// membership (`normalize_playlist_items` prefers `items` over
-    /// `quest_ids`), so the facade sends `items` and leaves `quest_ids`
-    /// out entirely, matching the frontend request byte for byte.
-    fn to_service_value(&self) -> Value {
-        json!({
-            "name": self.name,
-            "planet": self.planet,
-            "estimated_minutes": self.estimated_minutes,
-            "items": self.items.iter().map(PlaylistItemInput::to_value).collect::<Vec<_>>(),
-        })
-    }
-}
-
-/// One classified quest slot in a playlist create/update.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct PlaylistItemInput {
-    pub quest_id: i64,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default = "default_group_type")]
-    pub group_type: String,
-}
-
-impl PlaylistItemInput {
-    fn to_value(&self) -> Value {
-        json!({
-            "quest_id": self.quest_id,
-            "description": self.description,
-            "group_type": self.group_type,
-        })
-    }
-}
-
 fn default_planet() -> String {
     "Calypso".to_string()
-}
-
-fn default_estimated_minutes() -> i64 {
-    30
-}
-
-fn default_group_type() -> String {
-    "immediate".to_string()
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────
@@ -248,7 +185,6 @@ impl QuestCompletionTrigger {
 #[serde(rename_all = "snake_case")]
 pub enum QuestRewardPolicy {
     None,
-    FixedPed,
     FixedPes,
     NamedItems,
     CompletionClump,
@@ -258,7 +194,6 @@ impl QuestRewardPolicy {
     fn as_service_str(self) -> &'static str {
         match self {
             Self::None => "none",
-            Self::FixedPed => "fixed_ped",
             Self::FixedPes => "fixed_pes",
             Self::NamedItems => "named_items",
             Self::CompletionClump => "completion_clump",
@@ -267,7 +202,6 @@ impl QuestRewardPolicy {
 
     fn from_service(value: &Value) -> Self {
         match value.as_str() {
-            Some("fixed_ped") => Self::FixedPed,
             Some("fixed_pes") => Self::FixedPes,
             Some("named_items") => Self::NamedItems,
             Some("completion_clump") => Self::CompletionClump,
@@ -311,13 +245,11 @@ pub struct Quest {
     pub cooldown_expires_at: Nullable<String>,
     pub reward: Nullable<f64>,
     pub reward_is_skill: bool,
-    pub expected_reward_markup_percent: Nullable<f64>,
     pub reward_description: String,
     pub notes: String,
     pub chain_name: Nullable<String>,
     pub chain_position: Nullable<i64>,
     pub chain_total: Nullable<i64>,
-    pub playlist_ids: Vec<String>,
     /// A fractional epoch-seconds timestamp (the tracker's clock is
     /// sub-second), null while the quest is not in progress.
     pub started_at: Nullable<f64>,
@@ -409,16 +341,18 @@ impl Quest {
             waypoint: opt_string(&quest["waypoint"]).into(),
             cooldown_duration_hours: opt_f64(&quest["cooldown_hours"]).into(),
             cooldown_expires_at: opt_string(&quest["cooldown_expires_at"]).into(),
-            reward: opt_f64(&quest["reward_ped"]).into(),
+            reward: if quest["reward_is_skill"].as_i64().unwrap_or(0) != 0 {
+                opt_f64(&quest["reward_ped"])
+            } else {
+                None
+            }
+            .into(),
             reward_is_skill: quest["reward_is_skill"].as_i64().unwrap_or(0) != 0,
-            expected_reward_markup_percent: opt_f64(&quest["expected_reward_markup_percent"])
-                .into(),
             reward_description: or_empty(&quest["reward_description"]),
             notes: or_empty(&quest["notes"]),
             chain_name: opt_string(&quest["chain_name"]).into(),
             chain_position: opt_i64(&quest["chain_position"]).into(),
             chain_total: opt_i64(&quest["chain_total"]).into(),
-            playlist_ids: string_id_list(&quest["playlist_ids"]),
             started_at: opt_f64(&quest["started_at"]).into(),
             signal_loot_item: opt_string(&quest["signal_loot_item"]).into(),
             completion_trigger: QuestCompletionTrigger::from_service(&quest["completion_trigger"]),
@@ -507,73 +441,6 @@ impl QuestFamily {
     }
 }
 
-/// Which playlist group a quest slot belongs to. The serialised forms
-/// are byte-identical to the strings they replace; the input side
-/// (`PlaylistItemInput`) deliberately stays a plain string so its
-/// service-level validation and error replies are untouched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PlaylistItemGroup {
-    Immediate,
-    LongHorizon,
-}
-
-/// One classified slot in a playlist's wire shape.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaylistItem {
-    pub quest_id: String,
-    pub description: Nullable<String>,
-    pub group_type: PlaylistItemGroup,
-}
-
-/// A playlist in the wire shape (`_format_playlist`). Membership arrives
-/// pre-classified from the service; ids are stringified.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestPlaylist {
-    pub id: String,
-    pub name: String,
-    pub planet: String,
-    pub estimated_minutes: i64,
-    pub quest_ids: Vec<String>,
-    pub immediate_quest_ids: Vec<String>,
-    pub long_horizon_quest_ids: Vec<String>,
-    pub items: Vec<PlaylistItem>,
-}
-
-impl QuestPlaylist {
-    /// Port of `_format_playlist`.
-    fn from_service(playlist: &Value) -> Self {
-        let items = playlist["items"]
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-            .iter()
-            .map(|item| PlaylistItem {
-                quest_id: str_of(&item["quest_id"]),
-                description: opt_string(&item["description"]).into(),
-                // Preserves the pre-enum fallback: anything but the explicit
-                // long-horizon marker reads as immediate.
-                group_type: match item.get("group_type").and_then(Value::as_str) {
-                    Some("long_horizon") => PlaylistItemGroup::LongHorizon,
-                    _ => PlaylistItemGroup::Immediate,
-                },
-            })
-            .collect();
-        Self {
-            id: str_of(&playlist["id"]),
-            name: string_field(&playlist["name"]),
-            planet: string_field(&playlist["planet"]),
-            estimated_minutes: playlist["estimated_minutes"].as_i64().unwrap_or(0),
-            quest_ids: string_id_list(&playlist["quest_ids"]),
-            immediate_quest_ids: string_id_list(&playlist["immediate_quest_ids"]),
-            long_horizon_quest_ids: string_id_list(&playlist["long_horizon_quest_ids"]),
-            items,
-        }
-    }
-}
-
 /// Per-quest analytics in the wire shape (`_format_quest_analytics`).
 /// The reward and cost columns are model-float coerced and rounded; the
 /// session count is an integer; the markup passes through raw.
@@ -584,16 +451,13 @@ pub struct QuestAnalyticsRow {
     pub quest_name: String,
     pub planet: String,
     pub category: Nullable<String>,
-    pub reward_ped: f64,
-    pub reward_is_skill: bool,
-    pub expected_reward_markup_percent: Nullable<f64>,
-    pub total_expected_reward_ped: f64,
     pub recorded_completions: i64,
     pub confirmed_completions: i64,
     pub unresolved_completions: i64,
     pub total_recorded_reward_tt: f64,
     pub total_recorded_reward_pes: f64,
     pub total_recorded_item_tt: f64,
+    pub total_realised_reward_markup: f64,
     pub recorded_reward_items: Vec<QuestRewardCandidate>,
     pub linked_sessions: i64,
     pub total_duration_sec: f64,
@@ -667,16 +531,13 @@ impl QuestAnalyticsRow {
             quest_name: string_field(&row["quest_name"]),
             planet: string_field(&row["planet"]),
             category: opt_string(&row["category"]).into(),
-            reward_ped: model_float(&row["reward_ped"], 2),
-            reward_is_skill: row["reward_is_skill"].as_bool().unwrap_or(false),
-            expected_reward_markup_percent: opt_f64(&row["expected_reward_markup_percent"]).into(),
-            total_expected_reward_ped: model_float(&row["total_expected_reward_ped"], 2),
             recorded_completions: row["recorded_completions"].as_i64().unwrap_or(0),
             confirmed_completions: row["confirmed_completions"].as_i64().unwrap_or(0),
             unresolved_completions: row["unresolved_completions"].as_i64().unwrap_or(0),
             total_recorded_reward_tt: model_float(&row["total_recorded_reward_tt"], 2),
             total_recorded_reward_pes: model_float(&row["total_recorded_reward_pes"], 2),
             total_recorded_item_tt: model_float(&row["total_recorded_item_tt"], 2),
+            total_realised_reward_markup: model_float(&row["total_realised_reward_markup"], 2),
             recorded_reward_items: row["recorded_reward_items"]
                 .as_array()
                 .into_iter()
@@ -688,68 +549,6 @@ impl QuestAnalyticsRow {
                 })
                 .collect(),
             linked_sessions: row["linked_sessions"].as_i64().unwrap_or(0),
-            total_duration_sec: model_float(&row["total_duration"], 1),
-            total_weapon_cost: model_float(&row["weapon_cost"], 4),
-            total_heal_cost: model_float(&row["heal_cost"], 4),
-            total_enhancer_cost: model_float(&row["enhancer_cost"], 4),
-            total_armour_cost: model_float(&row["armour_cost"], 4),
-            total_loot_tt: model_float(&row["loot_tt"], 4),
-            total_pes: model_float(&row["skill_tt"], 4),
-        }
-    }
-}
-
-/// Per-playlist analytics in the wire shape
-/// (`_format_playlist_analytics`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaylistAnalyticsRow {
-    pub playlist_id: String,
-    pub playlist_name: String,
-    pub quest_count: i64,
-    pub long_horizon_quest_count: i64,
-    pub matched_sessions: i64,
-    pub total_reward_ped: f64,
-    pub total_immediate_reward_ped: f64,
-    pub total_bonus_reward_ped: f64,
-    pub total_pes_reward: f64,
-    pub total_immediate_pes_reward: f64,
-    pub total_bonus_pes_reward: f64,
-    pub total_expected_reward_ped: f64,
-    pub total_expected_immediate_reward_ped: f64,
-    pub total_expected_bonus_reward_ped: f64,
-    pub total_duration_sec: f64,
-    pub total_weapon_cost: f64,
-    pub total_heal_cost: f64,
-    pub total_enhancer_cost: f64,
-    pub total_armour_cost: f64,
-    pub total_loot_tt: f64,
-    pub total_pes: f64,
-}
-
-impl PlaylistAnalyticsRow {
-    fn from_service(row: &Value) -> Self {
-        Self {
-            playlist_id: str_of(&row["playlist_id"]),
-            playlist_name: string_field(&row["playlist_name"]),
-            quest_count: row["quest_count"].as_i64().unwrap_or(0),
-            long_horizon_quest_count: row["long_horizon_quest_count"].as_i64().unwrap_or(0),
-            matched_sessions: row["matched_sessions"].as_i64().unwrap_or(0),
-            total_reward_ped: model_float(&row["total_reward_ped"], 2),
-            total_immediate_reward_ped: model_float(&row["total_immediate_reward_ped"], 2),
-            total_bonus_reward_ped: model_float(&row["total_bonus_reward_ped"], 2),
-            total_pes_reward: model_float(&row["total_skill_reward_ped"], 2),
-            total_immediate_pes_reward: model_float(&row["total_immediate_skill_reward_ped"], 2),
-            total_bonus_pes_reward: model_float(&row["total_bonus_skill_reward_ped"], 2),
-            total_expected_reward_ped: model_float(&row["total_expected_reward_ped"], 2),
-            total_expected_immediate_reward_ped: model_float(
-                &row["total_expected_immediate_reward_ped"],
-                2,
-            ),
-            total_expected_bonus_reward_ped: model_float(
-                &row["total_expected_bonus_reward_ped"],
-                2,
-            ),
             total_duration_sec: model_float(&row["total_duration"], 1),
             total_weapon_cost: model_float(&row["weapon_cost"], 4),
             total_heal_cost: model_float(&row["heal_cost"], 4),
@@ -813,16 +612,6 @@ fn string_list(value: &Value) -> Vec<String> {
 }
 
 /// A list of ids, each stringified (`str(id)`).
-fn string_id_list(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-        .iter()
-        .map(str_of)
-        .collect()
-}
-
 /// A model-declared float column: `float_field(round(value, places))`.
 /// The response models coerce an integer-typed engine value to its float
 /// form at serialisation (an engine zero leaves the wire as `0.0`), and
@@ -835,7 +624,7 @@ fn model_float(value: &Value, places: usize) -> f64 {
 // ── Facade methods ──────────────────────────────────────────────────
 
 impl Api {
-    /// All active quests, enriched with mobs and playlist membership.
+    /// All active quests, enriched with their target mobs.
     pub async fn quests_list(&self) -> Result<Vec<Quest>, ApiError> {
         let quests = self
             .quests
@@ -1026,58 +815,6 @@ impl Api {
             .map_err(quest_error("quest reward review"))
     }
 
-    /// All active playlists.
-    pub async fn playlists_list(&self) -> Result<Vec<QuestPlaylist>, ApiError> {
-        let playlists = self
-            .quests
-            .get_playlists(true)
-            .await
-            .map_err(quest_error("playlists list read"))?;
-        Ok(playlists.iter().map(QuestPlaylist::from_service).collect())
-    }
-
-    /// Create a playlist.
-    pub async fn playlist_create(&self, input: PlaylistInput) -> Result<QuestPlaylist, ApiError> {
-        let created = self
-            .quests
-            .create_playlist(&input.to_service_value())
-            .await
-            .map_err(quest_error("playlist create"))?;
-        Ok(QuestPlaylist::from_service(&created))
-    }
-
-    /// Update a playlist's fields and classified membership; a missing
-    /// playlist is a 404.
-    pub async fn playlist_update(
-        &self,
-        playlist_id: i64,
-        input: PlaylistInput,
-    ) -> Result<QuestPlaylist, ApiError> {
-        match self
-            .quests
-            .update_playlist(playlist_id, &input.to_service_value())
-            .await
-            .map_err(quest_error("playlist update"))?
-        {
-            Some(updated) => Ok(QuestPlaylist::from_service(&updated)),
-            None => Err(playlist_not_found()),
-        }
-    }
-
-    /// Delete a playlist; a missing playlist is a 404. The prior
-    /// `{"ok": true}` body retires (no consumer).
-    pub async fn playlist_delete(&self, playlist_id: i64) -> Result<(), ApiError> {
-        match self
-            .quests
-            .delete_playlist(playlist_id)
-            .await
-            .map_err(quest_error("playlist delete"))?
-        {
-            true => Ok(()),
-            false => Err(playlist_not_found()),
-        }
-    }
-
     /// All active quest families, with their derived availability.
     pub async fn quest_families_list(&self) -> Result<Vec<QuestFamily>, ApiError> {
         let families = self
@@ -1133,19 +870,6 @@ impl Api {
             false => Err(family_not_found()),
         }
     }
-
-    /// Per-playlist analytics over exact-match linked sessions.
-    pub async fn playlists_analytics(&self) -> Result<Vec<PlaylistAnalyticsRow>, ApiError> {
-        let rows = self
-            .quests
-            .get_all_playlist_analytics()
-            .await
-            .map_err(quest_error("playlist analytics read"))?;
-        Ok(rows
-            .iter()
-            .map(PlaylistAnalyticsRow::from_service)
-            .collect())
-    }
 }
 
 /// The quests family's error mapping: every failure (invalid input,
@@ -1164,10 +888,6 @@ fn quest_error(context: &'static str) -> impl FnOnce(QuestError) -> ApiError {
 
 fn quest_not_found() -> ApiError {
     ApiError::not_found("Quest not found")
-}
-
-fn playlist_not_found() -> ApiError {
-    ApiError::not_found("Playlist not found")
 }
 
 fn family_not_found() -> ApiError {

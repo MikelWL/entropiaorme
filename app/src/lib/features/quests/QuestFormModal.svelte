@@ -64,30 +64,15 @@
 						disabled={model.questForm.completion_trigger === 'manual_hand_in'}
 					>
 						<option value="none">No separate reward</option>
-						<option value="fixed_ped">Fixed PED</option>
 						<option value="fixed_pes">Fixed PES</option>
 						<option value="named_items">Specific items</option>
 						<option value="completion_clump">Completion loot clump</option>
 					</Select>
 				</div>
-				{#if model.questForm.reward_policy === 'fixed_ped' || model.questForm.reward_policy === 'fixed_pes'}
+				{#if model.questForm.reward_policy === 'fixed_pes'}
 					<div>
-						<label class="block text-xs text-text-secondary mb-1" for="q-reward">Amount ({model.questForm.reward_policy === 'fixed_pes' ? 'PES' : 'PED'})</label>
+						<label class="block text-xs text-text-secondary mb-1" for="q-reward">Amount (PES)</label>
 						<Input id="q-reward" type="number" step="0.01" min="0" required bind:value={model.questForm.reward_ped} />
-					</div>
-				{/if}
-				{#if model.questForm.reward_policy === 'fixed_ped'}
-					<div>
-						<label class="block text-xs text-text-secondary mb-1" for="q-rmarkup">Expected Reward Markup %</label>
-						<Input
-							id="q-rmarkup"
-							type="number"
-							step="0.1"
-							min="0"
-							bind:value={model.questForm.expected_reward_markup_percent}
-							disabled={model.rewardMarkupInputDisabled()}
-							placeholder="e.g. 130"
-						/>
 					</div>
 				{/if}
 				{#if model.questForm.reward_policy === 'named_items'}

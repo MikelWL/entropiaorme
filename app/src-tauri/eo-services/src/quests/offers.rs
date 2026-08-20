@@ -4,7 +4,7 @@
 //! The Activities control refreshes on every tracking frame, so this
 //! read carries only what a chip needs (identity, the two lifecycle
 //! facts, and the instant the availability gate lifts) and skips the
-//! per-quest mob and playlist round trips the management surface wants.
+//! per-quest mob round trips the management surface wants.
 //! The cooldown arithmetic is the shared [`cooldown_lift`], so an
 //! offering can never disagree with the quest row about when a gate
 //! lifts.
@@ -20,14 +20,18 @@ const OFFER_SELECT: &str = "\
            q.cooldown_hours, q.cooldown_anchor, q.last_started_at, \
            f.cooldown_hours AS family_cooldown_hours, \
            f.cooldown_anchor AS family_cooldown_anchor, \
-           (SELECT MAX(completed_at) FROM session_quest_completions \
-            WHERE quest_id = q.id) AS last_completed_at, \
+           (SELECT MAX(c.completed_at) FROM session_quest_completions c \
+            WHERE c.quest_id = q.id \
+              AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
+                              WHERE r.completion_id = c.id)) AS last_completed_at, \
            (SELECT MAX(m.last_started_at) FROM quests m \
             WHERE m.family_id = q.family_id) AS family_last_started_at, \
            (SELECT MAX(c.completed_at) \
             FROM session_quest_completions c \
             JOIN quests m ON m.id = c.quest_id \
-            WHERE m.family_id = q.family_id) AS family_last_completed_at, \
+            WHERE m.family_id = q.family_id \
+              AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
+                              WHERE r.completion_id = c.id)) AS family_last_completed_at, \
            EXISTS(SELECT 1 FROM quest_runs r WHERE r.quest_id = q.id \
                   AND r.status = 'in_progress' AND r.hand_in_waiting = 1) \
              AS hand_in_waiting \

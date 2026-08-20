@@ -4,11 +4,9 @@
 
 use serde_json::Value;
 
-use crate::db::DbError;
 use crate::ped::Ped;
 use crate::time::to_iso_utc;
 
-use super::payload::json_truthy;
 use super::{QuestError, QuestService};
 
 /// One actual item observed as a quest reward. This is completion evidence,
@@ -48,8 +46,129 @@ enum CompletionWrite {
     Refused(String),
 }
 
-/// The overlay-event vocabulary the quest flows record: a started
-/// quest, a completed liquid reward, a completed skill (PES) reward.
+pub(super) fn insert_reward_item(
+    conn: &rusqlite::Connection,
+    completion_id: i64,
+    quest_name: &str,
+    completed_at: f64,
+    item_name: &str,
+    quantity: i64,
+    value_ped: f64,
+) -> rusqlite::Result<()> {
+    let liquid = item_name.trim().eq_ignore_ascii_case("Universal Ammo");
+    conn.execute(
+        "INSERT INTO session_quest_completion_reward_items \
+         (completion_id, item_name, quantity, value_ped, accounting_kind) \
+         VALUES (?, ?, ?, ?, ?)",
+        rusqlite::params![
+            completion_id,
+            item_name,
+            quantity.max(1),
+            value_ped.max(0.0),
+            if liquid { "liquid" } else { "stock" },
+        ],
+    )?;
+    let reward_item_id = conn.last_insert_rowid();
+    if !liquid || value_ped <= 0.0 {
+        return Ok(());
+    }
+    let ledger_id = format!("quest-ammo-{reward_item_id}");
+    let date = to_iso_utc(completed_at);
+    conn.execute(
+        "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
+         VALUES (?, ?, 'markup', ?, ?, 'quest_reward')",
+        rusqlite::params![ledger_id, date, format!("Quest: {quest_name}"), value_ped],
+    )?;
+    conn.execute(
+        "UPDATE session_quest_completion_reward_items SET ledger_entry_id = ? WHERE id = ?",
+        rusqlite::params![ledger_id, reward_item_id],
+    )?;
+    Ok(())
+}
+
+fn snapshot_reward_attributions(
+    conn: &rusqlite::Connection,
+    completion_id: i64,
+    run_id: i64,
+    completed_at: f64,
+) -> rusqlite::Result<()> {
+    #[derive(Debug)]
+    struct ContextWeight {
+        context_id: i64,
+        definition_id: Option<i64>,
+        cycled: f64,
+        duration: f64,
+    }
+
+    let rows: Vec<ContextWeight> = {
+        let mut stmt = conn.prepare(
+            "SELECT c.id, s.definition_id, \
+                    COALESCE((SELECT SUM(k.cost_ped + k.enhancer_cost) \
+                              FROM kills k WHERE k.context_id = c.id), 0) + \
+                    COALESCE((SELECT SUM(h.cost_ped) \
+                              FROM harvest_events h WHERE h.context_id = c.id), 0), \
+                    MAX(0, COALESCE((SELECT MIN(next.created_at) \
+                                     FROM session_contexts next \
+                                     WHERE next.session_id = c.session_id \
+                                       AND next.created_at > c.created_at), \
+                                    s.ended_at, ?) - c.created_at) \
+             FROM session_contexts c \
+             JOIN tracking_sessions s ON s.id = c.session_id \
+             WHERE EXISTS ( \
+                 SELECT 1 FROM session_context_intervals sci \
+                 JOIN quest_run_intervals qri ON qri.interval_id = sci.interval_id \
+                 WHERE sci.context_id = c.id AND qri.run_id = ? \
+             ) \
+             ORDER BY c.created_at, c.id",
+        )?;
+        let mapped = stmt.query_map(rusqlite::params![completed_at, run_id], |row| {
+            Ok(ContextWeight {
+                context_id: row.get(0)?,
+                definition_id: row.get(1)?,
+                cycled: row.get::<_, f64>(2)?.max(0.0),
+                duration: row.get::<_, f64>(3)?.max(0.0),
+            })
+        })?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let total_cycled: f64 = rows.iter().map(|row| row.cycled).sum();
+    let total_duration: f64 = rows.iter().map(|row| row.duration).sum();
+    let (basis, total) = if total_cycled > 0.0 {
+        ("cycled", total_cycled)
+    } else if total_duration > 0.0 {
+        ("duration", total_duration)
+    } else {
+        return Ok(());
+    };
+    for row in rows {
+        let numerator = if basis == "cycled" {
+            row.cycled
+        } else {
+            row.duration
+        };
+        if numerator <= 0.0 {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO quest_reward_attributions \
+             (completion_id, activity_context_id, session_definition_id, weight, basis, \
+              cycled_ped, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                completion_id,
+                row.context_id,
+                row.definition_id,
+                numerator / total,
+                basis,
+                row.cycled,
+                row.duration,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// The overlay-event vocabulary the quest flows record: a started quest,
+/// a completed liquid-TT outcome, and a completed skill (PES) outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum NotableEventKind {
     Started,
@@ -185,7 +304,7 @@ impl QuestService {
                 had_tracked_loot: false,
                 manual_clump: None,
             },
-            "fixed_ped" | "fixed_pes" => RewardCapture {
+            "fixed_pes" => RewardCapture {
                 outcome: "confirmed",
                 policy_snapshot: policy.to_string(),
                 items: Vec::new(),
@@ -210,25 +329,16 @@ impl QuestService {
         let reward_is_skill = policy == "fixed_pes";
         let reward_source = match reward_ped.filter(|reward| reward.is_positive()) {
             Some(_) if reward_is_skill => "skill",
-            Some(_) => "ledger",
             None if capture.had_tracked_loot => "tracked_loot",
-            None => "none",
+            _ => "none",
         };
         let reward_kind = match reward_source {
-            "ledger" => "fixed_liquid",
             "skill" => "skill",
             _ if !capture.items.is_empty() => "item",
             "tracked_loot" => "included_in_loot",
             _ => "none",
         };
-        let expected_markup = quest
-            .get("expected_reward_markup_percent")
-            .and_then(Value::as_f64);
         let name = quest["name"].as_str().expect("quest name").to_string();
-        // Preserve the established deterministic identifier order: a liquid
-        // reward receives its ledger id before a session-less completion
-        // receives its synthetic key.
-        let ledger_id = (reward_source == "ledger").then(|| self.next_id());
         let completion_key = session_id
             .filter(|id| !id.is_empty())
             .unwrap_or_else(|| format!("manual-{}", self.next_id()));
@@ -241,7 +351,6 @@ impl QuestService {
         let reward_items = capture.items;
         let manual_clump = capture.manual_clump;
         let reclassified_source_id = manual_clump.as_ref().map(|claim| claim.source_id.clone());
-        let ledger_id_for_write = ledger_id.clone();
         let resolution = self
             .db
             .with_writer(move |conn| {
@@ -331,7 +440,7 @@ impl QuestService {
                         reward_source,
                         reward_kind,
                         reward_value,
-                        expected_markup,
+                        Option::<f64>::None,
                         reward_outcome,
                         policy_snapshot,
                         unresolved_reason,
@@ -356,17 +465,23 @@ impl QuestService {
                        AND started_at >= ? AND started_at <= ?",
                     rusqlite::params![run_id, quest_id, run_started_at, now],
                 )?;
+                snapshot_reward_attributions(&tx, completion_id, run_id, now)?;
+                let has_item_reward = !reward_items.is_empty();
                 for item in reward_items {
-                    tx.execute(
-                        "INSERT INTO session_quest_completion_reward_items \
-                         (completion_id, item_name, quantity, value_ped) \
-                         VALUES (?, ?, ?, ?)",
-                        rusqlite::params![
-                            completion_id,
-                            item.item_name,
-                            item.quantity.max(1),
-                            item.value_ped.value().max(0.0),
-                        ],
+                    insert_reward_item(
+                        &tx,
+                        completion_id,
+                        &name,
+                        now,
+                        &item.item_name,
+                        item.quantity,
+                        item.value_ped.value(),
+                    )?;
+                }
+                if has_item_reward {
+                    crate::daily_rollup::refresh_days(
+                        &tx,
+                        [crate::daily_rollup::epoch_day(now)],
                     )?;
                 }
                 if let Some(claim) = &manual_clump {
@@ -431,26 +546,6 @@ impl QuestService {
                             &tx,
                             [crate::daily_rollup::epoch_day(now)],
                         )?;
-                    } else if let Some(ledger_id) = ledger_id_for_write {
-                        let date = to_iso_utc(now);
-                        tx.execute(
-                            "INSERT INTO ledger_entries (id, date, type, description, amount, tag) \
-                             VALUES (?, ?, ?, ?, ?, ?)",
-                            rusqlite::params![
-                                ledger_id,
-                                date,
-                                "markup",
-                                format!("Quest: {name}"),
-                                reward.value(),
-                                "quest_reward"
-                            ],
-                        )?;
-                        tx.execute(
-                            "UPDATE session_quest_completions SET ledger_entry_id = ? \
-                             WHERE id = ?",
-                            rusqlite::params![ledger_id, completion_id],
-                        )?;
-                        crate::daily_rollup::refresh_days(&tx, [date])?;
                     }
                 }
                 tx.commit()?;
@@ -505,10 +600,9 @@ impl QuestService {
             .await?)
     }
 
-    /// Undo an in-progress quest, or reset an active cooldown back to
-    /// ready by deleting the most recent completion (optionally
-    /// undoing the recorded reward). A quest that is neither started
-    /// nor cooling returns as-is.
+    /// Undo an in-progress quest, or disavow the active cooldown while
+    /// preserving the completion and run. Economic undo is a separate,
+    /// append-only reversal and refuses while reward stock has dependants.
     pub async fn cancel_quest(
         &self,
         quest_id: i64,
@@ -542,9 +636,6 @@ impl QuestService {
             return Ok(Some(quest));
         }
 
-        // The original groups the completion delete and the optional
-        // reward undo under one commit.
-        //
         // A pickup-anchored quest additionally clears its durable start
         // stamp: for that anchor, "reset the cooldown" IS forgetting
         // the last collection. The first cancel of a started quest
@@ -556,26 +647,19 @@ impl QuestService {
             .get("cooldown_anchor")
             .and_then(Value::as_str)
             .is_some_and(|anchor| anchor == "pickup");
-        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-        let reward_is_skill = json_truthy(quest.get("reward_is_skill"));
-        // Extracted before the closure so the panic on a missing name fires
-        // in exactly the branch the original's `.expect` did (undo requested,
-        // a positive liquid reward).
-        let undo_name = if undo_reward {
-            quest["name"].as_str().map(str::to_string)
-        } else {
-            None
-        };
-        self.db
+        let quest_name = quest["name"].as_str().unwrap_or("Quest").to_string();
+        let now = self.now_epoch();
+        let correction = self.db
             .with_writer(move |conn| {
                 use rusqlite::OptionalExtension as _;
                 let tx = conn.transaction()?;
                 let completion = tx
                     .query_row(
-                        "SELECT id, ledger_entry_id, quest_claim_id, quest_run_id \
-                         FROM session_quest_completions \
-                         WHERE quest_id = ? \
-                         ORDER BY completed_at DESC, id DESC LIMIT 1",
+                        "SELECT c.id, c.ledger_entry_id, c.quest_claim_id, c.quest_run_id, \
+                                c.completed_at, c.session_id \
+                         FROM session_quest_completions c \
+                         WHERE c.quest_id = ? \
+                         ORDER BY c.completed_at DESC, c.id DESC LIMIT 1",
                         rusqlite::params![quest_id],
                         |row| {
                             Ok((
@@ -583,34 +667,17 @@ impl QuestService {
                                 row.get::<_, Option<String>>(1)?,
                                 row.get::<_, Option<i64>>(2)?,
                                 row.get::<_, Option<i64>>(3)?,
+                                row.get::<_, f64>(4)?,
+                                row.get::<_, String>(5)?,
                             ))
                         },
                     )
                     .optional()?;
-                if let Some((completion_id, _, _, run_id)) = &completion {
+                if let Some((completion_id, _, _, _, _, _)) = &completion {
                     tx.execute(
-                        "DELETE FROM session_quest_completion_reward_items \
-                         WHERE completion_id = ?",
-                        rusqlite::params![completion_id],
-                    )?;
-                    tx.execute(
-                        "UPDATE session_quest_completions SET quest_run_id = NULL \
-                         WHERE id = ?",
-                        rusqlite::params![completion_id],
-                    )?;
-                    if let Some(run_id) = run_id {
-                        tx.execute(
-                            "DELETE FROM quest_run_intervals WHERE run_id = ?",
-                            rusqlite::params![run_id],
-                        )?;
-                        tx.execute(
-                            "DELETE FROM quest_runs WHERE id = ?",
-                            rusqlite::params![run_id],
-                        )?;
-                    }
-                    tx.execute(
-                        "DELETE FROM session_quest_completions WHERE id = ?",
-                        rusqlite::params![completion_id],
+                        "INSERT OR IGNORE INTO quest_cooldown_resets \
+                         (quest_id, completion_id, reset_at) VALUES (?, ?, ?)",
+                        rusqlite::params![quest_id, completion_id, now],
                     )?;
                 }
                 if clear_pickup_stamp {
@@ -621,37 +688,154 @@ impl QuestService {
                 }
 
                 if undo_reward {
-                    let linked = completion
-                        .as_ref()
-                        .is_some_and(|(_, ledger, claim, _)| ledger.is_some() || claim.is_some());
-                    if let Some((_, Some(ledger_id), _, _)) = &completion {
-                        delete_quest_reward_entry_by_id(&tx, ledger_id)?;
+                    let Some((completion_id, legacy_ledger_id, claim_id, _, completed_at, session_id)) = &completion else {
+                        return Ok(Err("There is no completed reward to undo".to_string()));
+                    };
+                    let already_reversed: i64 = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM quest_reward_reversals \
+                         WHERE completion_id = ?)",
+                        rusqlite::params![completion_id],
+                        |row| row.get(0),
+                    )?;
+                    if already_reversed != 0 {
+                        return Ok(Err("That quest reward has already been undone".to_string()));
                     }
-                    if let Some((_, _, Some(claim_id), _)) = &completion {
-                        delete_quest_claim_by_id(&tx, *claim_id)?;
+                    let dependent_stock: i64 = tx.query_row(
+                        "SELECT EXISTS( \
+                         SELECT 1 FROM stock_movements m \
+                         JOIN session_quest_completion_reward_items ri \
+                           ON ri.id = m.quest_reward_item_id \
+                         WHERE ri.completion_id = ?)",
+                        rusqlite::params![completion_id],
+                        |row| row.get(0),
+                    )?;
+                    if dependent_stock != 0 {
+                        return Ok(Err(
+                            "This reward stock has been listed, sold, converted, or removed; undo that transaction first"
+                                .to_string(),
+                        ));
                     }
-                    // Completions predating immutable links retain the exact
-                    // legacy undo behaviour. New completions always delete by
-                    // identity, so similarly named/rewarded quests cannot
-                    // reverse one another's rows.
-                    if !linked {
-                        if let Some(reward) = reward_ped.filter(|reward| reward.is_positive()) {
-                            if reward_is_skill {
-                                delete_latest_quest_claim(&tx, quest_id)?;
-                            } else {
-                                delete_latest_quest_reward_entry(
-                                    &tx,
-                                    undo_name.as_deref().expect("quest name"),
-                                    reward,
-                                )?;
-                            }
+
+                    let mut liquid_total: f64 = tx.query_row(
+                        "SELECT COALESCE(SUM(ri.value_ped), 0) \
+                         FROM session_quest_completion_reward_items ri \
+                         WHERE ri.completion_id = ? AND ri.accounting_kind = 'liquid'",
+                        rusqlite::params![completion_id],
+                        |row| row.get(0),
+                    )?;
+                    if let Some(ledger_id) = legacy_ledger_id {
+                        liquid_total += tx
+                            .query_row(
+                                "SELECT amount FROM ledger_entries WHERE id = ? AND type = 'markup'",
+                                rusqlite::params![ledger_id],
+                                |row| row.get::<_, f64>(0),
+                            )
+                            .optional()?
+                            .unwrap_or(0.0);
+                    }
+                    let liquid_reversal_id = if liquid_total > 0.0 {
+                        let id = format!("quest-reward-reversal-{completion_id}");
+                        tx.execute(
+                            "INSERT INTO ledger_entries \
+                             (id, date, type, description, amount, tag) \
+                             VALUES (?, ?, 'expense', ?, ?, 'quest_reward')",
+                            rusqlite::params![
+                                id,
+                                to_iso_utc(now),
+                                format!("Quest reward reversal: {quest_name}"),
+                                liquid_total,
+                            ],
+                        )?;
+                        Some(id)
+                    } else {
+                        None
+                    };
+
+                    let pes_reversal_claim_id = if let Some(claim_id) = claim_id {
+                        let original: Option<(Option<i64>, String, f64)> = tx
+                            .query_row(
+                                "SELECT quest_id, quest_name, ped_value FROM quest_claims WHERE id = ?",
+                                rusqlite::params![claim_id],
+                                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                            )
+                            .optional()?;
+                        if let Some((claim_quest_id, claim_name, value)) = original {
+                            tx.execute(
+                                "INSERT INTO quest_claims \
+                                 (quest_id, quest_name, ped_value, claimed_at) VALUES (?, ?, ?, ?)",
+                                rusqlite::params![claim_quest_id, claim_name, -value, now],
+                            )?;
+                            Some(tx.last_insert_rowid())
+                        } else {
+                            None
                         }
+                    } else {
+                        None
+                    };
+
+                    tx.execute(
+                        "INSERT INTO quest_reward_reversals \
+                         (completion_id, reversed_at, liquid_ledger_entry_id, pes_reversal_claim_id) \
+                         VALUES (?, ?, ?, ?)",
+                        rusqlite::params![
+                            completion_id,
+                            now,
+                            liquid_reversal_id,
+                            pes_reversal_claim_id,
+                        ],
+                    )?;
+
+                    tx.execute(
+                        "UPDATE kill_loot_items SET deactivated_at = NULL \
+                         WHERE id IN (SELECT source_loot_item_id \
+                                      FROM quest_reward_review_items qri \
+                                      JOIN quest_reward_reviews qr ON qr.id = qri.review_id \
+                                      WHERE qr.completion_id = ?)",
+                        rusqlite::params![completion_id],
+                    )?;
+                    let clump_source: Option<(String, String)> = tx
+                        .query_row(
+                            "SELECT source_kind, source_record_id FROM quest_reward_clumps \
+                             WHERE claimed_completion_id = ?",
+                            rusqlite::params![completion_id],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?;
+                    if let Some((source_kind, source_record_id)) = clump_source {
+                        let (items_table, owner_column, owner_table) = if source_kind == "kill" {
+                            ("kill_loot_items", "kill_id", "kills")
+                        } else {
+                            ("harvest_loot_items", "harvest_id", "harvest_events")
+                        };
+                        tx.execute(
+                            &format!("UPDATE {items_table} SET deactivated_at = NULL WHERE {owner_column} = ?"),
+                            rusqlite::params![source_record_id],
+                        )?;
+                        tx.execute(
+                            &format!(
+                                "UPDATE {owner_table} SET loot_total_ped = \
+                                 (SELECT COALESCE(SUM(value_ped), 0) FROM {items_table} \
+                                  WHERE {owner_column} = ? AND deactivated_at IS NULL) \
+                                 WHERE id = ?"
+                            ),
+                            rusqlite::params![source_record_id, source_record_id],
+                        )?;
                     }
+                    crate::session_rollup::recompute_session(&tx, session_id)?;
+                    crate::daily_rollup::refresh_session_days(&tx, session_id)?;
+                    crate::daily_rollup::refresh_days(
+                        &tx,
+                        [
+                            crate::daily_rollup::epoch_day(*completed_at),
+                            crate::daily_rollup::epoch_day(now),
+                        ],
+                    )?;
                 }
                 tx.commit()?;
-                Ok(())
+                Ok(Ok(()))
             })
             .await?;
+        correction.map_err(QuestError::Invalid)?;
         self.get_quest(quest_id).await
     }
 
@@ -708,108 +892,4 @@ impl QuestService {
         }
         (last + cooldown_hours * 3600.0) > self.now_epoch()
     }
-}
-
-fn delete_quest_claim_by_id(conn: &rusqlite::Connection, claim_id: i64) -> Result<bool, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let claimed_at = conn
-        .query_row(
-            "SELECT claimed_at FROM quest_claims WHERE id = ?",
-            rusqlite::params![claim_id],
-            |row| row.get::<_, f64>(0),
-        )
-        .optional()?;
-    let Some(claimed_at) = claimed_at else {
-        return Ok(false);
-    };
-    conn.execute(
-        "DELETE FROM quest_claims WHERE id = ?",
-        rusqlite::params![claim_id],
-    )?;
-    crate::daily_rollup::refresh_days(conn, [crate::daily_rollup::epoch_day(claimed_at)])?;
-    Ok(true)
-}
-
-fn delete_quest_reward_entry_by_id(
-    conn: &rusqlite::Connection,
-    ledger_id: &str,
-) -> Result<bool, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let date = conn
-        .query_row(
-            "SELECT date FROM ledger_entries WHERE id = ?",
-            rusqlite::params![ledger_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    let Some(date) = date else {
-        return Ok(false);
-    };
-    conn.execute(
-        "DELETE FROM ledger_entries WHERE id = ?",
-        rusqlite::params![ledger_id],
-    )?;
-    crate::daily_rollup::refresh_days(conn, [date])?;
-    Ok(true)
-}
-
-/// Delete the newest claim for a quest (the cancel flow's undo).
-pub(super) fn delete_latest_quest_claim(
-    conn: &rusqlite::Connection,
-    quest_id: i64,
-) -> Result<bool, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let Some((id, claimed_at)) = conn
-        .query_row(
-            "SELECT id, claimed_at FROM quest_claims \
-             WHERE quest_id = ? \
-             ORDER BY claimed_at DESC, id DESC \
-             LIMIT 1",
-            rusqlite::params![quest_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
-        )
-        .optional()?
-    else {
-        return Ok(false);
-    };
-    conn.execute(
-        "DELETE FROM quest_claims WHERE id = ?",
-        rusqlite::params![id],
-    )?;
-    // The undone claim may sit days back; reland its day's rollup.
-    crate::daily_rollup::refresh_days(conn, [crate::daily_rollup::epoch_day(claimed_at)])?;
-    Ok(true)
-}
-
-/// Delete the newest matching quest-reward ledger entry (the cancel
-/// flow's undo for liquid rewards).
-pub(super) fn delete_latest_quest_reward_entry(
-    conn: &rusqlite::Connection,
-    quest_name: &str,
-    reward_ped: Ped,
-) -> Result<bool, DbError> {
-    use rusqlite::OptionalExtension as _;
-    let Some((id, date)) = conn
-        .query_row(
-            "SELECT id, date FROM ledger_entries \
-             WHERE type = 'markup' \
-               AND tag = 'quest_reward' \
-               AND description = ? \
-               AND amount = ? \
-             ORDER BY date DESC, id DESC \
-             LIMIT 1",
-            rusqlite::params![format!("Quest: {quest_name}"), reward_ped.value()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?
-    else {
-        return Ok(false);
-    };
-    conn.execute(
-        "DELETE FROM ledger_entries WHERE id = ?",
-        rusqlite::params![id],
-    )?;
-    // The undone reward may sit days back; reland its day's rollup.
-    crate::daily_rollup::refresh_days(conn, [date])?;
-    Ok(true)
 }

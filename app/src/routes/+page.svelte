@@ -8,17 +8,15 @@
 	import SessionStage from '$lib/features/sessions/SessionStage.svelte';
 	import { createLiveDefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { createLiveReviewModel } from '$lib/features/sessions/reviewModel.svelte';
-	import { formatMinutes } from '$lib/features/quests/cooldown';
-	import { createPlaylistSelection } from '$lib/features/dashboard/playlistSelection.svelte';
 	import { createQuestsModel } from '$lib/features/quests/questsModel.svelte';
+	import { getCooldownRemaining } from '$lib/features/quests/cooldown';
+	import { getActivityOptions, type ActivityOptionsResult } from '$lib/api';
 	import { closeGuide, openGuide } from '$lib/guide/engine';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 	import { dashboardSurface } from '$lib/guide/surfaces/dashboard';
 	import { getPreference } from '$lib/preferences';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { hydrate, subscribeTracking, trackingSnapshot } from '$lib/stores/trackingStore.svelte';
-	import type { CooldownStatus } from '$lib/types/common';
-	import type { Quest, QuestPlaylist } from '$lib/types/quests';
 
 	// The consolidated tracking readout, sourced from the store: the dashboard's
 	// single source of live-session render shape. Every tracking read on this
@@ -28,7 +26,7 @@
 	let recentEvents = $derived(trackingSnapshot.current?.recentEvents ?? []);
 
 	// Quest data + lifecycle handlers come from the shared quests feature model;
-	// the dashboard adds only its playlist-selection view over them. The stats
+	// the dashboard reads the selected or running session's integrated roster. The stats
 	// grid and the guide-demo plumbing are dashboard feature models.
 	const questsModel = createQuestsModel();
 	const statsGrid = createStatsGridModel(() => status?.lifetime != null);
@@ -39,16 +37,20 @@
 	// review) that replace the dashboard while either is open.
 	const definitions = createLiveDefinitionsModel();
 	const review = createLiveReviewModel(definitions.loadDefinitions);
-	const playlist = createPlaylistSelection(questsModel, () => guideState.isActive);
+	let activityOptions = $state<ActivityOptionsResult | null>(null);
 
 	async function refreshQuestState() {
-		await questsModel.refresh();
-		playlist.sync(questsModel.playlists);
+		const [, options] = await Promise.all([questsModel.refresh(), getActivityOptions()]);
+		activityOptions = options;
 	}
 
-	// Playlist estimates keep their approx-prefixed display over the shared
-	// duration formatter.
-	const formatEstimatedMinutes = (m: number) => `~${formatMinutes(m)}`;
+	function openSessionAuthoring(definitionId: number | null) {
+		const editing = definitions.definitions.find(
+			(definition) => definition.id === String(definitionId),
+		);
+		if (editing) definitions.openEdit(editing);
+		else definitions.openCreate();
+	}
 
 	// Poll quest state so chat.log auto-start/complete is reflected without
 	// route changes. Paused during a guide tour: the fixture load below owns
@@ -59,10 +61,6 @@
 		return useVisiblePoll(refreshQuestState, { intervalMs: pollMs });
 	});
 
-	// Cooldown tick (1s)
-	$effect(() => {
-		return useVisiblePoll(playlist.tick, { intervalMs: 1000 });
-	});
 
 	// Guide
 	let guideSeen = $state(true);
@@ -105,9 +103,6 @@
 	// from $lib/api and the quests model's guide-mode load.
 	$effect(() => {
 		const active = guideState.isActive;
-		// Snapshot the active playlist selection on guide-open so the
-		// post-tour restore returns to the pre-guide state.
-		if (active) playlist.snapshotForGuide();
 		// Stats: snapshot the live config on guide-open + apply the preselected
 		// demo configuration; restore on close. Owned by the stats-grid model.
 		statsGrid.syncGuideStats(active);
@@ -119,10 +114,9 @@
 		void hydrate();
 		void guideDemo.refreshDemoTracking(active);
 		void (async () => {
-			await questsModel.loadData(active);
-			if (!active) playlist.restoreFromGuide();
+			const [, options] = await Promise.all([questsModel.loadData(active), getActivityOptions()]);
+			activityOptions = options;
 			if (questsModel.error) return;
-			playlist.sync(questsModel.playlists);
 		})();
 	});
 </script>
@@ -139,7 +133,7 @@
 		<header class="flex flex-col gap-1.5">
 			<h1 class="text-xl font-semibold text-text tracking-tight">Dashboard</h1>
 			<span class="block h-px w-12 bg-gradient-to-r from-accent/60 to-transparent"></span>
-			<p class="text-sm text-text-secondary mt-0.5">Track sessions, monitor events, run quest playlists</p>
+			<p class="text-sm text-text-secondary mt-0.5">Track sessions, monitor events, follow session quests</p>
 		</header>
 		<div class="flex items-center gap-2">
 			<button
@@ -205,21 +199,17 @@
 				sessionId={status?.session_id ?? null}
 				multiplierHistory={status?.multiplierHistory ?? null}
 				cumulativeNetHistory={status?.cumulativeNetHistory ?? null}
-				playlists={questsModel.playlists}
-				activePlaylistId={playlist.activePlaylistId}
-				activePlaylist={playlist.activePlaylist}
-				immediateItems={playlist.immediateItems}
-				longHorizonItems={playlist.longHorizonItems}
+				{activityOptions}
+				quests={questsModel.quests}
 				pendingCancelChoiceQuestId={questsModel.pendingCancelChoiceQuestId}
 				copiedWp={questsModel.copiedWp}
-				onPlaylistChange={(id) => (playlist.activePlaylistId = id)}
 				onQuestStart={questsModel.handleStart}
 				onQuestComplete={questsModel.handleComplete}
 				onQuestCancel={questsModel.handleCancel}
 				onToggleCancelChoice={questsModel.toggleCancelChoice}
 				onCopyWaypoint={questsModel.copyWaypoint}
-				formatMinutes={formatEstimatedMinutes}
-				getCooldownRemaining={playlist.cooldownRemaining}
+				onEditSession={openSessionAuthoring}
+				getCooldownRemaining={(quest) => getCooldownRemaining(quest, Date.now())}
 			/>
 	{/if}
 

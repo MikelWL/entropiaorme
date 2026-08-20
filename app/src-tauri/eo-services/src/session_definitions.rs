@@ -11,8 +11,8 @@
 //! later rename or archive never rewrites history), the reference is
 //! the instance-to-family identity aggregation reads.
 //!
-//! The roster is replaced wholesale on update (the playlist-items
-//! precedent): entries have no update lifecycle of their own. Entry
+//! The roster is replaced wholesale on update: entries have no update
+//! lifecycle of their own. Entry
 //! references are validated against ACTIVE targets at write time; a
 //! target soft-deleted afterwards surfaces on read as a missing
 //! reference rather than silently disappearing, so the author can see

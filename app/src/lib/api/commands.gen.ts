@@ -126,12 +126,16 @@ export interface ActivityOption {
 	offRoster: boolean;
 	manualHandIn: boolean;
 	handInWaiting: boolean;
+	/** Authored position in the session definition. Off-roster facts have no position; consumers may apply their own finding order without losing it. */
+	rosterOrder: number | null;
 }
 
 /**
  * What the Activities control shows.
  */
 export interface ActivityOptionsResult {
+	definitionId: number | null;
+	definitionName: string | null;
 	/** Whether the control appears at all. */
 	visible: boolean;
 	/** Whether this session's definition opts into naming segments in play: the free-text row, and promotion into the roster. */
@@ -948,6 +952,7 @@ export interface HuntingActivityComparison {
 	returns: number;
 	lootRate: number;
 	confirmedRewardPed: number;
+	realisedRewardMarkup: number;
 	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */
 	rewardItems: HarvestLootItem[];
 	rewardedReturns: number;
@@ -1613,6 +1618,7 @@ export type MobEntryMode = 'mob' | 'tag';
 export interface MonthlyEntry {
 	month: string;
 	lootTt: number;
+	questItemTt: number;
 	pes: number;
 	codexPes: number;
 	questPes: number;
@@ -1865,74 +1871,6 @@ export interface PlanetMapCalibration {
 	unitsPerPixelX: number;
 	unitsPerPixelY: number;
 	bounds: PlanetMapBounds;
-}
-
-/**
- * Per-playlist analytics in the wire shape
- * (`_format_playlist_analytics`).
- */
-export interface PlaylistAnalyticsRow {
-	playlistId: string;
-	playlistName: string;
-	questCount: number;
-	longHorizonQuestCount: number;
-	matchedSessions: number;
-	totalRewardPed: number;
-	totalImmediateRewardPed: number;
-	totalBonusRewardPed: number;
-	totalPesReward: number;
-	totalImmediatePesReward: number;
-	totalBonusPesReward: number;
-	totalExpectedRewardPed: number;
-	totalExpectedImmediateRewardPed: number;
-	totalExpectedBonusRewardPed: number;
-	totalDurationSec: number;
-	totalWeaponCost: number;
-	totalHealCost: number;
-	totalEnhancerCost: number;
-	totalArmourCost: number;
-	totalLootTt: number;
-	totalPes: number;
-}
-
-/**
- * A playlist create or update payload, in the frontend's snake_case
- * casing. The sole client sends `name` / `planet` / `estimated_minutes`
- * / `items` for both operations (never `quest_ids`); the service derives
- * membership from `items` whenever it is present, so the facade sends
- * exactly those keys and omits the vestigial `quest_ids`.
- */
-export interface PlaylistInput {
-	name: string;
-	planet?: string;
-	estimated_minutes?: number;
-	items?: PlaylistItemInput[];
-}
-
-/**
- * One classified slot in a playlist's wire shape.
- */
-export interface PlaylistItem {
-	questId: string;
-	description: string | null;
-	groupType: PlaylistItemGroup;
-}
-
-/**
- * Which playlist group a quest slot belongs to. The serialised forms
- * are byte-identical to the strings they replace; the input side
- * (`PlaylistItemInput`) deliberately stays a plain string so its
- * service-level validation and error replies are untouched.
- */
-export type PlaylistItemGroup = 'immediate' | 'long_horizon';
-
-/**
- * One classified quest slot in a playlist create/update.
- */
-export interface PlaylistItemInput {
-	quest_id: number;
-	description?: string | null;
-	group_type?: string;
 }
 
 /**
@@ -2228,13 +2166,11 @@ export interface Quest {
 	cooldownExpiresAt: string | null;
 	reward: number | null;
 	rewardIsSkill: boolean;
-	expectedRewardMarkupPercent: number | null;
 	rewardDescription: string;
 	notes: string;
 	chainName: string | null;
 	chainPosition: number | null;
 	chainTotal: number | null;
-	playlistIds: string[];
 	/** A fractional epoch-seconds timestamp (the tracker's clock is sub-second), null while the quest is not in progress. */
 	startedAt: number | null;
 	/** The signal loot item completing this quest, null for quests on the mission-log lifecycle. */
@@ -2265,16 +2201,13 @@ export interface QuestAnalyticsRow {
 	questName: string;
 	planet: string;
 	category: string | null;
-	rewardPed: number;
-	rewardIsSkill: boolean;
-	expectedRewardMarkupPercent: number | null;
-	totalExpectedRewardPed: number;
 	recordedCompletions: number;
 	confirmedCompletions: number;
 	unresolvedCompletions: number;
 	totalRecordedRewardTt: number;
 	totalRecordedRewardPes: number;
 	totalRecordedItemTt: number;
+	totalRealisedRewardMarkup: number;
 	recordedRewardItems: QuestRewardCandidate[];
 	linkedSessions: number;
 	totalDurationSec: number;
@@ -2370,7 +2303,6 @@ export interface QuestInput {
 	cooldown_hours?: number | null;
 	reward_ped?: number | null;
 	reward_is_skill?: boolean;
-	expected_reward_markup_percent?: number | null;
 	reward_description?: string | null;
 	completion_trigger?: QuestCompletionTrigger | null;
 	reward_policy?: QuestRewardPolicy | null;
@@ -2388,38 +2320,13 @@ export interface QuestInput {
 	cooldown_anchor?: QuestCooldownAnchor | null;
 }
 
-/**
- * Why the quest-link suggestion took its shape.
- */
-export type QuestLinkReason = 'single_quest' | 'exact_playlist' | 'no_completions' | 'unclean' | 'ambiguous_playlist' | 'declined' | 'already_linked';
-
-/**
- * What the quest-link suggestion proposes.
- */
-export type QuestLinkSuggestionType = 'quest' | 'playlist' | 'none';
-
-/**
- * A playlist in the wire shape (`_format_playlist`). Membership arrives
- * pre-classified from the service; ids are stringified.
- */
-export interface QuestPlaylist {
-	id: string;
-	name: string;
-	planet: string;
-	estimatedMinutes: number;
-	questIds: string[];
-	immediateQuestIds: string[];
-	longHorizonQuestIds: string[];
-	items: PlaylistItem[];
-}
-
 export interface QuestRewardCandidate {
 	itemName: string;
 	quantity: number;
 	valuePed: number;
 }
 
-export type QuestRewardPolicy = 'none' | 'fixed_ped' | 'fixed_pes' | 'named_items' | 'completion_clump';
+export type QuestRewardPolicy = 'none' | 'fixed_pes' | 'named_items' | 'completion_clump';
 
 export interface QuestRewardReviewInput {
 	completionId: number;
@@ -2544,6 +2451,7 @@ export interface RepairScanResult {
  */
 export interface ReturnsBreakdown {
 	lootTt: number;
+	questItemTt: number;
 	pes: number;
 	codexPes: number;
 	questPes: number;
@@ -2645,8 +2553,7 @@ export interface SessionDefinition {
 /**
  * A definition create or update payload, in the frontend's snake_case
  * field casing. One DTO serves both operations; the roster always
- * binds in full and replaces the stored roster wholesale on update
- * (the playlist-items precedent).
+ * binds in full and replaces the stored roster wholesale on update.
  */
 export interface SessionDefinitionInput {
 	name: string;
@@ -2721,19 +2628,6 @@ export interface SessionPage {
 	sessions: TrackingSession[];
 	nextCursor: string | null;
 	total: number;
-}
-
-/**
- * The quest-link suggestion (all seven fields always present).
- */
-export interface SessionQuestLinkSuggestion {
-	sessionId: string;
-	suggestionType: QuestLinkSuggestionType | null;
-	reason: QuestLinkReason | null;
-	questId: string | null;
-	questName: string | null;
-	playlistId: string | null;
-	playlistName: string | null;
 }
 
 /**
@@ -2952,6 +2846,7 @@ export interface TableVerdict {
 export interface TimelineDay {
 	date: string;
 	lootTt: number;
+	questItemTt: number;
 	pes: number;
 	codexPes: number;
 	questPes: number;
@@ -3416,26 +3311,6 @@ export async function questsAnalytics(): Promise<QuestAnalyticsRow[]> {
 	return invokeCommand('quests_analytics', {});
 }
 
-export async function playlistsList(): Promise<QuestPlaylist[]> {
-	return invokeCommand('playlists_list', {});
-}
-
-export async function playlistCreate(input: PlaylistInput): Promise<QuestPlaylist> {
-	return invokeCommand('playlist_create', { input });
-}
-
-export async function playlistUpdate(playlistId: number, input: PlaylistInput): Promise<QuestPlaylist> {
-	return invokeCommand('playlist_update', { playlist_id: playlistId, input });
-}
-
-export async function playlistDelete(playlistId: number): Promise<void> {
-	return invokeCommand('playlist_delete', { playlist_id: playlistId });
-}
-
-export async function playlistsAnalytics(): Promise<PlaylistAnalyticsRow[]> {
-	return invokeCommand('playlists_analytics', {});
-}
-
 export async function questFamiliesList(): Promise<QuestFamily[]> {
 	return invokeCommand('quest_families_list', {});
 }
@@ -3730,10 +3605,6 @@ export async function trackingManualMobSuggestions(q: string, limit: number | nu
 
 export async function trackingSnapshot(): Promise<TrackingSnapshot> {
 	return invokeCommand('tracking_snapshot', {});
-}
-
-export async function trackingQuestLinkSuggestion(sessionId: string): Promise<SessionQuestLinkSuggestion> {
-	return invokeCommand('tracking_quest_link_suggestion', { session_id: sessionId });
 }
 
 export async function trackingStart(): Promise<StartResult> {

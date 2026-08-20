@@ -29,7 +29,7 @@ pub enum IntervalKind {
     /// rotation), opened and sealed from the overlay; sequential, so
     /// opening one closes the standing one.
     Segment,
-    /// The stretch a declared quest or playlist spans.
+    /// The stretch a declared quest spans.
     Quest,
     /// Reserved for a later consumable-timer kind; nothing writes it
     /// yet, and the engine needs no change when something does.

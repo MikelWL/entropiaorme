@@ -40,6 +40,15 @@ pub enum StockProvenance<'a> {
     /// Hunting: the activity is known even when the observed mob species is
     /// not. Species is an optional downstream analytical dimension only.
     Hunt(Option<&'a str>),
+    /// A confirmed quest-item reward. The immutable acquisition, durable run,
+    /// quest, and exact effort context travel together through every stock
+    /// transformation and outflow.
+    Quest {
+        reward_item_id: i64,
+        quest_run_id: i64,
+        quest_id: i64,
+        activity_context_id: Option<i64>,
+    },
 }
 
 /// One source's still-open position for a canonical item.
@@ -202,8 +211,9 @@ pub struct SaleOutcome {
 
 /// Resolve a confirmed sale.
 ///
-/// `tt_value` is the whole listing's TT and `attributed_tt` the part of it
-/// covered by tracked stock. Fees are what the game actually charged: the
+/// `tt_value` is the whole listing's TT and `attributed_quantity` the part of
+/// its quantity covered by tracked stock. This remains defined for zero-TT
+/// vouchers. Fees are what the game actually charged: the
 /// starting-bid fee taken at listing, and the additional fee taken at the
 /// point of sale when an item sells above its starting bid.
 ///
@@ -213,8 +223,9 @@ pub struct SaleOutcome {
 /// animal and never reaches here: the stock came back, so it describes market
 /// execution, not the gameplay.
 pub fn resolve_sale(
+    quantity: f64,
+    attributed_quantity: f64,
     tt_value: f64,
-    attributed_tt: f64,
     final_price: f64,
     listing_fee: f64,
     sale_fee: f64,
@@ -222,8 +233,8 @@ pub fn resolve_sale(
     let gross_markup = final_price - tt_value;
     let total_fees = listing_fee + sale_fee;
     let net_markup = gross_markup - total_fees;
-    let attributed_share = if tt_value.abs() > EPSILON {
-        (attributed_tt / tt_value).clamp(0.0, 1.0)
+    let attributed_share = if quantity.abs() > EPSILON {
+        (attributed_quantity / quantity).clamp(0.0, 1.0)
     } else {
         0.0
     };
@@ -585,7 +596,7 @@ mod tests {
     /// ledger only the money that was not already booked as loot TT.
     #[test]
     fn fully_tracked_sale_attributes_all_net_markup() {
-        let outcome = resolve_sale(3.00, 3.00, 5.00, 0.50, 0.20);
+        let outcome = resolve_sale(300.0, 300.0, 3.00, 5.00, 0.50, 0.20);
 
         assert!((outcome.gross_markup - 2.00).abs() < 1e-9);
         assert!((outcome.net_markup - 1.30).abs() < 1e-9);
@@ -599,7 +610,7 @@ mod tests {
     /// remainder reconciles exactly against the global figure.
     #[test]
     fn partly_tracked_sale_reconciles_against_the_ledger() {
-        let outcome = resolve_sale(4.50, 3.00, 7.50, 0.50, 0.20);
+        let outcome = resolve_sale(450.0, 300.0, 4.50, 7.50, 0.50, 0.20);
 
         assert!((outcome.attributed_share - 2.0 / 3.0).abs() < 1e-9);
         assert!((outcome.net_markup - 2.30).abs() < 1e-9);
@@ -618,7 +629,7 @@ mod tests {
     /// Selling below TT is a real loss and must stay negative, not clamp.
     #[test]
     fn a_sale_under_tt_realises_a_negative_markup() {
-        let outcome = resolve_sale(3.00, 3.00, 2.50, 0.50, 0.0);
+        let outcome = resolve_sale(300.0, 300.0, 3.00, 2.50, 0.50, 0.0);
         assert!((outcome.gross_markup + 0.50).abs() < 1e-9);
         assert!((outcome.net_markup + 1.00).abs() < 1e-9);
         assert!(outcome.activity_net_markup < 0.0);
@@ -628,7 +639,7 @@ mod tests {
     /// sale, while the ledger still records the full proceeds.
     #[test]
     fn untracked_sale_claims_nothing_for_the_activity() {
-        let outcome = resolve_sale(4.00, 0.0, 9.00, 0.50, 0.30);
+        let outcome = resolve_sale(400.0, 0.0, 4.00, 9.00, 0.50, 0.30);
         assert!((outcome.attributed_share).abs() < 1e-9);
         assert!((outcome.activity_net_markup).abs() < 1e-9);
         // Markup only, even with nothing tracked: the 4.00 of TT sold was
@@ -636,13 +647,13 @@ mod tests {
         assert!((outcome.gross_markup - 5.00).abs() < 1e-9);
     }
 
-    /// A zero-TT listing cannot divide by its TT; it attributes nothing
-    /// rather than producing a non-finite share.
+    /// A zero-TT reward still has quantity, so all of its realised markup can
+    /// return to the activity that earned it.
     #[test]
-    fn zero_tt_listing_does_not_divide_by_zero() {
-        let outcome = resolve_sale(0.0, 0.0, 1.00, 0.50, 0.0);
+    fn zero_tt_listing_attributes_by_quantity() {
+        let outcome = resolve_sale(10.0, 10.0, 0.0, 1.00, 0.50, 0.0);
         assert!(outcome.attributed_share.is_finite());
-        assert!((outcome.attributed_share).abs() < 1e-9);
-        assert!((outcome.activity_net_markup).abs() < 1e-9);
+        assert!((outcome.attributed_share - 1.0).abs() < 1e-9);
+        assert!((outcome.activity_net_markup - 0.50).abs() < 1e-9);
     }
 }
