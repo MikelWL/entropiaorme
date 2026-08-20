@@ -1,13 +1,31 @@
 //! Append-only review of ambiguous reward captures.
 
+use std::collections::BTreeSet;
+
 use rusqlite::OptionalExtension as _;
 use serde_json::{json, Value};
 
 use super::{QuestError, QuestService};
 
 enum ReviewResolution {
-    Applied,
+    Applied(Vec<String>),
     Refused(String),
+}
+
+enum ReviewSource {
+    Tracked {
+        source_id: i64,
+        kill_id: String,
+        loot_source_id: Option<String>,
+        item_name: String,
+        quantity: i64,
+        value_ped: f64,
+    },
+    UntrackedLiquid {
+        item_name: String,
+        quantity: i64,
+        value_ped: f64,
+    },
 }
 
 type CompletionReviewEvidence = (
@@ -150,7 +168,7 @@ impl QuestService {
                         rusqlite::params![completion_id, now],
                     )?;
                     tx.commit()?;
-                    return Ok(ReviewResolution::Applied);
+                    return Ok(ReviewResolution::Applied(Vec::new()));
                 }
                 let Some(context_id) = context_id else {
                     return Ok(ReviewResolution::Refused(
@@ -172,6 +190,7 @@ impl QuestService {
                     ));
                 };
                 let mut sources = Vec::new();
+                let mut tracked_source_ids = BTreeSet::new();
                 for index in selected_indices {
                     let Some(candidate) = loot.get(index as usize) else {
                         return Ok(ReviewResolution::Refused(
@@ -194,7 +213,8 @@ impl QuestService {
                         .max(0.0);
                     let matches = {
                         let mut stmt = tx.prepare(
-                            "SELECT li.id FROM kill_loot_items li \
+                            "SELECT li.id, li.kill_id, k.loot_source_id \
+                             FROM kill_loot_items li \
                              JOIN kills k ON k.id = li.kill_id \
                              WHERE k.session_id = ? AND k.context_id = ? \
                                AND li.deactivated_at IS NULL \
@@ -212,18 +232,49 @@ impl QuestService {
                                 value_ped,
                                 completed_at
                             ],
-                            |row| row.get::<_, i64>(0),
+                            |row| {
+                                Ok((
+                                    row.get::<_, i64>(0)?,
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, Option<String>>(2)?,
+                                ))
+                            },
                         )?
                             .collect::<rusqlite::Result<Vec<_>>>()?;
                         matches
                     };
-                    if matches.len() != 1 {
-                        return Ok(ReviewResolution::Refused(format!(
-                                "{item_name} cannot be reclassified safely: expected one exact acquisition, found {}",
-                                matches.len()
+                    if matches.len() == 1 {
+                        if !tracked_source_ids.insert(matches[0].0) {
+                            return Ok(ReviewResolution::Refused(format!(
+                                "{item_name} cannot be reclassified safely: the same acquisition was selected twice"
                             )));
+                        }
+                        sources.push(ReviewSource::Tracked {
+                            source_id: matches[0].0,
+                            kill_id: matches[0].1.clone(),
+                            loot_source_id: matches[0].2.clone(),
+                            item_name: item_name.to_string(),
+                            quantity,
+                            value_ped,
+                        });
+                    } else if matches.is_empty()
+                        && item_name.trim().eq_ignore_ascii_case("Universal Ammo")
+                    {
+                        // Universal Ammo is deliberately filtered from
+                        // ordinary loot. The immutable completion evidence is
+                        // therefore its acquisition source; unlike stock, it
+                        // has no Inventory row to reclassify.
+                        sources.push(ReviewSource::UntrackedLiquid {
+                            item_name: item_name.to_string(),
+                            quantity,
+                            value_ped,
+                        });
+                    } else {
+                        return Ok(ReviewResolution::Refused(format!(
+                            "{item_name} cannot be reclassified safely: expected one exact acquisition, found {}",
+                            matches.len()
+                        )));
                     }
-                    sources.push((matches[0], item_name.to_string(), quantity, value_ped));
                 }
 
                 tx.execute(
@@ -238,13 +289,46 @@ impl QuestService {
                 )?;
                 let review_id = tx.last_insert_rowid();
                 let has_item_reward = !sources.is_empty();
-                for (source_id, item_name, quantity, value_ped) in sources {
-                    tx.execute(
-                        "INSERT INTO quest_reward_review_items \
-                         (review_id, source_loot_item_id, item_name, quantity, value_ped) \
-                         VALUES (?, ?, ?, ?, ?)",
-                        rusqlite::params![review_id, source_id, item_name, quantity, value_ped],
-                    )?;
+                let mut affected_kill_ids = BTreeSet::new();
+                let mut affected_loot_sources = BTreeSet::new();
+                for source in sources {
+                    let (item_name, quantity, value_ped) = match source {
+                        ReviewSource::Tracked {
+                            source_id,
+                            kill_id,
+                            loot_source_id,
+                            item_name,
+                            quantity,
+                            value_ped,
+                        } => {
+                            affected_kill_ids.insert(kill_id);
+                            if let Some(source_id) = loot_source_id {
+                                affected_loot_sources.insert(source_id);
+                            }
+                            tx.execute(
+                                "INSERT INTO quest_reward_review_items \
+                                 (review_id, source_loot_item_id, item_name, quantity, value_ped) \
+                                 VALUES (?, ?, ?, ?, ?)",
+                                rusqlite::params![
+                                    review_id,
+                                    source_id,
+                                    item_name,
+                                    quantity,
+                                    value_ped
+                                ],
+                            )?;
+                            tx.execute(
+                                "UPDATE kill_loot_items SET deactivated_at = ? WHERE id = ?",
+                                rusqlite::params![now, source_id],
+                            )?;
+                            (item_name, quantity, value_ped)
+                        }
+                        ReviewSource::UntrackedLiquid {
+                            item_name,
+                            quantity,
+                            value_ped,
+                        } => (item_name, quantity, value_ped),
+                    };
                     super::lifecycle::insert_reward_item(
                         &tx,
                         completion_id,
@@ -254,10 +338,9 @@ impl QuestService {
                         quantity,
                         value_ped,
                     )?;
-                    tx.execute(
-                        "UPDATE kill_loot_items SET deactivated_at = ? WHERE id = ?",
-                        rusqlite::params![now, source_id],
-                    )?;
+                }
+                for kill_id in affected_kill_ids {
+                    super::lifecycle::recompute_kill_loot_total(&tx, &kill_id)?;
                 }
                 crate::session_rollup::recompute_session(&tx, &session_id)?;
                 crate::daily_rollup::refresh_session_days(&tx, &session_id)?;
@@ -268,11 +351,18 @@ impl QuestService {
                     )?;
                 }
                 tx.commit()?;
-                Ok(ReviewResolution::Applied)
+                Ok(ReviewResolution::Applied(
+                    affected_loot_sources.into_iter().collect(),
+                ))
             })
             .await?;
         match resolution {
-            ReviewResolution::Applied => Ok(()),
+            ReviewResolution::Applied(source_ids) => {
+                for source_id in source_ids {
+                    self.report_loot_reconciled(source_id).await;
+                }
+                Ok(())
+            }
             ReviewResolution::Refused(message) => Err(QuestError::Invalid(message)),
         }
     }

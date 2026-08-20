@@ -129,6 +129,9 @@ pub struct ActivityOption {
     pub active: bool,
     /// Whether declaring it would do anything right now.
     pub available: bool,
+    /// Whether this direct quest row owns a cooldown the quest reset action
+    /// can actually clear. False for family-only and non-cooldown gates.
+    pub resettable: bool,
     /// Why it would not, in the user's words; null when it would.
     pub unavailable_reason: Nullable<String>,
     /// When the gate lifts (fractional epoch seconds), so the control
@@ -359,6 +362,7 @@ pub(crate) async fn activity_picture(
                     // A segment needs only a running session; the
                     // player's own naming has nothing to wait for.
                     available: true,
+                    resettable: false,
                     unavailable_reason: None.into(),
                     available_from: None.into(),
                     off_roster: false,
@@ -387,6 +391,7 @@ pub(crate) async fn activity_picture(
                     quest_id: Some(offer.id).into(),
                     active: is_standing_quest(offer.id),
                     available,
+                    resettable: !offer.in_progress && cooling(offer.own_available_from, now),
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: offer.available_from.into(),
                     off_roster: false,
@@ -428,6 +433,7 @@ pub(crate) async fn activity_picture(
                     quest_id: serving.map(|offer| offer.id).into(),
                     active: serving.is_some_and(|offer| is_standing_quest(offer.id)),
                     available,
+                    resettable: false,
                     unavailable_reason: reason.map(str::to_string).into(),
                     available_from: available_from.into(),
                     off_roster: false,
@@ -459,6 +465,7 @@ pub(crate) async fn activity_picture(
             quest_id: Some(offer.id).into(),
             active: true,
             available: true,
+            resettable: false,
             unavailable_reason: None.into(),
             available_from: offer.available_from.into(),
             off_roster: true,
@@ -484,6 +491,7 @@ pub(crate) async fn activity_picture(
             quest_id: None.into(),
             active: true,
             available: true,
+            resettable: false,
             unavailable_reason: None.into(),
             available_from: None.into(),
             off_roster: true,
@@ -589,10 +597,8 @@ impl Api {
                 let Some(quest_id) = quest_id else {
                     return Err(ApiError::bad_request("A quest activity needs a quest_id"));
                 };
-                ActivityRef::Quest {
-                    quest_id,
-                    name: self.prepare_quest_activity(quest_id).await?,
-                }
+                let name = self.prepare_quest_activity(quest_id).await?;
+                ActivityRef::Quest { quest_id, name }
             }
             ActivityTargetKind::Segment => ActivityRef::Segment {
                 name: require_segment_label(label)?,
@@ -666,7 +672,8 @@ impl Api {
         else {
             return Err(ApiError::not_found("Quest not found"));
         };
-        if quest["started_at"].is_null() {
+        let started_now = quest["started_at"].is_null();
+        if started_now {
             // A signal quest has no mission-log entry to mirror, so its
             // in-progress state IS the user's declaration: declaring it
             // starts it (and its signal loot will complete it). A
@@ -679,6 +686,16 @@ impl Api {
             if completion_trigger == "mission_log" {
                 return Err(ApiError::bad_request(
                     "Quest is not in progress; start it before playing toward it",
+                ));
+            }
+            // Starting a signal or manual quest is part of declaring it.
+            // Check the tracker typestate at the mutation boundary so the
+            // ordinary idle failure cannot leave a run or pickup cooldown
+            // behind, while lookup and request validation keep their
+            // established precedence.
+            if !self.tracker.is_tracking() {
+                return Err(tracker_conflict(
+                    eo_services::tracker::TrackerCommandError::NoActiveSession,
                 ));
             }
             self.quests

@@ -118,7 +118,8 @@ async fn a_minimal_create_reads_back_the_wire_shape() {
          \"rewardItemNames\":[],\
          \"cooldownAnchor\":\"completion\",\"lastStartedAt\":null,\"familyId\":null,\
          \"familyName\":null,\"familyCooldownDurationHours\":null,\
-         \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null}"
+         \"familyCooldownAnchor\":null,\"familyCooldownExpiresAt\":null,\
+         \"rewardUndoAvailable\":false}"
     );
 
     // The read-back through the listing and the by-id read agree.

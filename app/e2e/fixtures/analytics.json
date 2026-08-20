@@ -4,6 +4,7 @@
     "trend": "stable",
     "returnsBreakdown": {
       "lootTt": 850.0,
+      "questItemTt": 0.0,
       "pes": 12.5,
       "codexPes": 3.0,
       "questPes": 1.5,
@@ -26,6 +27,7 @@
       {
         "date": "2026-03-15T12:00:00.000Z",
         "lootTt": 200.0,
+        "questItemTt": 0.0,
         "pes": 3.0,
         "codexPes": 1.0,
         "questPes": 0.0,
@@ -36,6 +38,7 @@
       {
         "date": "2026-04-15T12:00:00.000Z",
         "lootTt": 320.0,
+        "questItemTt": 0.0,
         "pes": 4.0,
         "codexPes": 1.0,
         "questPes": 1.0,
@@ -46,6 +49,7 @@
       {
         "date": "2026-05-15T12:00:00.000Z",
         "lootTt": 330.0,
+        "questItemTt": 0.0,
         "pes": 5.0,
         "codexPes": 1.0,
         "questPes": 0.0,
@@ -58,6 +62,7 @@
       {
         "month": "2026-03",
         "lootTt": 200.0,
+        "questItemTt": 0.0,
         "pes": 3.0,
         "codexPes": 1.0,
         "questPes": 0.0,
@@ -68,6 +73,7 @@
       {
         "month": "2026-04",
         "lootTt": 320.0,
+        "questItemTt": 0.0,
         "pes": 4.0,
         "codexPes": 1.0,
         "questPes": 1.0,
@@ -78,6 +84,7 @@
       {
         "month": "2026-05",
         "lootTt": 330.0,
+        "questItemTt": 0.0,
         "pes": 5.0,
         "codexPes": 1.0,
         "questPes": 0.0,
@@ -213,13 +220,14 @@
             "cycled": 760.0,
             "returns": 695.0,
             "lootRate": 0.9145,
-            "confirmedRewardPed": 0.0,
+            "confirmedRewardPed": 4.0,
+            "realisedRewardMarkup": 0.0,
             "rewardItems": [
               { "itemName": "Universal Ammo", "quantity": 40000, "valuePed": 4.0 }
             ],
-            "rewardedReturns": 695.0,
-            "rewardedRate": 0.9145,
-            "rewardStatus": "included_in_loot",
+            "rewardedReturns": 699.0,
+            "rewardedRate": 0.9197,
+            "rewardStatus": "item",
             "lootItems": [
               { "itemName": "Animal Muscle Oil", "quantity": 280, "valuePed": 84.0 }
             ],
@@ -230,13 +238,14 @@
                 "cycled": 470.0,
                 "returns": 430.0,
                 "lootRate": 0.9149,
-                "confirmedRewardPed": 0.0,
+                "confirmedRewardPed": 2.5,
+                "realisedRewardMarkup": 0.0,
                 "rewardItems": [
                   { "itemName": "Universal Ammo", "quantity": 25000, "valuePed": 2.5 }
                 ],
-                "rewardedReturns": 430.0,
-                "rewardedRate": 0.9149,
-                "rewardStatus": "included_in_loot",
+                "rewardedReturns": 432.5,
+                "rewardedRate": 0.9202,
+                "rewardStatus": "item",
                 "lootItems": [],
                 "variants": []
               },
@@ -246,13 +255,14 @@
                 "cycled": 290.0,
                 "returns": 265.0,
                 "lootRate": 0.9138,
-                "confirmedRewardPed": 0.0,
+                "confirmedRewardPed": 1.5,
+                "realisedRewardMarkup": 0.0,
                 "rewardItems": [
                   { "itemName": "Universal Ammo", "quantity": 15000, "valuePed": 1.5 }
                 ],
-                "rewardedReturns": 265.0,
-                "rewardedRate": 0.9138,
-                "rewardStatus": "included_in_loot",
+                "rewardedReturns": 266.5,
+                "rewardedRate": 0.919,
+                "rewardStatus": "item",
                 "lootItems": [],
                 "variants": []
               }
@@ -265,6 +275,7 @@
             "returns": 198.0,
             "lootRate": 0.9,
             "confirmedRewardPed": 0.0,
+            "realisedRewardMarkup": 0.0,
             "rewardItems": [],
             "rewardedReturns": 198.0,
             "rewardedRate": 0.9,
@@ -279,6 +290,7 @@
             "returns": 199.0,
             "lootRate": 0.9045,
             "confirmedRewardPed": 0.0,
+            "realisedRewardMarkup": 0.0,
             "rewardItems": [],
             "rewardedReturns": 199.0,
             "rewardedRate": 0.9045,
@@ -306,6 +318,7 @@
             "returns": 834.0,
             "lootRate": 0.8872,
             "confirmedRewardPed": 0.0,
+            "realisedRewardMarkup": 0.0,
             "rewardItems": [],
             "rewardedReturns": 834.0,
             "rewardedRate": 0.8872,

@@ -109,7 +109,7 @@
 
 						{#if quest}
 							<div class="shrink-0 flex items-center gap-1">
-								{#if !option.available && !quest.startedAt}
+								{#if !option.available && !quest.startedAt && option.resettable}
 									{#if pendingCancelChoiceQuestId === quest.id}
 										<Button size="sm" variant="secondary" onclick={() => onQuestCancel(quest.id, false)}>{#snippet children()}Keep reward{/snippet}</Button>
 										<Button size="sm" variant="danger" onclick={() => onQuestCancel(quest.id, true)}>{#snippet children()}Undo reward{/snippet}</Button>
@@ -117,10 +117,26 @@
 										<Button size="sm" variant="ghost" onclick={() => onToggleCancelChoice(quest.id)}>{#snippet children()}Reset{/snippet}</Button>
 									{/if}
 								{:else if quest.startedAt}
-									<Button size="sm" onclick={() => onQuestComplete(quest.id)}>{#snippet children()}{quest.completionTrigger === 'manual_hand_in' ? 'Hand in' : 'Complete'}{/snippet}</Button>
+									{#if quest.completionTrigger === 'manual_hand_in'}
+										<span class="text-xs text-text-tertiary">Hand in from overlay</span>
+									{:else}
+										<Button size="sm" onclick={() => onQuestComplete(quest.id)}>{#snippet children()}Complete{/snippet}</Button>
+									{/if}
 									<Button size="sm" variant="ghost" onclick={() => onQuestCancel(quest.id, false)}>{#snippet children()}Cancel{/snippet}</Button>
 								{:else if option.available}
-									<Button size="sm" variant="secondary" onclick={() => onQuestStart(quest.id)}>{#snippet children()}Start{/snippet}</Button>
+									{#if quest.completionTrigger === 'manual_hand_in'}
+										<span class="text-xs text-text-tertiary">Start from session Activities</span>
+									{:else}
+										<Button size="sm" variant="secondary" onclick={() => onQuestStart(quest.id)}>{#snippet children()}Start{/snippet}</Button>
+									{/if}
+									{#if quest.rewardUndoAvailable}
+										{#if pendingCancelChoiceQuestId === quest.id}
+											<Button size="sm" variant="danger" onclick={() => onQuestCancel(quest.id, true)}>{#snippet children()}Confirm undo{/snippet}</Button>
+											<Button size="sm" variant="ghost" onclick={() => onToggleCancelChoice(quest.id)}>{#snippet children()}Back{/snippet}</Button>
+										{:else}
+											<Button size="sm" variant="ghost" onclick={() => onToggleCancelChoice(quest.id)}>{#snippet children()}Undo reward{/snippet}</Button>
+										{/if}
+									{/if}
 								{/if}
 							</div>
 						{/if}

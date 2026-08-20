@@ -377,9 +377,12 @@ export function projectRewardItems(
 	marketByItem: Map<string, MarketHarvestItem>,
 	confidenceMode: ConfidenceMode,
 ): number | null {
-	if (items.length === 0) return null;
+	const stockItems = items.filter(
+		(item) => item.itemName.trim().toLocaleLowerCase() !== 'universal ammo',
+	);
+	if (stockItems.length === 0) return null;
 	const nanocube = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
-	return items.reduce((sum, item) => {
+	return stockItems.reduce((sum, item) => {
 		const marketItem = marketByItem.get(item.itemName);
 		if (!market || !marketItem) return sum + item.valuePed;
 		if (marketItem.unitPricePed !== null) {

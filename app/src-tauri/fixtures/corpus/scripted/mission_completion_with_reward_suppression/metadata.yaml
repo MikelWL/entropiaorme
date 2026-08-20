@@ -6,10 +6,9 @@ description: >
   the mission reward. Pins whatever the tracker + quest_service
   do with the lifecycle pair under an unseeded quest DB (no
   quest-DB match, so quest auto-start does not fire); fuller
-  reward-suppression coverage involving the junction-table and
-  playlist matching lands with the keystroke / quest-automation
-  harness layer, but the chatlog lifecycle pinning here catches
-  regressions in the upstream parser surface.
+  reward-suppression coverage lives in the quest lifecycle, review,
+  and manual-hand-in tests; the chatlog lifecycle pinning here catches
+  regressions in the upstream parser surface only.
 surfaces:
   - chatlog-mission-received
   - chatlog-mission-completed

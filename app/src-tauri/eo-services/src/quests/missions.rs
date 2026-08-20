@@ -404,8 +404,10 @@ impl QuestService {
             self.complete_quest_with_reward_capture(quest_id, decision.capture())
                 .await?;
 
-            let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
-            let is_skill = json_truthy(quest.get("reward_is_skill"));
+            let is_skill = quest.get("reward_policy").and_then(Value::as_str) == Some("fixed_pes");
+            let reward_ped = is_skill
+                .then(|| quest.get("reward_ped").and_then(Value::as_f64).map(Ped))
+                .flatten();
             let mut description = quest["name"].as_str().expect("quest name").to_string();
             if let Some(suppressed) = decision.description {
                 description.push_str(": ");

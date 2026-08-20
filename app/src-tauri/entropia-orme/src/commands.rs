@@ -871,7 +871,7 @@ pub async fn ledger_summary(
             losses: Default::default(),
         };
         for entry in entries {
-            let side = match serde_json::to_value(&entry.kind) {
+            let side = match serde_json::to_value(entry.kind) {
                 Ok(value) if value == "markup" => &mut summary.gains,
                 _ => &mut summary.losses,
             };

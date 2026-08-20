@@ -517,9 +517,12 @@ at a time, matching the single overlay flow.
 #### `quest_reward_reviews` and `quest_reward_review_items`
 
 Append-only decisions over originally unresolved completion evidence. A review
-records `confirmed` or `none`; confirmed item rows reference the exact ordinary
-loot acquisitions they reclassified, and each acquisition can be claimed only
-once. The original completion evidence remains unchanged.
+records `confirmed` or `none`. Confirmed stock selections reference and
+deactivate the exact ordinary loot acquisitions they reclassified, and each
+acquisition can be claimed only once. Filtered Universal Ammo is the narrow
+exception: its immutable completion evidence is the acquisition source, so it
+creates liquid ledger value without a review-item or Inventory row. The
+original completion evidence remains unchanged.
 
 #### `session_quest_analytics_links`
 

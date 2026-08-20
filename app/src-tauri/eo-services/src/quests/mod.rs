@@ -58,7 +58,7 @@ pub type QuestStretchCloser = Arc<
 /// The live tracker's in-memory half of an exact reward reclassification.
 /// The quest transaction owns persistence; this sink keeps the running
 /// overlay aggregate in step immediately after that commit.
-pub type QuestLootReclassifier = Arc<
+pub type QuestLootReconciler = Arc<
     dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync,
 >;
 
@@ -110,7 +110,7 @@ pub struct QuestService {
     /// composition has wired it. Absent in every test and composition
     /// that has no tracker, which is why every report is best-effort.
     stretch_closer: OnceLock<QuestStretchCloser>,
-    loot_reclassifier: OnceLock<QuestLootReclassifier>,
+    loot_reconciler: OnceLock<QuestLootReconciler>,
 }
 
 impl QuestService {
@@ -147,7 +147,7 @@ impl QuestService {
             session: session_rx,
             pump: pump.clone(),
             stretch_closer: OnceLock::new(),
-            loot_reclassifier: OnceLock::new(),
+            loot_reconciler: OnceLock::new(),
         });
         let subscriptions = actor::subscribe_handlers(bus, &pump);
         runtime.spawn(actor::run(
@@ -188,8 +188,8 @@ impl QuestService {
 
     /// Wire the live aggregate correction sink. Composition calls this once
     /// after the tracker exists; a second call is ignored.
-    pub fn set_loot_reclassifier(&self, reclassifier: QuestLootReclassifier) {
-        let _ = self.loot_reclassifier.set(reclassifier);
+    pub fn set_loot_reconciler(&self, reconciler: QuestLootReconciler) {
+        let _ = self.loot_reconciler.set(reconciler);
     }
 
     /// Report a quest's completion to the interval layer, if anything
@@ -205,9 +205,9 @@ impl QuestService {
         }
     }
 
-    pub(super) async fn report_loot_reclassified(&self, source_id: String) {
-        if let Some(reclassifier) = self.loot_reclassifier.get() {
-            reclassifier(source_id).await;
+    pub(super) async fn report_loot_reconciled(&self, source_id: String) {
+        if let Some(reconciler) = self.loot_reconciler.get() {
+            reconciler(source_id).await;
         }
     }
 

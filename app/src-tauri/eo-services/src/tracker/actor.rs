@@ -80,12 +80,10 @@ pub(super) enum TrackerMsg {
         target: ActivityKey,
         reply: oneshot::Sender<Result<Vec<ActiveActivity>, TrackerCommandError>>,
     },
-    /// Mirror a committed manual quest-reward reclassification into the
-    /// live aggregate. Persistence is owned by the quest transaction; this
-    /// message removes the exact source clump from in-memory ordinary loot.
-    ReclassifyLootSource {
+    /// Reconcile a committed quest-reward source into the live aggregate.
+    ReconcileLootSource {
         source_id: String,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<Result<bool, DbError>>,
     },
     SetProtection {
         selection: ProtectionSelection,
@@ -231,8 +229,8 @@ impl TrackerActor {
             TrackerMsg::DeactivateActivity { target, reply } => {
                 let _ = reply.send(self.deactivate_activity(target).await);
             }
-            TrackerMsg::ReclassifyLootSource { source_id, reply } => {
-                let _ = reply.send(self.reclassify_loot_source(&source_id));
+            TrackerMsg::ReconcileLootSource { source_id, reply } => {
+                let _ = reply.send(self.reconcile_loot_source(&source_id).await);
             }
             TrackerMsg::SetProtection { selection, reply } => {
                 let _ = reply.send(self.set_protection(selection).await);

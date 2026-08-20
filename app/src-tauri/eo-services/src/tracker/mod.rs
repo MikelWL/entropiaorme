@@ -267,12 +267,11 @@ impl HuntTracker {
             .await
     }
 
-    /// Remove one exactly identified raw clump from the active session's
-    /// ordinary-loot aggregate after a manual quest hand-in transaction has
-    /// reclassified it. False means the source belongs to an ended session
-    /// (or was already absent), in which case the database remains canonical.
-    pub async fn reclassify_loot_source(&self, source_id: &str) -> bool {
-        self.call(|reply| TrackerMsg::ReclassifyLootSource {
+    /// Reload one exactly identified raw clump from committed active item
+    /// rows after quest reward confirmation or reversal. False means the
+    /// source is absent from the running session or already matches the DB.
+    pub async fn reconcile_loot_source(&self, source_id: &str) -> Result<bool, DbError> {
+        self.call(|reply| TrackerMsg::ReconcileLootSource {
             source_id: source_id.to_string(),
             reply,
         })

@@ -1317,10 +1317,10 @@ fn compose_producers(
 
     {
         let tracker_sink = tracker.clone();
-        quests.set_loot_reclassifier(Arc::new(move |source_id| {
+        quests.set_loot_reconciler(Arc::new(move |source_id| {
             let tracker = tracker_sink.clone();
             Box::pin(async move {
-                let _ = tracker.reclassify_loot_source(&source_id).await;
+                let _ = tracker.reconcile_loot_source(&source_id).await;
             })
         }));
     }

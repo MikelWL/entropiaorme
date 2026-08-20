@@ -14,6 +14,7 @@ function option(overrides: Partial<ActivityOption>): ActivityOption {
 		questId: 1,
 		active: false,
 		available: true,
+		resettable: false,
 		unavailableReason: null,
 		availableFrom: null,
 		offRoster: false,
@@ -53,6 +54,7 @@ function quest(overrides: Partial<Quest> = {}): Quest {
 		familyCooldownDurationHours: null,
 		familyCooldownAnchor: null,
 		familyCooldownExpiresAt: null,
+		rewardUndoAvailable: false,
 		...overrides,
 	};
 }
@@ -146,6 +148,101 @@ describe('QuestingWidget', () => {
 		render(QuestingWidget, { props: props(activityOptions, [quest({ startedAt: 100 })]) });
 
 		expect(screen.getByText('Waiting for the next reward clump')).not.toBeNull();
-		expect(screen.getByRole('button', { name: 'Hand in' })).not.toBeNull();
+		expect(screen.getByText('Hand in from overlay')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Hand in' })).toBeNull();
+	});
+
+	it('keeps generic completion unavailable to manual hand-in quests', () => {
+		const model = props(
+			{
+				definitionId: 7,
+				definitionName: 'AI Dailies',
+				visible: true,
+				adHocSegments: false,
+				readyCount: 0,
+				options: [option({ active: true, available: true })],
+				active: [],
+			},
+			[quest({ startedAt: 100 })],
+		);
+		render(QuestingWidget, { props: model });
+
+		expect(screen.getByText('Hand in from overlay')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Complete' })).toBeNull();
+		expect(model.onQuestComplete).not.toHaveBeenCalled();
+	});
+
+	it('routes manual quest starts through session Activities', () => {
+		const model = props(
+			{
+				definitionId: 7,
+				definitionName: 'AI Dailies',
+				visible: true,
+				adHocSegments: false,
+				readyCount: 1,
+				options: [option({ available: true })],
+				active: [],
+			},
+			[quest()],
+		);
+		render(QuestingWidget, { props: model });
+
+		expect(screen.getByText('Start from session Activities')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+		expect(model.onQuestStart).not.toHaveBeenCalled();
+	});
+
+	it('shows no reset action for a mission-log quest that has not been received', () => {
+		const model = props(
+			{
+				definitionId: 7,
+				definitionName: 'Mission run',
+				visible: true,
+				adHocSegments: false,
+				readyCount: 0,
+				options: [
+					option({
+						manualHandIn: false,
+						available: false,
+						unavailableReason: 'Not in your mission log yet',
+					}),
+				],
+				active: [],
+			},
+			[quest({ completionTrigger: 'mission_log' })],
+		);
+		render(QuestingWidget, { props: model });
+
+		expect(screen.getByText('Not in your mission log yet')).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
+	});
+
+	it('shows no member reset for a family-only cooldown', () => {
+		const model = props(
+			{
+				definitionId: 7,
+				definitionName: 'Daily family',
+				visible: true,
+				adHocSegments: false,
+				readyCount: 0,
+				options: [
+					option({ available: false, unavailableReason: 'On cooldown', resettable: false }),
+				],
+				active: [],
+			},
+			[
+				quest({
+					completionTrigger: 'mission_log',
+					familyId: '3',
+					familyName: 'Daily family',
+					familyCooldownDurationHours: 20,
+					familyCooldownExpiresAt: '2026-08-21T12:00:00Z',
+				}),
+			],
+		);
+		render(QuestingWidget, { props: model });
+
+		expect(screen.getByText(/On cooldown/)).not.toBeNull();
+		expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
 	});
 });

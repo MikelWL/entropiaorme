@@ -22,7 +22,9 @@ const QUEST_SELECT: &str = "\
            q.notes, q.chain_name, q.chain_position, q.chain_total, \
            q.started_at, q.is_active, q.created_at, q.category, \
            q.reward_description, q.updated_at, q.signal_loot_item, \
-           q.completion_mode AS completion_trigger, q.reward_policy, \
+           q.completion_mode AS completion_trigger, \
+           CASE q.reward_policy WHEN 'fixed_ped' THEN 'none' ELSE q.reward_policy END \
+             AS reward_policy, \
            q.family_id, q.cooldown_anchor, q.last_started_at, \
            f.name AS family_name, \
            f.cooldown_hours AS family_cooldown_hours, \
@@ -39,7 +41,17 @@ const QUEST_SELECT: &str = "\
             FROM session_quest_completions c \
             WHERE c.quest_id = q.id \
               AND NOT EXISTS (SELECT 1 FROM quest_cooldown_resets r \
-                              WHERE r.completion_id = c.id)) AS last_completed_at \
+                              WHERE r.completion_id = c.id)) AS last_completed_at, \
+           EXISTS(SELECT 1 FROM session_quest_completions c \
+                  WHERE c.id = (SELECT latest.id FROM session_quest_completions latest \
+                                WHERE latest.quest_id = q.id \
+                                ORDER BY latest.completed_at DESC, latest.id DESC LIMIT 1) \
+                    AND NOT EXISTS (SELECT 1 FROM quest_reward_reversals rr \
+                                    WHERE rr.completion_id = c.id) \
+                    AND (c.ledger_entry_id IS NOT NULL OR c.quest_claim_id IS NOT NULL \
+                         OR EXISTS(SELECT 1 FROM session_quest_completion_reward_items ri \
+                                   WHERE ri.completion_id = c.id))) \
+             AS reward_undo_available \
     FROM quests q \
     LEFT JOIN quest_families f ON f.id = q.family_id AND f.is_active = 1";
 
@@ -595,6 +607,10 @@ fn row_to_quest(row: &rusqlite::Row) -> Map<String, Value> {
     quest.insert("family_cooldown_anchor".into(), json!(family_anchor));
     let last_completed = row.get_unwrap::<_, Option<f64>>("last_completed_at");
     quest.insert("last_completed_at".into(), json!(last_completed));
+    quest.insert(
+        "reward_undo_available".into(),
+        json!(row.get_unwrap::<_, i64>("reward_undo_available") != 0),
+    );
 
     // The quest's OWN cooldown expiry, anchored per its own anchor.
     // Pre-family rows carry the 'completion' default, so their derived

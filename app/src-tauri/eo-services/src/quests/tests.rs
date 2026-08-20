@@ -135,7 +135,7 @@ async fn creates_apply_defaults_normalisation_and_mob_rules() {
             "family_name": null, "family_cooldown_hours": null,
             "family_cooldown_anchor": null, "last_completed_at": null,
             "cooldown_expires_at": null, "family_cooldown_expires_at": null,
-            "mobs": [], "reward_item_names": [],
+            "reward_undo_available": false, "mobs": [], "reward_item_names": [],
         })
     );
 
@@ -184,9 +184,16 @@ async fn cooldown_derives_from_the_latest_completion() {
 #[tokio::test]
 async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     let dir = tempfile::tempdir().unwrap();
-    let (svc, db) = service(dir.path()).await;
+    let (svc, db, clock, _bus) = service_with_clock(dir.path()).await;
+    let analytics = crate::analytics::AnalyticsService::new(db.clone(), clock);
+    let reconciled = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reconciled_sink = reconciled.clone();
+    svc.set_loot_reconciler(Arc::new(move |source_id| {
+        reconciled_sink.lock().unwrap().push(source_id);
+        Box::pin(async {})
+    }));
     let quest = quest_id(
-        &svc.create_quest(&json!({"name": "Ambiguous daily"}))
+        &svc.create_quest(&json!({"name": "Ambiguous daily", "cooldown_hours": 24}))
             .await
             .unwrap(),
     );
@@ -194,34 +201,43 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     db.with_writer(move |conn| {
         conn.execute(
             "INSERT INTO tracking_sessions(id, started_at, ended_at, is_active) \
-             VALUES('s-review', 900.0, 1100.0, 0)",
+             VALUES('s-review', 1772366300.0, 1772366400.0, 0)",
             [],
         )?;
         conn.execute(
             "INSERT INTO session_contexts(id, session_id, created_at) \
-             VALUES(801, 's-review', 900.0)",
+             VALUES(801, 's-review', 1772366300.0)",
             [],
         )?;
         conn.execute(
-            "INSERT INTO kills(id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
-             VALUES('k-review', 's-review', 'Target', 1000.0, 801, 2.0)",
+            "INSERT INTO kills(id, loot_source_id, session_id, mob_name, timestamp, context_id, loot_total_ped) \
+             VALUES('k-review', 'review-source', 's-review', 'Target', 1772366400.0, 801, 1.0)",
             [],
         )?;
         conn.execute(
             "INSERT INTO kill_loot_items(kill_id, item_name, quantity, value_ped) \
-             VALUES('k-review', 'Universal Ammo', 5, 2.0)",
+             VALUES('k-review', 'Blazar Fragment', 10, 1.0)",
             [],
+        )?;
+        conn.execute(
+            "INSERT INTO quest_runs(id, quest_id, status, started_at, completed_at) \
+             VALUES(803, ?, 'completed', 1772366300.0, 1772366400.0)",
+            params![quest],
         )?;
         conn.execute(
             "INSERT INTO session_quest_completions \
              (id, session_id, quest_id, completed_at, activity_context_id, reward_outcome, \
-              reward_policy_snapshot, reward_unresolved_reason, reward_evidence_json) \
-             VALUES(802, 's-review', ?, 1000.0, 801, 'unresolved', 'completion_clump', \
-                    'ambiguous clump', ?)",
+              reward_policy_snapshot, reward_unresolved_reason, reward_evidence_json, \
+              quest_run_id) \
+             VALUES(802, 's-review', ?, 1772366400.0, 801, 'unresolved', 'completion_clump', \
+                    'ambiguous clump', ?, 803)",
             params![
                 quest,
                 json!({
-                    "loot": [{"item_name": "Universal Ammo", "quantity": 5, "value": 2.0}],
+                    "loot": [
+                        {"item_name": "Universal Ammo", "quantity": 20000, "value": 2.0},
+                        {"item_name": "Blazar Fragment", "quantity": 10, "value": 1.0}
+                    ],
                     "isolated": true,
                 })
                 .to_string()
@@ -232,6 +248,11 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     .await
     .unwrap();
 
+    let before = analytics.overview("all").await.unwrap();
+    assert_eq!(before.returns_breakdown.loot_tt, 1.0);
+    assert_eq!(before.returns_breakdown.quest_item_tt, 0.0);
+    assert!(before.returns_breakdown.ledger.is_empty());
+
     let error = svc
         .resolve_reward_review(802, &[], false)
         .await
@@ -241,7 +262,7 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     );
 
     let error = svc
-        .resolve_reward_review(802, &[1], false)
+        .resolve_reward_review(802, &[2], false)
         .await
         .unwrap_err();
     assert!(
@@ -258,7 +279,7 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     .await
     .unwrap();
     let error = svc
-        .resolve_reward_review(802, &[0], false)
+        .resolve_reward_review(802, &[1], false)
         .await
         .unwrap_err();
     assert!(
@@ -266,7 +287,7 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     );
     db.with_writer(|conn| {
         conn.execute(
-            "UPDATE kill_loot_items SET value_ped = 2.0 WHERE kill_id = 'k-review'",
+            "UPDATE kill_loot_items SET value_ped = 1.0 WHERE kill_id = 'k-review'",
             [],
         )?;
         Ok(())
@@ -274,10 +295,36 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
     .await
     .unwrap();
 
-    svc.resolve_reward_review(802, &[0], false).await.unwrap();
+    svc.resolve_reward_review(802, &[0, 1], false)
+        .await
+        .unwrap();
     assert!(svc.unresolved_reward_reviews().await.unwrap().is_empty());
     assert_eq!(
         count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reviews").await,
+        1
+    );
+    let after = analytics.overview("all").await.unwrap();
+    assert_eq!(after.returns_breakdown.loot_tt, 0.0);
+    assert_eq!(after.returns_breakdown.quest_item_tt, 1.0);
+    assert_eq!(after.returns_breakdown.ledger["quest_reward"], 2.0);
+    assert_eq!(after.total_gains, 3.0);
+    assert_eq!(*reconciled.lock().unwrap(), vec!["review-source"]);
+    let inventory = analytics
+        .stock_positions(crate::analytics::Profession::Inventory)
+        .await
+        .unwrap();
+    let blazar = inventory
+        .iter()
+        .find(|item| item.item_name == "Blazar Fragment")
+        .expect("reviewed stock reward enters Inventory");
+    assert_eq!(blazar.quantity, 10.0);
+    assert_eq!(blazar.tt_value, 1.0);
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) FROM kills WHERE id = 'k-review' AND loot_total_ped = 0"
+        )
+        .await,
         1
     );
 
@@ -287,6 +334,136 @@ async fn reward_review_refusals_are_typed_and_a_confirmed_review_is_terminal() {
         .unwrap_err();
     assert!(
         matches!(error, QuestError::Invalid(message) if message == "completion has already been reviewed")
+    );
+
+    svc.cancel_quest(quest, true).await.unwrap();
+    assert_eq!(
+        *reconciled.lock().unwrap(),
+        vec!["review-source", "review-source"]
+    );
+    let reversed = analytics.overview("all").await.unwrap();
+    assert_eq!(reversed.returns_breakdown.loot_tt, 1.0);
+    assert_eq!(reversed.returns_breakdown.quest_item_tt, 0.0);
+    assert_eq!(reversed.returns_breakdown.ledger["quest_reward"], 2.0);
+    assert_eq!(reversed.losses_breakdown.ledger["quest_reward"], 2.0);
+    assert_eq!(reversed.total_gains - reversed.total_losses, 1.0);
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) FROM kills WHERE id = 'k-review' AND loot_total_ped = 1.0"
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_fixed_ped_rows_read_and_complete_as_no_reward_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let generic = quest_id(
+        &svc.create_quest(&json!({"name": "Legacy generic"}))
+            .await
+            .unwrap(),
+    );
+    let mission = quest_id(
+        &svc.create_quest(&json!({"name": "Legacy mission"}))
+            .await
+            .unwrap(),
+    );
+    db.with_writer(move |conn| {
+        conn.execute(
+            "UPDATE quests SET reward_policy = 'fixed_ped', reward_ped = 5.0 \
+             WHERE id IN (?, ?)",
+            params![generic, mission],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        svc.get_quest(generic).await.unwrap().unwrap()["reward_policy"],
+        json!("none")
+    );
+    svc.start_quest(generic).await.unwrap();
+    svc.complete_quest(generic).await.unwrap();
+    svc.start_quest(mission).await.unwrap();
+    svc.mission_complete_check(&[MissionCompletion {
+        mission_name: "Legacy mission".to_string(),
+        loot_items: Vec::new(),
+        skill_gains: Vec::new(),
+        isolated: true,
+    }])
+    .await
+    .unwrap();
+
+    let outcomes = db
+        .with_reader(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT reward_outcome, reward_policy_snapshot, reward_ped IS NULL \
+                 FROM session_quest_completions \
+                 WHERE quest_id IN (?, ?) ORDER BY quest_id",
+            )?;
+            let rows = stmt
+                .query_map(params![generic, mission], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        outcomes,
+        vec![
+            ("none".to_string(), "none".to_string(), 1),
+            ("none".to_string(), "none".to_string(), 1),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn reward_undo_is_available_without_a_cooldown() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, db) = service(dir.path()).await;
+    let quest = quest_id(
+        &svc.create_quest(&json!({
+            "name": "No-cooldown voucher",
+            "completion_trigger": "signal_item",
+            "signal_loot_item": "Daily Voucher",
+            "reward_policy": "named_items",
+            "reward_item_names": ["Daily Voucher"],
+        }))
+        .await
+        .unwrap(),
+    );
+    svc.start_quest(quest).await.unwrap();
+    svc.signal_loot_check(&[marker_value("Daily Voucher", 1, 0.0)])
+        .await
+        .unwrap();
+    assert_eq!(
+        svc.get_quest(quest).await.unwrap().unwrap()["reward_undo_available"],
+        json!(true)
+    );
+
+    svc.cancel_quest(quest, true).await.unwrap();
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_reward_reversals").await,
+        1
+    );
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM quest_cooldown_resets").await,
+        0,
+        "economic correction is independent of cooldown correction"
+    );
+    assert_eq!(
+        svc.get_quest(quest).await.unwrap().unwrap()["reward_undo_available"],
+        json!(false)
     );
 }
 
@@ -597,6 +774,17 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
     assert_eq!(created["completion_trigger"], "manual_hand_in");
     assert_eq!(created["reward_policy"], "completion_clump");
     svc.start_quest(quest).await.unwrap();
+    let refused = svc.complete_quest(quest).await.unwrap_err();
+    assert!(matches!(
+        refused,
+        QuestError::Invalid(message)
+            if message == "Manual hand-in quests must be completed by confirming an exact reward clump"
+    ));
+    assert!(svc.get_quest(quest).await.unwrap().unwrap()["started_at"].is_number());
+    assert_eq!(
+        count_rows(&db, "SELECT COUNT(*) FROM session_quest_completions").await,
+        0
+    );
 
     db.with_writer(move |conn| {
         conn.execute(
@@ -693,7 +881,7 @@ async fn manual_hand_in_confirms_one_exact_raw_clump() {
 
     let reclassified = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = reclassified.clone();
-    svc.set_loot_reclassifier(Arc::new(move |source_id| {
+    svc.set_loot_reconciler(Arc::new(move |source_id| {
         sink.lock().unwrap().push(source_id);
         Box::pin(async {})
     }));

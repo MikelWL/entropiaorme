@@ -6755,6 +6755,11 @@ impl AnalyticsService {
         markup_paid: Option<f64>,
         notes: Option<&str>,
     ) -> Result<Option<InventoryRow>, AnalyticsError> {
+        if name.is_some_and(is_universal_ammo) {
+            return Err(AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held in Inventory",
+            ));
+        }
         // The existence check and the (possibly empty) update run together on
         // the writer connection, which reads as well as writes.
         let updated = {
@@ -9190,6 +9195,19 @@ mod tests {
         assert_eq!(patched["ttValue"], json!(25.0));
         assert_eq!(patched["markupPaid"], json!(3.0), "untouched");
         assert_eq!(patched["notes"], json!("keep"), "untouched");
+
+        let error = service
+            .update_inventory_item(&id, Some("  universal AMMO "), Some(99.0), None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AnalyticsError::InvalidInput(
+                "Universal Ammo is liquid PED and is never held in Inventory"
+            )
+        ));
+        let unchanged = to_json(service.inventory_row(&id).await.unwrap());
+        assert_eq!(unchanged, patched, "the rejected patch is atomic");
 
         // An all-None patch re-reads and returns the row unchanged.
         let same = to_json(

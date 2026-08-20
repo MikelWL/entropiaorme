@@ -106,6 +106,55 @@ describe('computeQuestAnalytics: confirmed liquid-TT outcomes', () => {
 		expect(row.rewardMarkupPercent).toBe(100);
 	});
 
+	it('counts Universal Ammo once as liquid face value and never as market stock', () => {
+		const [row] = computeQuestAnalytics(
+			[
+				questRow({
+					totalRecordedRewardTt: 4,
+					totalRecordedItemTt: 0,
+					recordedRewardItems: [{ itemName: 'Universal Ammo', quantity: 40000, valuePed: 4 }],
+				}),
+			],
+			RATES,
+			'markup',
+		);
+		expect(row.totalRecordedRewardMu).toBe(4);
+		expect(row.displayLiquidReward).toBe(2);
+	});
+
+	it('projects only the stock component of a mixed ammo and item reward', () => {
+		const [row] = computeQuestAnalytics(
+			[
+				questRow({
+					totalRecordedRewardTt: 5,
+					totalRecordedItemTt: 1,
+					recordedRewardItems: [
+						{ itemName: 'Universal Ammo', quantity: 40000, valuePed: 4 },
+						{ itemName: 'Mission Token', quantity: 1, valuePed: 1 },
+					],
+				}),
+			],
+			RATES,
+			'markup',
+			{
+				nanocubeMarkupPct: null,
+				items: [
+					{
+						itemName: 'Mission Token',
+						markupPct: 200,
+						unitPricePed: null,
+						horizon: 'month',
+						salesPed: 100,
+						recommendedPacketTt: null,
+						readings: [],
+					},
+				],
+			},
+		);
+		expect(row.totalRecordedRewardMu).toBe(6);
+		expect(row.displayLiquidReward).toBe(3);
+	});
+
 	it('keeps the PES column at zero for a liquid-TT outcome in both modes', () => {
 		for (const mode of ['tt', 'markup'] as const) {
 			const [row] = computeQuestAnalytics([questRow()], RATES, mode);

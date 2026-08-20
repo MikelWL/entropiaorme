@@ -2,10 +2,9 @@ import { $, browser, expect } from '@wdio/globals';
 import { ensureDashboard, ensureViewport } from '../helpers/onboarding.mjs';
 import { DEV_URL } from '../wdio.conf.mjs';
 
-// Quests visual regression, captured in the real shell. The quests and
-// playlists reads hit the real facade over an empty database, so these shots
-// pin the surface's DEFAULT (empty) states: page chrome, tab strip, filters,
-// and the two empty-state notices. Deterministic by construction (no fixture
+// Quests visual regression, captured in the real shell. The quest read hits
+// the real facade over an empty database, so this shot pins the surface's
+// default empty state. Deterministic by construction (no fixture
 // data reaches this surface); populated-state coverage needs fixture-served
 // quest data and is a deliberate follow-up. Baselines are generated and
 // diffed in the same rendering environment (WebView2 on Windows); regenerate
@@ -37,22 +36,6 @@ describe('quests visual regression (native Tauri shell)', () => {
 		await browser.pause(500);
 		await ensureViewport(browser);
 		const mismatch = await browser.checkElement(area, 'quests-list-empty', VISUAL_OPTS);
-		expect(mismatch).toBeLessThanOrEqual(BUDGET);
-	});
-
-	it('matches the playlists empty-state baseline', async () => {
-		const tab = await $('[role="tablist"] [data-tab-id="playlists"]');
-		await tab.waitForClickable({ timeout: 10000 });
-		await tab.click();
-		const area = await $('[data-guide-anchor="quests-playlists-view"]');
-		await area.waitForExist({ timeout: 15000 });
-		await browser.waitUntil(async () => (await area.getText()).includes('No playlists yet'), {
-			timeout: 12000,
-			timeoutMsg: 'playlists view never settled into the empty state',
-		});
-		await browser.pause(500);
-		await ensureViewport(browser);
-		const mismatch = await browser.checkElement(area, 'quests-playlists-empty', VISUAL_OPTS);
 		expect(mismatch).toBeLessThanOrEqual(BUDGET);
 	});
 });

@@ -25,15 +25,15 @@ The behavioural contract did not move: the full suite, the replay corpus, and ev
 
 The actor's call semantics left one measurable question open by design: whether producers should decouple from persistence latency. That assessment ran as the concurrency-posture review this re-founding was sequenced before, measuring a single-owner task instead of a bridged mutex; it closed the question in favour of keeping call semantics ([ADR-0021](0021-synchronous-database-core.md) records the measurement and the verdict).
 
-The same treatment subsequently re-founded the quest service, the codebase's second transcription-shaped interior, with the adaptations its material demanded: its bus subscriptions are permanent (constructor-time, never removed), so the forwarders live for the composition's lifetime rather than a session's; the chat-log watcher's synchronous reward-filter seam became a rendezvous into the owning task, deleting the composition root's bridging adapter; the session-tracking state is a single field with no cross-field invariant cluster, so the typestate has no counterpart there and a watch channel serves its lock-free reads; and the closed vocabularies (link kinds, playlist groups, overlay-event kinds) parse to enums at their boundaries. One quest service instance now serves both the producer spine and the typed command facade. The shared CPython-compatible time helpers were promoted to `eo_services::time` in the process, ending the cross-service imports through the tracker's public surface.
+The same treatment subsequently re-founded the quest service, the codebase's second transcription-shaped interior, with the adaptations its material demanded: its bus subscriptions are permanent (constructor-time, never removed), so the forwarders live for the composition's lifetime rather than a session's; the chat-log watcher's synchronous reward-filter seam became a rendezvous into the owning task, deleting the composition root's bridging adapter; the session-tracking state is a single field with no cross-field invariant cluster, so the typestate has no counterpart there and a watch channel serves its lock-free reads; and its closed vocabularies parse to enums at their boundaries. One quest service instance now serves both the producer spine and the typed command facade. The shared CPython-compatible time helpers were promoted to `eo_services::time` in the process, ending the cross-service imports through the tracker's public surface.
 
 See [ADR-0002](0002-event-spine.md) for the typed event spine the actor emits onto, [ADR-0012](0012-supervised-worker-threads.md) for the producer-thread posture the forwarders bridge from, [ADR-0019](0019-typed-command-facade.md) for the command boundary above this interior, [ADR-0021](0021-synchronous-database-core.md) for the synchronous database core the actors persist through, and the [ADR index](index.md).
 
 ## Evidence
 
-- `frontend/src-tauri/eo-services/src/tracker/` (the module directory: `actor.rs`, `session.rs`, `combat.rs`, `loot.rs`, `weapons.rs`, `mob.rs`, `persistence.rs`, `providers.rs`, `time.rs`)
-- `frontend/src-tauri/eo-services/src/quests/` (the quest half: `actor.rs`, `crud.rs`, `lifecycle.rs`, `linking.rs`, `missions.rs`, `analytics.rs`, `playlists.rs`, `payload.rs`)
-- `frontend/src-tauri/eo-services/src/ped.rs` (the currency newtype)
-- `frontend/src-tauri/eo-services/src/time.rs` (the shared time helpers)
-- `frontend/src-tauri/eo-services/src/config_service.rs` (`ConfigReader`, the live-config publication)
-- `frontend/src-tauri/eo-services/tests/corpus_replay_oracle.rs` (the byte-frozen replay evidence the conversion held against)
+- `app/src-tauri/eo-services/src/tracker/` (the module directory: `actor.rs`, `session.rs`, `combat.rs`, `loot.rs`, `weapons.rs`, `mob.rs`, `persistence.rs`, `providers.rs`, `time.rs`)
+- `app/src-tauri/eo-services/src/quests/` (the quest half: `actor.rs`, `crud.rs`, `lifecycle.rs`, `missions.rs`, `analytics.rs`, `hand_in.rs`, `review.rs`, `payload.rs`)
+- `app/src-tauri/eo-services/src/ped.rs` (the currency newtype)
+- `app/src-tauri/eo-services/src/time.rs` (the shared time helpers)
+- `app/src-tauri/eo-services/src/config_service.rs` (`ConfigReader`, the live-config publication)
+- `app/src-tauri/eo-services/tests/corpus_replay_oracle.rs` (the byte-frozen replay evidence the conversion held against)

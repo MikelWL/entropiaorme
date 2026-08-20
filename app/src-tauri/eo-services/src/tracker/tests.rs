@@ -909,28 +909,77 @@ fn exact_loot_source_reclassification_updates_the_live_aggregate() {
         kind: LootTag,
         source_id: Some("quest-clump-1".into()),
         timestamp: Some("2026-01-01T00:00:02".into()),
-        items: vec![LootItem {
-            item_name: "Blazar Fragment".into(),
-            quantity: 238,
-            value_ped: 1.23,
-            is_enhancer_shrapnel: false,
-        }],
-        total_ped: 1.23,
+        items: vec![
+            LootItem {
+                item_name: "Blazar Fragment".into(),
+                quantity: 238,
+                value_ped: 1.23,
+                is_enhancer_shrapnel: false,
+            },
+            LootItem {
+                item_name: "Animal Oil".into(),
+                quantity: 1,
+                value_ped: 0.77,
+                is_enhancer_shrapnel: false,
+            },
+        ],
+        total_ped: 2.0,
     }));
 
     let before = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
-    assert_eq!(before.returns, 1.23);
-    assert!(rig.wait(tracker.reclassify_loot_source("quest-clump-1")));
+    assert_eq!(before.returns, 2.0);
+    rig.wait(rig.db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET deactivated_at = 1 \
+             WHERE item_name = 'Blazar Fragment'",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE kills SET loot_total_ped = 0.77 WHERE loot_source_id = 'quest-clump-1'",
+            [],
+        )?;
+        Ok(())
+    }))
+    .unwrap();
+    assert!(rig
+        .wait(tracker.reconcile_loot_source("quest-clump-1"))
+        .unwrap());
     let after = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
-    assert_eq!(after.returns, 0.0);
-    assert!(!rig.wait(tracker.reclassify_loot_source("quest-clump-1")));
+    assert_eq!(after.returns, 0.77);
+    assert!(!rig
+        .wait(tracker.reconcile_loot_source("quest-clump-1"))
+        .unwrap());
+    rig.wait(rig.db.with_writer(|conn| {
+        conn.execute(
+            "UPDATE kill_loot_items SET deactivated_at = NULL \
+             WHERE item_name = 'Blazar Fragment'",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE kills SET loot_total_ped = 2.0 WHERE loot_source_id = 'quest-clump-1'",
+            [],
+        )?;
+        Ok(())
+    }))
+    .unwrap();
+    assert!(rig
+        .wait(tracker.reconcile_loot_source("quest-clump-1"))
+        .unwrap());
+    assert_eq!(
+        rig.wait(tracker.snapshot())
+            .unwrap()
+            .active
+            .unwrap()
+            .returns,
+        2.0
+    );
     assert_eq!(
         rig.scalar_f64(
             "SELECT loot_total_ped FROM kills WHERE loot_source_id = ?",
             &["quest-clump-1"],
         ),
-        1.23,
-        "the quest transaction, not this actor correction, owns persistence"
+        2.0,
+        "the quest transaction, not actor reconciliation, owns persistence"
     );
 }
 

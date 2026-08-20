@@ -273,6 +273,8 @@ pub struct Quest {
     /// The family-wide cooldown expiry: availability is the LATER of
     /// this and `cooldownExpiresAt` (the quest's own window).
     pub family_cooldown_expires_at: Nullable<String>,
+    /// Whether the latest completion owns an unreversed economic reward.
+    pub reward_undo_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -369,6 +371,7 @@ impl Quest {
                 .map(QuestCooldownAnchor::from_service)
                 .into(),
             family_cooldown_expires_at: opt_string(&quest["family_cooldown_expires_at"]).into(),
+            reward_undo_available: quest["reward_undo_available"].as_bool().unwrap_or(false),
         }
     }
 }

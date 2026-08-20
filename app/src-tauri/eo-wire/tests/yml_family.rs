@@ -1,8 +1,8 @@
 //! The frozen `.yml`-family inheritance.
 //!
-//! The three listener bus-stream pins (hotbar and spacebar) and the
-//! quest-automation pin are banked as canonical-JSON mirrors under
-//! `eo-wire/tests/fixtures/yml_family/`. This asserts the native normaliser +
+//! The listener bus-stream pins (hotbar and spacebar) are banked as
+//! canonical-JSON mirrors under `eo-wire/tests/fixtures/yml_family/`.
+//! This asserts the native normaliser +
 //! serialiser reproduce each pinned projection byte-for-byte, so a listener
 //! change is caught against the frozen golden. Hermetic: it reads the committed
 //! mirrors only.
@@ -12,11 +12,7 @@ use std::path::PathBuf;
 use eo_wire::normalizer::{to_python_json, Normalizer};
 use serde_json::Value;
 
-const MIRRORS: [&str; 3] = [
-    "hotbar_slot_use",
-    "spacebar_scan_capture",
-    "quest_automation_with_playlist_match",
-];
+const MIRRORS: [&str; 2] = ["hotbar_slot_use", "spacebar_scan_capture"];
 
 fn mirror_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yml_family")

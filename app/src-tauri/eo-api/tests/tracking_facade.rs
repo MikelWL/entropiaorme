@@ -1008,6 +1008,32 @@ async fn declaring_a_quest_refuses_unknown_unstarted_and_idle() {
         .await
         .unwrap_err();
     assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+
+    let cold_signal = api
+        .quest_create(
+            serde_json::from_value(serde_json::json!({
+                "name": "Cold signal",
+                "completion_trigger": "signal_item",
+                "signal_loot_item": "Daily Voucher",
+                "cooldown_anchor": "pickup",
+                "cooldown_hours": 20,
+            }))
+            .expect("quest input shape"),
+        )
+        .await
+        .unwrap();
+    let cold_signal_id: i64 = cold_signal.id.parse().unwrap();
+    let idle = api
+        .tracking_activity_activate(ActivityTargetKind::Quest, Some(cold_signal_id), None, None)
+        .await
+        .unwrap_err();
+    assert_eq!(serde_json::to_value(&idle).unwrap()["kind"], "conflict");
+    let cold_signal = serde_json::to_value(api.quest_get(cold_signal_id).await.unwrap()).unwrap();
+    assert!(cold_signal["startedAt"].is_null());
+    assert!(
+        cold_signal["lastStartedAt"].is_null(),
+        "idle declaration must not stamp a pickup cooldown"
+    );
     let idle = api
         .tracking_activity_deactivate(ActivityTargetKind::Quest, Some(started), None)
         .await

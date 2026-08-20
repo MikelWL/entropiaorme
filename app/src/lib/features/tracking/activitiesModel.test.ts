@@ -11,6 +11,7 @@ function option(overrides: Partial<ActivityOption> = {}): ActivityOption {
 		questId: 11,
 		active: false,
 		available: true,
+		resettable: false,
 		unavailableReason: null,
 		availableFrom: null,
 		offRoster: false,

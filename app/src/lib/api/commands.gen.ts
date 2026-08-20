@@ -118,6 +118,8 @@ export interface ActivityOption {
 	active: boolean;
 	/** Whether declaring it would do anything right now. */
 	available: boolean;
+	/** Whether this direct quest row owns a cooldown the quest reset action can actually clear. False for family-only and non-cooldown gates. */
+	resettable: boolean;
 	/** Why it would not, in the user's words; null when it would. */
 	unavailableReason: string | null;
 	/** When the gate lifts (fractional epoch seconds), so the control can count down; null when nothing gates the row. */
@@ -2189,6 +2191,8 @@ export interface Quest {
 	familyCooldownAnchor: QuestCooldownAnchor | null;
 	/** The family-wide cooldown expiry: availability is the LATER of this and `cooldownExpiresAt` (the quest's own window). */
 	familyCooldownExpiresAt: string | null;
+	/** Whether the latest completion owns an unreversed economic reward. */
+	rewardUndoAvailable: boolean;
 }
 
 /**

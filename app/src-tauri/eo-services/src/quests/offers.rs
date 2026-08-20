@@ -61,6 +61,9 @@ pub struct QuestOffer {
     /// one slot, so whichever timer runs longer is the one that binds.
     /// None when nothing gates it.
     pub available_from: Option<f64>,
+    /// The quest's own gate, kept separate from the family gate so a member
+    /// row never offers to reset a family-only cooldown.
+    pub own_available_from: Option<f64>,
 }
 
 impl super::QuestService {
@@ -106,6 +109,7 @@ pub async fn read_quest_offers(db: &Db) -> Result<Vec<QuestOffer>, DbError> {
                     (Some(own), Some(family)) => Some(own.max(family)),
                     (lift, None) | (None, lift) => lift,
                 },
+                own_available_from: own_lift,
             });
         }
         Ok(out)

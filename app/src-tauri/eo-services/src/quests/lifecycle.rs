@@ -86,6 +86,24 @@ pub(super) fn insert_reward_item(
     Ok(())
 }
 
+/// Restore the canonical ordinary-loot total after reward evidence changes
+/// the active item rows. Enhancer-rebate Shrapnel never contributes to a
+/// kill's loot total, matching the tracker write path.
+pub(super) fn recompute_kill_loot_total(
+    conn: &rusqlite::Connection,
+    kill_id: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE kills SET loot_total_ped = \
+         (SELECT COALESCE(SUM(value_ped), 0) FROM kill_loot_items \
+          WHERE kill_id = ? AND deactivated_at IS NULL \
+            AND is_enhancer_shrapnel = 0) \
+         WHERE id = ?",
+        rusqlite::params![kill_id, kill_id],
+    )?;
+    Ok(())
+}
+
 fn snapshot_reward_attributions(
     conn: &rusqlite::Connection,
     completion_id: i64,
@@ -231,6 +249,19 @@ impl QuestService {
     /// Complete a quest from an administrative/manual action. Tick-driven
     /// completion supplies a typed reward capture instead.
     pub async fn complete_quest(&self, quest_id: i64) -> Result<Option<Value>, QuestError> {
+        let Some(quest) = self.get_quest(quest_id).await? else {
+            return Ok(None);
+        };
+        if quest
+            .get("completion_trigger")
+            .and_then(Value::as_str)
+            .is_some_and(|trigger| trigger == "manual_hand_in")
+        {
+            return Err(QuestError::Invalid(
+                "Manual hand-in quests must be completed by confirming an exact reward clump"
+                    .to_string(),
+            ));
+        }
         self.complete_quest_with_evidence(quest_id, None).await
     }
 
@@ -325,8 +356,10 @@ impl QuestService {
                 manual_clump: None,
             },
         });
-        let reward_ped = quest.get("reward_ped").and_then(Value::as_f64).map(Ped);
         let reward_is_skill = policy == "fixed_pes";
+        let reward_ped = reward_is_skill
+            .then(|| quest.get("reward_ped").and_then(Value::as_f64).map(Ped))
+            .flatten();
         let reward_source = match reward_ped.filter(|reward| reward.is_positive()) {
             Some(_) if reward_is_skill => "skill",
             None if capture.had_tracked_loot => "tracked_loot",
@@ -556,7 +589,7 @@ impl QuestService {
             CompletionWrite::Refused(message) => return Err(QuestError::Invalid(message)),
             CompletionWrite::Applied => {
                 if let Some(source_id) = reclassified_source_id {
-                    self.report_loot_reclassified(source_id).await;
+                    self.report_loot_reconciled(source_id).await;
                 }
                 if manual_hand_in {
                     self.report_stretch_closed(quest_id).await;
@@ -613,6 +646,11 @@ impl QuestService {
         };
 
         if !quest["started_at"].is_null() {
+            if undo_reward {
+                return Err(QuestError::Invalid(
+                    "Cancel the active quest run before undoing its previous reward".to_string(),
+                ));
+            }
             self.db
                 .with_writer(move |conn| {
                     let tx = conn.transaction()?;
@@ -632,7 +670,8 @@ impl QuestService {
             return self.get_quest(quest_id).await;
         }
 
-        if !self.is_quest_cooling(&quest) {
+        let cooling = self.is_quest_cooling(&quest);
+        if !cooling && !undo_reward {
             return Ok(Some(quest));
         }
 
@@ -673,12 +712,14 @@ impl QuestService {
                         },
                     )
                     .optional()?;
-                if let Some((completion_id, _, _, _, _, _)) = &completion {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO quest_cooldown_resets \
-                         (quest_id, completion_id, reset_at) VALUES (?, ?, ?)",
-                        rusqlite::params![quest_id, completion_id, now],
-                    )?;
+                if cooling {
+                    if let Some((completion_id, _, _, _, _, _)) = &completion {
+                        tx.execute(
+                            "INSERT OR IGNORE INTO quest_cooldown_resets \
+                             (quest_id, completion_id, reset_at) VALUES (?, ?, ?)",
+                            rusqlite::params![quest_id, completion_id, now],
+                        )?;
+                    }
                 }
                 if clear_pickup_stamp {
                     tx.execute(
@@ -785,6 +826,21 @@ impl QuestService {
                         ],
                     )?;
 
+                    let reviewed_kill_ids = {
+                        let mut stmt = tx.prepare(
+                            "SELECT DISTINCT li.kill_id FROM kill_loot_items li \
+                             JOIN quest_reward_review_items qri \
+                               ON qri.source_loot_item_id = li.id \
+                             JOIN quest_reward_reviews qr ON qr.id = qri.review_id \
+                             WHERE qr.completion_id = ?",
+                        )?;
+                        let rows = stmt
+                            .query_map(rusqlite::params![completion_id], |row| {
+                                row.get::<_, String>(0)
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        rows
+                    };
                     tx.execute(
                         "UPDATE kill_loot_items SET deactivated_at = NULL \
                          WHERE id IN (SELECT source_loot_item_id \
@@ -793,6 +849,9 @@ impl QuestService {
                                       WHERE qr.completion_id = ?)",
                         rusqlite::params![completion_id],
                     )?;
+                    for kill_id in reviewed_kill_ids {
+                        recompute_kill_loot_total(&tx, &kill_id)?;
+                    }
                     let clump_source: Option<(String, String)> = tx
                         .query_row(
                             "SELECT source_kind, source_record_id FROM quest_reward_clumps \
@@ -802,24 +861,28 @@ impl QuestService {
                         )
                         .optional()?;
                     if let Some((source_kind, source_record_id)) = clump_source {
-                        let (items_table, owner_column, owner_table) = if source_kind == "kill" {
-                            ("kill_loot_items", "kill_id", "kills")
+                        if source_kind == "kill" {
+                            tx.execute(
+                                "UPDATE kill_loot_items SET deactivated_at = NULL \
+                                 WHERE kill_id = ?",
+                                rusqlite::params![source_record_id],
+                            )?;
+                            recompute_kill_loot_total(&tx, &source_record_id)?;
                         } else {
-                            ("harvest_loot_items", "harvest_id", "harvest_events")
-                        };
-                        tx.execute(
-                            &format!("UPDATE {items_table} SET deactivated_at = NULL WHERE {owner_column} = ?"),
-                            rusqlite::params![source_record_id],
-                        )?;
-                        tx.execute(
-                            &format!(
-                                "UPDATE {owner_table} SET loot_total_ped = \
-                                 (SELECT COALESCE(SUM(value_ped), 0) FROM {items_table} \
-                                  WHERE {owner_column} = ? AND deactivated_at IS NULL) \
-                                 WHERE id = ?"
-                            ),
-                            rusqlite::params![source_record_id, source_record_id],
-                        )?;
+                            tx.execute(
+                                "UPDATE harvest_loot_items SET deactivated_at = NULL \
+                                 WHERE harvest_id = ?",
+                                rusqlite::params![source_record_id],
+                            )?;
+                            tx.execute(
+                                "UPDATE harvest_events SET loot_total_ped = \
+                                 (SELECT COALESCE(SUM(value_ped), 0) \
+                                  FROM harvest_loot_items \
+                                  WHERE harvest_id = ? AND deactivated_at IS NULL) \
+                                 WHERE id = ?",
+                                rusqlite::params![source_record_id, source_record_id],
+                            )?;
+                        }
                     }
                     crate::session_rollup::recompute_session(&tx, session_id)?;
                     crate::daily_rollup::refresh_session_days(&tx, session_id)?;
@@ -836,6 +899,36 @@ impl QuestService {
             })
             .await?;
         correction.map_err(QuestError::Invalid)?;
+        if undo_reward {
+            let source_ids = self
+                .db
+                .with_reader(move |conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT DISTINCT k.loot_source_id \
+                         FROM session_quest_completions c \
+                         JOIN quest_reward_reviews qr ON qr.completion_id = c.id \
+                         JOIN quest_reward_review_items qri ON qri.review_id = qr.id \
+                         JOIN kill_loot_items li ON li.id = qri.source_loot_item_id \
+                         JOIN kills k ON k.id = li.kill_id \
+                         WHERE c.quest_id = ? AND k.loot_source_id IS NOT NULL \
+                         UNION \
+                         SELECT DISTINCT clump.source_id \
+                         FROM session_quest_completions c \
+                         JOIN quest_reward_clumps clump ON clump.claimed_completion_id = c.id \
+                         WHERE c.quest_id = ?",
+                    )?;
+                    let rows = stmt
+                        .query_map(rusqlite::params![quest_id, quest_id], |row| {
+                            row.get::<_, String>(0)
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok(rows)
+                })
+                .await?;
+            for source_id in source_ids {
+                self.report_loot_reconciled(source_id).await;
+            }
+        }
         self.get_quest(quest_id).await
     }
 

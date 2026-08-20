@@ -12,6 +12,7 @@ const standaloneQuest = {
 	familyCooldownDurationHours: null,
 	familyCooldownAnchor: null,
 	familyCooldownExpiresAt: null,
+	rewardUndoAvailable: false,
 };
 
 /**
@@ -132,6 +133,7 @@ export const questsDemoQuests: Quest[] = [
 		familyCooldownDurationHours: 20,
 		familyCooldownAnchor: 'pickup',
 		familyCooldownExpiresAt: null,
+		rewardUndoAvailable: false,
 	},
 	{
 		id: 'q6',
@@ -161,6 +163,7 @@ export const questsDemoQuests: Quest[] = [
 		familyCooldownDurationHours: 20,
 		familyCooldownAnchor: 'pickup',
 		familyCooldownExpiresAt: null,
+		rewardUndoAvailable: false,
 	},
 ];
 

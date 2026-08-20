@@ -2,6 +2,7 @@
 //! construction from the accumulator, and notable-event correlation.
 
 use eo_wire::normalizer::round_half_even;
+use rusqlite::OptionalExtension as _;
 
 use crate::bus_events::{BusEvent, GlobalPayload};
 use crate::harvest_yield::HarvestYieldSource;
@@ -20,43 +21,134 @@ enum RoutedLoot {
     Harvest(HarvestEvent),
 }
 
+enum ReconciledLootSource {
+    Kill {
+        total: Ped,
+        items: Vec<crate::tracking_models::LootItem>,
+    },
+    Harvest {
+        total: Ped,
+        items: Vec<crate::tracking_models::LootItem>,
+    },
+}
+
 impl TrackerActor {
-    /// Apply the in-memory half of a committed quest-reward reclassification.
-    /// The stable watcher identity makes this exact even when two clumps have
-    /// the same timestamp, items, and value.
-    pub(super) fn reclassify_loot_source(&mut self, source_id: &str) -> bool {
-        let Some(active) = self.session.active_mut() else {
-            return false;
+    /// Reconcile one stable loot source from its committed active item rows.
+    /// Quest reward confirmation and reversal both use this path, so partial
+    /// reclassification and restoration remain exact in the live aggregate.
+    pub(super) async fn reconcile_loot_source(
+        &mut self,
+        source_id: &str,
+    ) -> Result<bool, crate::db::DbError> {
+        let source_key = source_id.to_string();
+        let reconciled = self
+            .db
+            .with_reader(move |conn| {
+                let kill: Option<(String, f64)> = conn
+                    .query_row(
+                        "SELECT id, loot_total_ped FROM kills WHERE loot_source_id = ?",
+                        rusqlite::params![source_key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                if let Some((kill_id, total)) = kill {
+                    let mut stmt = conn.prepare(
+                        "SELECT item_name, quantity, value_ped, is_enhancer_shrapnel \
+                         FROM kill_loot_items \
+                         WHERE kill_id = ? AND deactivated_at IS NULL ORDER BY id",
+                    )?;
+                    let items = stmt
+                        .query_map(rusqlite::params![kill_id], |row| {
+                            Ok(crate::tracking_models::LootItem {
+                                item_name: row.get(0)?,
+                                quantity: row.get(1)?,
+                                value_ped: row.get(2)?,
+                                is_enhancer_shrapnel: row.get::<_, i64>(3)? != 0,
+                            })
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    return Ok(Some(ReconciledLootSource::Kill {
+                        total: Ped(total),
+                        items,
+                    }));
+                }
+                let harvest: Option<(String, f64)> = conn
+                    .query_row(
+                        "SELECT id, loot_total_ped FROM harvest_events WHERE loot_source_id = ?",
+                        rusqlite::params![source_key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((harvest_id, total)) = harvest else {
+                    return Ok(None);
+                };
+                let mut stmt = conn.prepare(
+                    "SELECT item_name, quantity, value_ped, is_enhancer_shrapnel \
+                     FROM harvest_loot_items \
+                     WHERE harvest_id = ? AND deactivated_at IS NULL ORDER BY id",
+                )?;
+                let items = stmt
+                    .query_map(rusqlite::params![harvest_id], |row| {
+                        Ok(crate::tracking_models::LootItem {
+                            item_name: row.get(0)?,
+                            quantity: row.get(1)?,
+                            value_ped: row.get(2)?,
+                            is_enhancer_shrapnel: row.get::<_, i64>(3)? != 0,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(Some(ReconciledLootSource::Harvest {
+                    total: Ped(total),
+                    items,
+                }))
+            })
+            .await?;
+        let Some(reconciled) = reconciled else {
+            return Ok(false);
         };
-        if let Some(kill) = active
-            .session
-            .kills
-            .iter_mut()
-            .find(|kill| kill.loot_source_id.as_deref() == Some(source_id))
-        {
-            if kill.loot_items.is_empty() && kill.loot_total_ped == Ped::ZERO {
-                return false;
+        let Some(active) = self.session.active_mut() else {
+            return Ok(false);
+        };
+        let changed = match reconciled {
+            ReconciledLootSource::Kill { total, items } => {
+                let Some(kill) = active
+                    .session
+                    .kills
+                    .iter_mut()
+                    .find(|kill| kill.loot_source_id.as_deref() == Some(source_id))
+                else {
+                    return Ok(false);
+                };
+                if kill.loot_items == items && kill.loot_total_ped == total {
+                    false
+                } else {
+                    kill.loot_items = items;
+                    kill.loot_total_ped = total;
+                    true
+                }
             }
-            kill.loot_items.clear();
-            kill.loot_total_ped = Ped::ZERO;
-            active.dirty = true;
-            return true;
-        }
-        if let Some(harvest) = active
-            .session
-            .harvests
-            .iter_mut()
-            .find(|harvest| harvest.loot_source_id.as_deref() == Some(source_id))
-        {
-            if harvest.loot_items.is_empty() && harvest.loot_total_ped == Ped::ZERO {
-                return false;
+            ReconciledLootSource::Harvest { total, items } => {
+                let Some(harvest) = active
+                    .session
+                    .harvests
+                    .iter_mut()
+                    .find(|harvest| harvest.loot_source_id.as_deref() == Some(source_id))
+                else {
+                    return Ok(false);
+                };
+                if harvest.loot_items == items && harvest.loot_total_ped == total {
+                    false
+                } else {
+                    harvest.loot_items = items;
+                    harvest.loot_total_ped = total;
+                    true
+                }
             }
-            harvest.loot_items.clear();
-            harvest.loot_total_ped = Ped::ZERO;
+        };
+        if changed {
             active.dirty = true;
-            return true;
         }
-        false
+        Ok(changed)
     }
 
     /// Handle a loot group from chat.log. A wood group (the harvest
