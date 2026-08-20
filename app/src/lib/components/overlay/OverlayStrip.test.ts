@@ -34,7 +34,7 @@ vi.mock('$lib/statsScope.svelte', () => ({
 	setStatsScope,
 }));
 
-import type { TrackingLive, TrackingStatus } from '$lib/api';
+import type { ProtectionOverview, TrackingLive, TrackingStatus } from '$lib/api';
 import OverlayStrip from './OverlayStrip.svelte';
 
 function liveData(overrides: Partial<TrackingLive> = {}): TrackingLive {
@@ -44,6 +44,48 @@ function liveData(overrides: Partial<TrackingLive> = {}): TrackingLive {
 function activeStatus(overrides: Partial<TrackingStatus> = {}): TrackingStatus {
 	return { status: 'active', ...overrides };
 }
+
+const mixedProtection: ProtectionOverview = {
+	sets: [
+		{
+			id: '1',
+			kind: 'armour',
+			name: 'UL armour',
+			economyKind: 'unlimited',
+			markupPercent: null,
+			latestObservation: null,
+			pendingReconciliations: 0,
+			basisLocked: false,
+			unsettledDamage: 0,
+			unsettledDeflections: 0,
+			unsettledSessions: 0,
+		},
+		{
+			id: '2',
+			kind: 'plates',
+			name: 'L plates',
+			economyKind: 'limited',
+			markupPercent: 125,
+			latestObservation: null,
+			pendingReconciliations: 0,
+			basisLocked: false,
+			unsettledDamage: 0,
+			unsettledDeflections: 0,
+			unsettledSessions: 0,
+		},
+	],
+	loadouts: [
+		{
+			id: 'loadout',
+			name: 'Mixed',
+			armour: { id: '1', name: 'UL armour', economyKind: 'unlimited', markupPercent: null },
+			plates: { id: '2', name: 'L plates', economyKind: 'limited', markupPercent: 125 },
+		},
+	],
+	activeLoadoutId: 'loadout',
+	recentReconciliations: [],
+	recentCostWindows: [],
+};
 
 beforeEach(() => {
 	overlayStats.current = [];
@@ -98,12 +140,12 @@ describe('armour track decision prompt', () => {
 			},
 		});
 
-		expect(screen.getByText('Track armour?')).toBeTruthy();
+		expect(screen.getByText('Record protection?')).toBeTruthy();
 		expect(screen.queryByTitle('Stop tracking')).toBeNull();
 
-		screen.getByText('Yes').click();
+		screen.getByText('Record').click();
 		expect(onArmourTrackDecision).toHaveBeenCalledWith('yes');
-		screen.getByText('No').click();
+		screen.getByText('Later').click();
 		expect(onArmourTrackDecision).toHaveBeenCalledWith('no');
 	});
 
@@ -111,7 +153,7 @@ describe('armour track decision prompt', () => {
 		render(OverlayStrip, {
 			props: { data: liveData(), awaitingArmourTrackDecision: true },
 		});
-		expect(screen.queryByText('Track armour?')).toBeNull();
+		expect(screen.queryByText('Record protection?')).toBeNull();
 		expect(screen.getByTitle('Start tracking')).toBeTruthy();
 	});
 });
@@ -142,6 +184,31 @@ describe('attribution warning', () => {
 			},
 		});
 		expect(screen.queryByText('Configure a weapon before tracking')).toBeNull();
+		expect(screen.getByTitle('Stop tracking')).toBeTruthy();
+	});
+});
+
+describe('tracking warnings', () => {
+	it('keeps every warning visible without replacing the live stop control', () => {
+		const accountingWarning =
+			'Protection accounting degraded: defensive evidence could not be saved';
+		const healingWarning = 'Healing detected: no heal tool equipped via hotbar';
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					status: 'active',
+					warnings: [
+						{ type: 'warning', description: accountingWarning, value: 0 },
+						{ type: 'warning', description: healingWarning, value: 0 },
+					],
+				}),
+			},
+		});
+
+		const warningSurface = screen.getByTestId('tracking-warning');
+		expect(warningSurface.textContent).toContain('Tracking warnings');
+		expect(warningSurface.textContent).toContain(accountingWarning);
+		expect(warningSurface.textContent).toContain(healingWarning);
 		expect(screen.getByTitle('Stop tracking')).toBeTruthy();
 	});
 });
@@ -443,6 +510,37 @@ describe('armour cost control', () => {
 		expect(button.disabled).toBe(false);
 		button.click();
 		expect(onArmourCostToggle).toHaveBeenCalledTimes(1);
+	});
+
+	it('describes a mixed active loadout as a two-step protection flow', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active' }),
+				armourSessionId: 's1',
+				protection: mixedProtection,
+			},
+		});
+		expect(screen.getByTitle('Record 2 protection costs')).toBeTruthy();
+	});
+
+	it('disables cost recording for an explicit no-protection loadout', () => {
+		const protection: ProtectionOverview = {
+			sets: [],
+			loadouts: [{ id: 'none', name: 'No protection', armour: null, plates: null }],
+			activeLoadoutId: 'none',
+			recentReconciliations: [],
+			recentCostWindows: [],
+		};
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active' }),
+				armourSessionId: 's1',
+				protection,
+			},
+		});
+		expect((screen.getByTitle('No protection cost to record') as HTMLButtonElement).disabled).toBe(
+			true,
+		);
 	});
 
 	it('surfaces the armour cost error while the popup is closed', () => {

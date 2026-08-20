@@ -1082,10 +1082,16 @@ async fn compose_scan_services(
     // The repair-OCR provider seams: the same calibrated region lookup and
     // capturer (BGR pixels here), recognised by the shared engine.
     let repair_presets = presets.clone();
+    let trade_terminal_presets = presets.clone();
+    let trade_terminal_calibrated = presets.trade_terminal_calibrated;
     let repair_engine_for_sale = ocr_engine.clone();
     let repair_engine = ocr_engine;
     let repair_ocr = Arc::new(RepairOcrService::new(RepairProviders {
         repair_region: Arc::new(move || eu_window::repair_region(&repair_presets)),
+        trade_terminal_region: Arc::new(move || {
+            eu_window::trade_terminal_region(&trade_terminal_presets)
+        }),
+        trade_terminal_calibrated,
         capture_region: Arc::new(capture_region_bgr),
         read_text: Arc::new(move |frame: &BgrImage| {
             repair_engine

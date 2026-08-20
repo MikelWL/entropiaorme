@@ -53,6 +53,7 @@ use crate::db::{Db, DbError};
 use crate::event_bus::EventBus;
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
+use crate::protection::ProtectionSelection;
 use crate::tracking_models::TrackingSession;
 
 use actor::{TrackerActor, TrackerMsg, TrackerStatus};
@@ -87,6 +88,8 @@ const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
+    #[error("Protection selection could not be persisted")]
+    Persistence,
 }
 
 /// The session typestate: everything session-scoped lives inside the
@@ -261,6 +264,17 @@ impl HuntTracker {
         target: ActivityKey,
     ) -> Result<Vec<ActiveActivity>, TrackerCommandError> {
         self.call(|reply| TrackerMsg::DeactivateActivity { target, reply })
+            .await
+    }
+
+    /// Declare the protection loadout in force from now onward. The
+    /// actor writes the persisted default, interval, resolved layer
+    /// snapshot, and fresh event context as one transition.
+    pub async fn set_protection(
+        &self,
+        selection: ProtectionSelection,
+    ) -> Result<(), TrackerCommandError> {
+        self.call(|reply| TrackerMsg::SetProtection { selection, reply })
             .await
     }
 

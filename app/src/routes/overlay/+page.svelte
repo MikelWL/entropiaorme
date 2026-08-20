@@ -27,6 +27,8 @@
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
 	import { createSessionFacets } from '$lib/features/tracking/sessionFacets.svelte';
 	import { createActivitiesModel } from '$lib/features/tracking/activitiesModel.svelte';
+	import { buildProtectionCostSteps } from '$lib/features/protection/protectionCostFlow';
+	import { createOverlayProtectionModel } from '$lib/features/protection/overlayProtectionModel.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
@@ -94,7 +96,6 @@
 	let trifectaSaving = $state(false);
 	let trifectaError = $state<string | null>(null);
 	let overlayMenuLaunchError = $state<string | null>(null);
-
 	let data = $state<TrackingLive>({ status: 'idle' });
 	let status = $state<TrackingStatus | null>(null);
 	// Session start in epoch-ms (parsed from the snapshot's started_at), the basis
@@ -147,6 +148,7 @@
 	// factory). Each webview is its own JS context, so the overlay keeps its
 	// own store instance beside the dashboard's.
 	const snapshot = createSnapshotStore<TrackingSnapshot>(TRACKING_TOPIC, getTrackingSnapshot);
+	const protection = createOverlayProtectionModel(() => snapshot.hydrate());
 
 	// Post-session flow: the armour prompt gating the stop and the
 	// final-stats readout (see the module for the state machine). Render
@@ -155,7 +157,9 @@
 	const flow = createPostSessionFlow({
 		isSessionActive: () => data.status === 'active',
 		isBusy: () => toggling,
-		armourReminderEnabled: () => data.endOfSessionArmourReminderEnabled === true,
+		armourReminderEnabled: () =>
+			data.endOfSessionArmourReminderEnabled === true &&
+			buildProtectionCostSteps(protection.overview).length > 0,
 		refresh: () => snapshot.hydrate(),
 		readStats: () => ({
 			cost: snapshot.current?.cost ?? 0,
@@ -281,10 +285,13 @@
 	async function buildArmourCostState(anchor: HTMLElement): Promise<OverlayArmourCostState | null> {
 		const sessionId = armourSessionId;
 		if (!sessionId || !anchor.isConnected) return null;
+		const steps = buildProtectionCostSteps(protection.overview);
+		if (steps.length === 0) return null;
 
 		return {
 			sessionId,
 			repairOcrEnabled: data.repairOcrEnabled === true,
+			steps,
 			anchor: await anchorCentreBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 		};
 	}
@@ -621,6 +628,7 @@
 			}
 			unlisten = fn;
 			void snapshot.hydrate();
+			void protection.refresh();
 		});
 
 		return () => {
@@ -644,6 +652,7 @@
 			unlisten = await listen(OVERLAY_SHOWN_EVENT, () => {
 				if (disposed) return;
 				void snapshot.hydrate();
+				void protection.refresh();
 			});
 		})();
 
@@ -753,6 +762,7 @@
 				if (disposed) return;
 				armourCostClosedAt = Date.now();
 				clearArmourCostOpenState();
+				void protection.refresh();
 			});
 		})();
 
@@ -795,6 +805,7 @@
 			activities: snap.activities,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
+			warnings: snap.warnings,
 		};
 		const startedMs = snap.started_at ? new Date(snap.started_at).getTime() : NaN;
 		sessionStartedAtMs = Number.isNaN(startedMs) ? null : startedMs;
@@ -980,6 +991,9 @@
 		{armourCostOpen}
 		{armourCostError}
 		{armourSessionId}
+		protection={protection.overview}
+		protectionSaving={protection.saving}
+		protectionError={protection.error}
 		mobMenuOpen={overlayMenuKind === 'mob'}
 		definitionMenuOpen={overlayMenuKind === 'definition'}
 		trifectaMenuOpen={overlayMenuKind === 'trifecta'}
@@ -1011,6 +1025,7 @@
 		onActivitiesTrigger={toggleActivitiesMenu}
 		onTrifectaTrigger={toggleTrifectaMenu}
 		onArmourCostToggle={toggleArmourCost}
+		onProtectionSelect={protection.select}
 	/>
 </div>
 

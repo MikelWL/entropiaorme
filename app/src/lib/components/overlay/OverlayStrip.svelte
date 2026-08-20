@@ -1,11 +1,15 @@
 <script lang="ts">
-	import type { TrackingLive, TrackingStatus } from '$lib/api';
+	import type { ProtectionOverview, TrackingLive, TrackingStatus } from '$lib/api';
 	import { overlayStats, scopedStats } from '$lib/statsCustomisation.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
 	import { statsScope } from '$lib/statsScope.svelte';
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
+	import {
+		buildProtectionCostSteps,
+		protectionCostActionLabel,
+	} from '$lib/features/protection/protectionCostFlow';
 
 	type LastSessionStats = { cost: number; returns: number; pes: number; net: number };
 
@@ -28,6 +32,9 @@
 		armourCostOpen = false,
 		armourCostError = null,
 		armourSessionId = null,
+		protection = null,
+		protectionSaving = false,
+		protectionError = null,
 		mobMenuOpen = false,
 		definitionMenuOpen = false,
 		trifectaMenuOpen = false,
@@ -52,7 +59,8 @@
 		onBoostCommit = noop,
 		onActivitiesTrigger = noop,
 		onTrifectaTrigger = noop,
-		onArmourCostToggle = noop
+		onArmourCostToggle = noop,
+		onProtectionSelect = noop
 	}: {
 		data: TrackingLive;
 		status?: TrackingStatus | null;
@@ -70,6 +78,9 @@
 		armourCostOpen?: boolean;
 		armourCostError?: string | null;
 		armourSessionId?: string | null;
+		protection?: ProtectionOverview | null;
+		protectionSaving?: boolean;
+		protectionError?: string | null;
 		mobMenuOpen?: boolean;
 		definitionMenuOpen?: boolean;
 		trifectaMenuOpen?: boolean;
@@ -95,6 +106,7 @@
 		onActivitiesTrigger?: (anchor: HTMLElement) => void | Promise<void>;
 		onTrifectaTrigger?: (anchor: HTMLButtonElement) => void | Promise<void>;
 		onArmourCostToggle?: (event: MouseEvent) => void | Promise<void>;
+		onProtectionSelect?: (id: string) => void | Promise<void>;
 	} = $props();
 
 	// The Activities menu's anchor: the section, which survives the chip
@@ -135,6 +147,12 @@
 				? 'Hunting'
 				: null
 	);
+	const activeProtection = $derived(
+		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
+	);
+	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
+	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
+	const trackingWarnings = $derived(data.warnings ?? []);
 
 	function formatElapsed(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -156,19 +174,19 @@
 		<div class="flex items-center gap-3 shrink-0 border-r border-white/10 pr-3">
 			{#if awaitingArmourTrackDecision && data.status === 'active'}
 				<div class="armour-prompt flex items-center gap-1.5 shrink-0">
-					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Track armour?</span>
+					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record protection?</span>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-yes"
 						disabled={toggling}
 						onclick={() => onArmourTrackDecision('yes')}
-					>Yes</button>
+					>Record</button>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-no"
 						disabled={toggling}
 						onclick={() => onArmourTrackDecision('no')}
-					>No</button>
+					>Later</button>
 				</div>
 			{:else if attributionWarning && data.status !== 'active'}
 				<div class="armour-prompt flex items-center gap-2 shrink-0 max-w-[420px]">
@@ -218,6 +236,21 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if trackingWarnings.length > 0}
+			<div
+				class="flex flex-col shrink-0 border-l border-amber-300/25 pl-3 max-w-[260px]"
+				data-testid="tracking-warning"
+				title={trackingWarnings.map((warning) => warning.description).join('\n')}
+			>
+				<span class="facet-label text-amber-300/70"
+					>{trackingWarnings.length === 1 ? 'Tracking warning' : 'Tracking warnings'}</span
+				>
+				{#each trackingWarnings as warning}
+					<span class="truncate text-[10px] leading-tight text-amber-200">{warning.description}</span>
+				{/each}
+			</div>
+		{/if}
 
 		<!-- Session facets: the independent, co-recorded attributions a
 			 session carries. Each control here declares gameplay from now on,
@@ -461,7 +494,37 @@
 			{/if}
 		</div>
 
-		<!-- Armour cost (standalone, user-initiated) -->
+		<!-- Active protection identity and live selection. -->
+		{#if protection && protection.loadouts.length > 0}
+			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
+				<span class="facet-label">Protection</span>
+				{#if protection.loadouts.length === 1}
+					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Protection recorded from now on">
+						{activeProtection?.name ?? protection.loadouts[0].name}
+					</div>
+				{:else}
+					<div class="flex items-center gap-1">
+						{#each protection.loadouts as loadout (loadout.id)}
+							<button
+								type="button"
+								class="facet-chip max-w-[130px] {loadout.id === protection.activeLoadoutId ? 'facet-chip-open' : ''}"
+								disabled={protectionSaving}
+								aria-pressed={loadout.id === protection.activeLoadoutId}
+								title={`Record ${loadout.name} from now on`}
+								onclick={() => onProtectionSelect(loadout.id)}
+							>
+								<span class="truncate">{loadout.name}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+				{#if protectionError}
+					<div class="mt-1 max-w-[180px] text-[10px] leading-tight text-orange-300/90">{protectionError}</div>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Protection cost, sequenced from the active loadout. -->
 		<div
 			class="flex flex-col shrink-0 border-l border-white/10 pl-3"
 			data-guide-anchor="overlay-armour-section"
@@ -470,16 +533,16 @@
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
 					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-						{armourSessionId
+						{armourSessionId && protectionCostSteps.length > 0
 							? armourCostOpen
 								? 'bg-accent/20 border-accent/40 text-accent'
 								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
 							: 'bg-white/5 border-white/10 text-white/20 cursor-not-allowed'}"
-					disabled={!armourSessionId}
+					disabled={!armourSessionId || protectionCostSteps.length === 0}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}
 					onclick={onArmourCostToggle}
-					title={armourSessionId ? 'Record armour cost' : 'Start or stop a session to enable'}
+					title={armourSessionId ? protectionCostTitle : 'Start or stop a session to enable'}
 					data-guide-anchor="overlay-armour-cost-btn"
 				>
 					Cost
@@ -569,7 +632,8 @@
 						aria-haspopup="dialog"
 						aria-expanded={armourCostOpen}
 						onclick={onArmourCostToggle}
-						title="Record armour cost"
+						disabled={protectionCostSteps.length === 0}
+						title={protectionCostTitle}
 					>
 						Cost
 					</button>

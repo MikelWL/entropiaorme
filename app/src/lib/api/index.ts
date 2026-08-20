@@ -75,6 +75,7 @@ export * from './equipment';
 export * from './inventory';
 export * from './maps';
 export * from './market';
+export * from './protection';
 export * from './quests';
 export * from './scan';
 export * from './sessionDefinitions';

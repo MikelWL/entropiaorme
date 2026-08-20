@@ -34,6 +34,7 @@ use eo_services::db::Db;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::HotbarListener;
 use eo_services::market_service::MarketService;
+use eo_services::protection::ProtectionService;
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::RepairOcrService;
 use eo_services::sale_window_ocr::SaleWindowOcrService;
@@ -54,6 +55,7 @@ pub mod manifest;
 pub mod maps;
 pub mod market;
 mod nullable;
+pub mod protection;
 pub mod quests;
 pub mod scan;
 pub mod session_definitions;
@@ -127,6 +129,9 @@ pub struct Api {
     /// over the facade's shared db and clock. An informational layer
     /// only: nothing here feeds the ledger or any realised P&L figure.
     market: MarketService,
+    /// Protection catalogue, live default, and limited-layer
+    /// reconciliation over the shared database and injected clock.
+    protection: ProtectionService,
     /// The session-definition service (definition + roster lifecycle), built
     /// over the facade's shared db and clock; the tracking family's
     /// selection verb validates against it.
@@ -188,6 +193,7 @@ impl Api {
         let codex = codex::build_codex_service(db.clone(), game_data.clone(), clock.clone());
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let market = MarketService::new(db.clone(), clock.clone());
+        let protection = ProtectionService::new(db.clone(), clock.clone());
         let session_definitions = eo_services::session_definitions::SessionDefinitionService::new(
             db.clone(),
             clock.clone(),
@@ -233,6 +239,7 @@ impl Api {
             quests,
             analytics,
             market,
+            protection,
             session_definitions,
             definition_transition: tokio::sync::Mutex::new(()),
             map_pins,

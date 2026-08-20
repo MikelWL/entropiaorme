@@ -1329,9 +1329,12 @@ mod tests {
         // + the typed-reward, durable-run, unit-price, and reward-review
         // migrations' 6 tables and 5 indexes + the quest-run ownership
         // migration's 2 one-to-one indexes and 2 reciprocal-pair triggers
-        // = 60 tables, 77 indexes, 10 triggers.
-        assert_eq!(count("table").await, 60);
-        assert_eq!(count("index").await, 77);
+        // + the protection catalogue, loadout, observation, reconciliation,
+        // interval-snapshot, and defensive-evidence migration's 7 tables and
+        // 7 indexes + deferred protection settlement's 4 tables and 4 indexes
+        // = 71 tables, 88 indexes, 10 triggers.
+        assert_eq!(count("table").await, 71);
+        assert_eq!(count("index").await, 88);
         assert_eq!(count("trigger").await, 10);
 
         let version = db
@@ -1802,11 +1805,12 @@ mod tests {
         // the private-sale and stock-removal tables with three indexes +
         // the central-inventory migration's two indexes +
         // the quest-run ownership migration's 2 indexes and 2 triggers + 8
-        // earlier triggers (only
+        // earlier triggers + the protection and deferred-settlement
+        // migrations' 11 tables and 11 indexes (only
         // SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its
         // one deliberate difference).
-        assert_eq!(master.len(), 148);
+        assert_eq!(master.len(), 170);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

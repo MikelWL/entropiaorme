@@ -65,6 +65,12 @@ pub fn repair_region(presets: &ScanPresets) -> Option<([i64; 2], [i64; 2])> {
     live_region(&presets.repair)
 }
 
+/// The Trade Terminal total-value rectangle. Until the first live
+/// calibration this resolves the explicit provisional fallback.
+pub fn trade_terminal_region(presets: &ScanPresets) -> Option<([i64; 2], [i64; 2])> {
+    live_region(&presets.trade_terminal)
+}
+
 /// The auction sale window's capture rect, or None when the game
 /// window is absent or the panel has not been calibrated (its
 /// uncalibrated anchor is degenerate, which `compute_region` refuses).

@@ -24,6 +24,7 @@ use crate::clock::Clock;
 use crate::db::{Db, DbError};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::loot_filter::normalize_blacklist;
+use crate::protection::ProtectionSelection;
 use crate::tracking_models::TrackingSession;
 
 use super::intervals::{ActiveActivity, ActivityKey, ActivityRef};
@@ -78,6 +79,10 @@ pub(super) enum TrackerMsg {
     DeactivateActivity {
         target: ActivityKey,
         reply: oneshot::Sender<Result<Vec<ActiveActivity>, TrackerCommandError>>,
+    },
+    SetProtection {
+        selection: ProtectionSelection,
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
@@ -219,6 +224,9 @@ impl TrackerActor {
             TrackerMsg::DeactivateActivity { target, reply } => {
                 let _ = reply.send(self.deactivate_activity(target).await);
             }
+            TrackerMsg::SetProtection { selection, reply } => {
+                let _ = reply.send(self.set_protection(selection).await);
+            }
             TrackerMsg::SetDeclaredMob {
                 name,
                 species,
@@ -249,7 +257,7 @@ impl TrackerActor {
     /// owned memory only.
     async fn on_event(&mut self, event: &BusEvent) {
         match event {
-            BusEvent::Combat(_) => self.on_combat(event),
+            BusEvent::Combat(_) => self.on_combat(event).await,
             BusEvent::LootGroup(_) => self.on_loot(event).await,
             BusEvent::ActiveToolChanged(_) => self.on_tool_changed(event),
             BusEvent::ActiveHealToolChanged(_) => self.on_heal_tool_changed(event),

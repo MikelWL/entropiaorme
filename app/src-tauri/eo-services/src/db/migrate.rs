@@ -248,6 +248,16 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "quest run ownership",
         sql: include_str!("../../migrations/0042_quest_run_ownership.sql"),
     },
+    Migration {
+        version: 43,
+        description: "protection accounting",
+        sql: include_str!("../../migrations/0043_protection_accounting.sql"),
+    },
+    Migration {
+        version: 44,
+        description: "deferred protection costs",
+        sql: include_str!("../../migrations/0044_deferred_protection_costs.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -298,6 +308,8 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "92A77163A9BFF7ADB0489E801FD416991DE497FEDCB870C879657FE65A71FA9DA7BDE2D7F1F842629C4C62E84A691E45",
     "6121A2A315E98BB6FC3A479E1CF3E6FCB0CDFE885F5F19DB65166E009111B8E4EDDA1AF555A7B9EE46BDCD521ED8E7FB",
     "9AFF2B725B0CB1EB7BAC63EAEDFE7C33A9FD7F20A4011AB0C45699860FC15B34EF04135174941CEF3CDAD033D3EC6009",
+    "F35378D36B254AFCD74A1CC378FB75EE36EF491CFF3475EFB308756228E25703751A7DD63E8ACBDE2DBBDDE34C21FDD0",
+    "851CB33C6BD3D4F0458B379FB87238C0CE0CF8E2EA3E82E00CDD2594423621CAB00DE0DF63DB16FC8B52AF401BC5CCD0",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -480,6 +492,66 @@ mod tests {
                 migration.version
             );
         }
+    }
+
+    #[test]
+    fn deferred_protection_upgrade_preserves_prior_bookings_and_starts_a_clean_cursor() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..43] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, armour_cost) \
+                 VALUES ('legacy-session', 1, 2, 0, 2.5); \
+                 INSERT INTO protection_sets \
+                 (id, kind, name, economy_kind, markup_percent, created_at) \
+                 VALUES (1, 'armour', 'Legacy limited', 'limited', 125, 1); \
+                 INSERT INTO protection_observations \
+                 (id, set_id, client_token, tt_value_ped, source, observed_at) \
+                 VALUES (1, 1, 'open', 10, 'manual', 1), \
+                        (2, 1, 'close', 8, 'manual', 2); \
+                 INSERT INTO protection_reconciliations \
+                 (set_id, opening_observation_id, closing_observation_id, consumed_tt_ped, \
+                  markup_percent, cost_ped, status, session_id, created_at) \
+                 VALUES (1, 1, 2, 2, 125, 2.5, 'booked', 'legacy-session', 2);",
+            )
+            .expect("legacy protection fixture");
+
+        run(&mut connection).expect("v44 upgrade");
+
+        let (window_count, allocation_count, cursor, armour_cost): (i64, i64, i64, f64) =
+            connection
+                .query_row(
+                    "SELECT \
+                        (SELECT COUNT(*) FROM protection_cost_windows), \
+                        (SELECT COUNT(*) FROM protection_cost_allocations), \
+                        (SELECT defence_event_cursor FROM protection_observations WHERE id = 2), \
+                        (SELECT armour_cost FROM tracking_sessions WHERE id = 'legacy-session')",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .expect("upgraded protection history");
+        assert_eq!((window_count, allocation_count, cursor), (1, 1, 0));
+        assert_eq!(
+            armour_cost, 2.5,
+            "the migration must not book the cost twice"
+        );
     }
 
     #[test]

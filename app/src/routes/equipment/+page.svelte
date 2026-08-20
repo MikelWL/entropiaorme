@@ -4,23 +4,28 @@
 	import EquipmentFormModal from '$lib/features/equipment/EquipmentFormModal.svelte';
 	import EquipmentListView from '$lib/features/equipment/EquipmentListView.svelte';
 	import { createLibraryModel, type EquipmentFormType } from '$lib/features/equipment/libraryModel.svelte';
+	import ProtectionTab from '$lib/features/protection/ProtectionTab.svelte';
+	import { createProtectionModel } from '$lib/features/protection/protectionModel.svelte';
 	import { closeGuide, openGuide } from '$lib/guide/engine';
 	import { guideState, registerDemoApi, unregisterDemoApi } from '$lib/guide/state.svelte';
 	import { equipmentSurface } from '$lib/guide/surfaces/equipment';
 	import { getPreference } from '$lib/preferences';
+	import { inDevelopment } from '$lib/inDevelopment';
 	import type { Hotbar } from '$lib/types/settings';
 	import GuardrailsTab from './GuardrailsTab.svelte';
 	import HotbarTab from './HotbarTab.svelte';
 	import TrifectaTab from './TrifectaTab.svelte';
 
 	const model = createLibraryModel();
+	const protection = createProtectionModel();
 
-	const tabs = [
+	const tabs = $derived([
 		{ id: 'library', label: 'Library' },
+		...(inDevelopment.visible ? [{ id: 'protection', label: 'Protection' }] : []),
 		{ id: 'trifecta', label: 'Trifecta' },
 		{ id: 'hotbar', label: 'Hotbar' },
 		{ id: 'guardrails', label: 'Guardrails' }
-	];
+	]);
 	let activeTab = $state('library');
 
 	// Guide-mode demo state for the hotbar/trifecta mutex (only consulted when guideState.isActive)
@@ -30,6 +35,7 @@
 	// Reload data on initial mount and whenever guide-mode toggles.
 	$effect(() => {
 		void model.loadData(guideState.isActive);
+		if (inDevelopment.visible) void protection.load(guideState.isActive);
 	});
 
 	onMount(() => {
@@ -156,6 +162,8 @@
 				model.harvestGuardrail = value;
 			}}
 		/>
+	{:else if activeTab === 'protection' && inDevelopment.visible}
+		<ProtectionTab model={protection} />
 	{:else}
 		<EquipmentListView {model} />
 	{/if}

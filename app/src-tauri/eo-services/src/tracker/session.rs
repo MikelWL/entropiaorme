@@ -14,6 +14,7 @@ use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
+use crate::protection::{active_selection, ProtectionSelection};
 use crate::tracking_models::{
     ActiveSessionView, HarvestGuardrailMismatchView, TrackingReadout, TrackingSession,
 };
@@ -67,6 +68,7 @@ pub(super) struct ActiveSession {
     pub(super) heal_cost: Ped,
     pub(super) heal_warning_emitted: bool,
     pub(super) harvest_warning_emitted: bool,
+    pub(super) protection_evidence_warning_emitted: bool,
     pub(super) warnings: Vec<String>,
     /// The declared mob that kills take their stamp from (None: no
     /// declaration; kills stamp "Unknown" with no stamp source).
@@ -102,6 +104,7 @@ impl ActiveSession {
             heal_cost: Ped::ZERO,
             heal_warning_emitted: false,
             harvest_warning_emitted: false,
+            protection_evidence_warning_emitted: false,
             warnings: Vec::new(),
             declared_mob: None,
             facets,
@@ -631,6 +634,7 @@ impl TrackerActor {
         // row therefore keeps the magnitude only, while the declaration
         // itself rides the opening interval below, where `Some(0)`
         // survives as the baseline it is.
+        let protection = active_selection(&self.db).await?;
         let declared_boost = self
             .providers
             .config
@@ -775,6 +779,20 @@ impl TrackerActor {
                             )
                             .await;
                     }
+                    if let Some(selection) = protection {
+                        let _ = active
+                            .intervals
+                            .open_interval(
+                                &db,
+                                &session_id,
+                                start_ts,
+                                IntervalSpec::new(IntervalKind::Protection)
+                                    .label(Some(selection.loadout_name.clone()))
+                                    .ref_id(Some(selection.loadout_id))
+                                    .protection(selection, false),
+                            )
+                            .await;
+                    }
                 }
             }
         }
@@ -785,6 +803,44 @@ impl TrackerActor {
             Some(&session_id),
         );
         Ok(session)
+    }
+
+    /// Adopt one protection loadout from this point onward. This is an
+    /// intent boundary: the interval transition mints the context future
+    /// defensive evidence stamps, and never reaches back into prior play.
+    pub(super) async fn set_protection(
+        &mut self,
+        selection: ProtectionSelection,
+    ) -> Result<(), TrackerCommandError> {
+        let Some(active) = self.session.active_mut() else {
+            return Err(TrackerCommandError::NoActiveSession);
+        };
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let session_id = active.session.id.clone();
+        active
+            .intervals
+            .open_interval(
+                &self.db,
+                &session_id,
+                now,
+                IntervalSpec::new(IntervalKind::Protection)
+                    .label(Some(selection.loadout_name.clone()))
+                    .ref_id(Some(selection.loadout_id))
+                    .protection(selection, true),
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(target: "eo::tracker", %error, "protection selection failed");
+                TrackerCommandError::Persistence
+            })?;
+        active.dirty = true;
+        self.emit_session_event(
+            TrackingReason::Updated,
+            TrackingStatus::Active,
+            now,
+            Some(&session_id),
+        );
+        Ok(())
     }
 
     /// Stop the active session: dangling cost, the handler
