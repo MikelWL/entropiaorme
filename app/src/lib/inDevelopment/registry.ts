@@ -25,9 +25,9 @@ export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
 	{
 		id: 'limited-protection',
 		summary:
-			'Limited armour measurement is available for one-session windows; broader allocation is still pending.',
+			'Protection cost tracking is available, but recorded readings and allocations cannot yet be corrected and archived setups cannot be restored.',
 		graduates:
-			'Trade Terminal geometry is calibrated and multi-session, switched-loadout costs allocate from defensive evidence.',
+			'Readings and allocations support correction or supersession, archived setups can be restored, and broader field validation is complete.',
 	},
 ] as const;
 

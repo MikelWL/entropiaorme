@@ -7,14 +7,16 @@ import {
 	createProtectionLoadout,
 	createProtectionSet,
 	getProtectionOverview,
-	scanTradeTerminalValue,
-	selectProtectionLoadout,
 	type ProtectionEconomyKind,
 	type ProtectionObservationOutcome,
 	type ProtectionOverview,
 	type ProtectionScanResult,
 	type ProtectionSet,
 	type ProtectionSetKind,
+	scanTradeTerminalValue,
+	selectProtectionLoadout,
+	updateProtectionLoadout,
+	updateProtectionSet,
 } from '$lib/api';
 import { describeError } from '$lib/view/errorState';
 
@@ -23,6 +25,7 @@ const EMPTY: ProtectionOverview = {
 	loadouts: [],
 	activeLoadoutId: null,
 	recentReconciliations: [],
+	recentCostWindows: [],
 };
 
 function clientToken(): string {
@@ -39,18 +42,23 @@ export function createProtectionModel() {
 	let error = $state<string | null>(null);
 
 	let setModalOpen = $state(false);
+	let editingSetId = $state<string | null>(null);
 	let setKind = $state<ProtectionSetKind>('armour');
 	let setName = $state('');
 	let setEconomyKind = $state<ProtectionEconomyKind>('limited');
 	let setMarkup = $state('100');
 
 	let loadoutModalOpen = $state(false);
+	let editingLoadoutId = $state<string | null>(null);
 	let loadoutName = $state('');
 	let loadoutArmourId = $state('');
 	let loadoutPlateId = $state('');
 
 	let observationSet = $state<ProtectionSet | null>(null);
 	let lastOutcome = $state<ProtectionObservationOutcome | null>(null);
+	let removalTarget = $state<
+		{ kind: 'set'; id: string; name: string } | { kind: 'loadout'; id: string; name: string } | null
+	>(null);
 
 	const armourSets = $derived(overview.sets.filter((set) => set.kind === 'armour'));
 	const plateSets = $derived(overview.sets.filter((set) => set.kind === 'plates'));
@@ -75,10 +83,20 @@ export function createProtectionModel() {
 	}
 
 	function openSet(kind: ProtectionSetKind): void {
+		editingSetId = null;
 		setKind = kind;
 		setName = '';
 		setEconomyKind = 'limited';
 		setMarkup = '100';
+		setModalOpen = true;
+	}
+
+	function editSet(set: ProtectionSet): void {
+		editingSetId = set.id;
+		setKind = set.kind;
+		setName = set.name;
+		setEconomyKind = set.economyKind;
+		setMarkup = String(set.markupPercent ?? 100);
 		setModalOpen = true;
 	}
 
@@ -89,13 +107,16 @@ export function createProtectionModel() {
 		saving = true;
 		error = null;
 		try {
+			const input = {
+				kind: setKind,
+				name: setName.trim(),
+				economyKind: setEconomyKind,
+				markupPercent: setEconomyKind === 'limited' ? markup : null,
+			};
 			adopt(
-				await createProtectionSet({
-					kind: setKind,
-					name: setName.trim(),
-					economyKind: setEconomyKind,
-					markupPercent: setEconomyKind === 'limited' ? markup : null,
-				}),
+				editingSetId
+					? await updateProtectionSet(editingSetId, input)
+					: await createProtectionSet(input),
 			);
 			setModalOpen = false;
 		} catch (cause) {
@@ -106,13 +127,25 @@ export function createProtectionModel() {
 	}
 
 	function openLoadout(): void {
+		editingLoadoutId = null;
 		loadoutName = '';
 		loadoutArmourId = '';
 		loadoutPlateId = '';
 		loadoutModalOpen = true;
 	}
 
+	function editLoadout(id: string): void {
+		const loadout = overview.loadouts.find((candidate) => candidate.id === id);
+		if (!loadout) return;
+		editingLoadoutId = loadout.id;
+		loadoutName = loadout.name;
+		loadoutArmourId = loadout.armour?.id ?? '';
+		loadoutPlateId = loadout.plates?.id ?? '';
+		loadoutModalOpen = true;
+	}
+
 	function makeNoProtection(): void {
+		editingLoadoutId = null;
 		loadoutName = 'No protection';
 		loadoutArmourId = '';
 		loadoutPlateId = '';
@@ -124,12 +157,15 @@ export function createProtectionModel() {
 		saving = true;
 		error = null;
 		try {
-			let next = await createProtectionLoadout({
+			const input = {
 				name: loadoutName.trim(),
 				armourSetId: loadoutArmourId ? Number(loadoutArmourId) : null,
 				plateSetId: loadoutPlateId ? Number(loadoutPlateId) : null,
-			});
-			if (next.loadouts.length === 1 && next.activeLoadoutId === null) {
+			};
+			let next = editingLoadoutId
+				? await updateProtectionLoadout(editingLoadoutId, input)
+				: await createProtectionLoadout(input);
+			if (!editingLoadoutId && next.loadouts.length === 1 && next.activeLoadoutId === null) {
 				next = await selectProtectionLoadout(next.loadouts[0].id);
 			}
 			adopt(next);
@@ -159,6 +195,7 @@ export function createProtectionModel() {
 		error = null;
 		try {
 			adopt(await archiveProtectionSet(id));
+			removalTarget = null;
 		} catch (cause) {
 			error = describeError(cause, 'Failed to archive protection set');
 		} finally {
@@ -171,11 +208,27 @@ export function createProtectionModel() {
 		error = null;
 		try {
 			adopt(await archiveProtectionLoadout(id));
+			removalTarget = null;
 		} catch (cause) {
 			error = describeError(cause, 'Failed to archive protection loadout');
 		} finally {
 			saving = false;
 		}
+	}
+
+	function askRemoveSet(set: ProtectionSet): void {
+		removalTarget = { kind: 'set', id: set.id, name: set.name };
+	}
+
+	function askRemoveLoadout(id: string): void {
+		const loadout = overview.loadouts.find((candidate) => candidate.id === id);
+		if (loadout) removalTarget = { kind: 'loadout', id: loadout.id, name: loadout.name };
+	}
+
+	async function confirmRemoval(): Promise<void> {
+		if (!removalTarget) return;
+		if (removalTarget.kind === 'set') await archiveSet(removalTarget.id);
+		else await archiveLoadout(removalTarget.id);
 	}
 
 	function openObservation(set: ProtectionSet): void {
@@ -249,6 +302,9 @@ export function createProtectionModel() {
 		get setModalOpen() {
 			return setModalOpen;
 		},
+		get editingSetId() {
+			return editingSetId;
+		},
 		set setModalOpen(value: boolean) {
 			setModalOpen = value;
 		},
@@ -275,6 +331,9 @@ export function createProtectionModel() {
 		},
 		get loadoutModalOpen() {
 			return loadoutModalOpen;
+		},
+		get editingLoadoutId() {
+			return editingLoadoutId;
 		},
 		set loadoutModalOpen(value: boolean) {
 			loadoutModalOpen = value;
@@ -309,15 +368,29 @@ export function createProtectionModel() {
 		get lastOutcome() {
 			return lastOutcome;
 		},
+		get removalTarget() {
+			return removalTarget;
+		},
+		get removalModalOpen() {
+			return removalTarget !== null;
+		},
+		set removalModalOpen(value: boolean) {
+			if (!value) removalTarget = null;
+		},
 		load,
 		openSet,
+		editSet,
 		saveSet,
 		openLoadout,
+		editLoadout,
 		makeNoProtection,
 		saveLoadout,
 		selectLoadout,
 		archiveSet,
 		archiveLoadout,
+		askRemoveSet,
+		askRemoveLoadout,
+		confirmRemoval,
 		openObservation,
 		closeObservation,
 		scan,

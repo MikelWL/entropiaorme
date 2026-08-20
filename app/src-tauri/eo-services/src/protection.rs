@@ -2,9 +2,9 @@
 //!
 //! Armour and plates are independent economic layers. Named loadouts
 //! compose them for live selection, while limited layers reconcile two
-//! confirmed Trade Terminal observations. The current allocation policy
-//! books only an unambiguous one-session window; every broader case is
-//! retained as pending instead of guessed.
+//! confirmed Trade Terminal observations. Both limited decay and unlimited
+//! repair readings settle compatible defensive evidence, which may span
+//! several sessions when the user postpones recording.
 
 use std::sync::Arc;
 
@@ -116,6 +116,10 @@ pub struct ProtectionSet {
     pub archived_at: Option<f64>,
     pub latest_observation: Option<ProtectionObservation>,
     pub pending_reconciliations: i64,
+    pub basis_locked: bool,
+    pub unsettled_damage: f64,
+    pub unsettled_deflections: i64,
+    pub unsettled_sessions: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +148,32 @@ pub struct ProtectionObservation {
     pub raw_text: Option<String>,
     pub observed_at: f64,
     pub reset_reason: Option<String>,
+    pub defence_event_cursor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtectionCostAllocation {
+    pub session_id: String,
+    pub damage_weight: f64,
+    pub deflection_count: i64,
+    pub allocation_share: f64,
+    pub cost_ped: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProtectionCostWindow {
+    pub id: i64,
+    pub kind: String,
+    pub set_id: Option<i64>,
+    pub armour_set_id: Option<i64>,
+    pub plate_set_id: Option<i64>,
+    pub consumed_tt_ped: Option<f64>,
+    pub markup_percent: Option<f64>,
+    pub cost_ped: f64,
+    pub status: ReconciliationStatus,
+    pub reason: Option<String>,
+    pub created_at: f64,
+    pub allocations: Vec<ProtectionCostAllocation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,6 +195,12 @@ pub struct ProtectionReconciliation {
 pub struct ObservationOutcome {
     pub observation: ProtectionObservation,
     pub reconciliation: Option<ProtectionReconciliation>,
+    pub cost_window: Option<ProtectionCostWindow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepairOutcome {
+    pub cost_window: ProtectionCostWindow,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,6 +209,7 @@ pub struct ProtectionOverview {
     pub loadouts: Vec<ProtectionLoadout>,
     pub active_loadout_id: Option<i64>,
     pub recent_reconciliations: Vec<ProtectionReconciliation>,
+    pub recent_cost_windows: Vec<ProtectionCostWindow>,
 }
 
 /// An immutable snapshot placed on a live protection interval.
@@ -286,6 +323,68 @@ impl ProtectionService {
         self.set_by_id(id).await
     }
 
+    pub async fn update_set(
+        &self,
+        set_id: i64,
+        name: &str,
+        economy_kind: ProtectionEconomyKind,
+        markup_percent: Option<f64>,
+    ) -> Result<ProtectionSet, ProtectionError> {
+        let existing = self.set_by_id(set_id).await?;
+        if existing.archived_at.is_some() {
+            return Err(ProtectionError::NotFound("Protection set not found"));
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ProtectionError::Invalid("Set name is required"));
+        }
+        let markup = match economy_kind {
+            ProtectionEconomyKind::Limited => match markup_percent {
+                Some(value) if value.is_finite() && value >= 100.0 => Some(value),
+                _ => {
+                    return Err(ProtectionError::Invalid(
+                        "Limited sets require an average markup of at least 100%",
+                    ))
+                }
+            },
+            ProtectionEconomyKind::Unlimited => None,
+        };
+        let basis_changed =
+            existing.economy_kind != economy_kind || existing.markup_percent != markup;
+        let has_recorded_use = self
+            .db
+            .with_reader(move |conn| {
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM session_protection_intervals \
+                     WHERE armour_set_id = ?1 OR plate_set_id = ?1)",
+                    [set_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(Into::into)
+            })
+            .await?;
+        if basis_changed && (existing.latest_observation.is_some() || has_recorded_use) {
+            return Err(ProtectionError::Conflict(
+                "A set's economic basis cannot change after its first observation or recorded use",
+            ));
+        }
+
+        let name = name.to_string();
+        let economy_text = economy_kind.as_str();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE protection_sets SET name = ?1, economy_kind = ?2, markup_percent = ?3 \
+                     WHERE id = ?4 AND archived_at IS NULL",
+                    rusqlite::params![name, economy_text, markup, set_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_constraint("An active set already uses that name"))?;
+        self.set_by_id(set_id).await
+    }
+
     pub async fn create_loadout(
         &self,
         name: &str,
@@ -323,6 +422,46 @@ impl ProtectionService {
             .await
             .map_err(map_constraint("An active loadout already uses that name"))?;
         self.loadout_by_id(id).await
+    }
+
+    pub async fn update_loadout(
+        &self,
+        loadout_id: i64,
+        name: &str,
+        armour_set_id: Option<i64>,
+        plate_set_id: Option<i64>,
+    ) -> Result<ProtectionLoadout, ProtectionError> {
+        self.loadout_by_id(loadout_id).await?;
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ProtectionError::Invalid("Loadout name is required"));
+        }
+        if armour_set_id.is_none()
+            && plate_set_id.is_none()
+            && !name.eq_ignore_ascii_case("No protection")
+        {
+            return Err(ProtectionError::Invalid(
+                "An empty loadout must be named No protection",
+            ));
+        }
+        self.validate_component(armour_set_id, ProtectionSetKind::Armour)
+            .await?;
+        self.validate_component(plate_set_id, ProtectionSetKind::Plates)
+            .await?;
+        let name = name.to_string();
+        self.db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "UPDATE protection_loadouts \
+                     SET name = ?1, armour_set_id = ?2, plate_set_id = ?3 \
+                     WHERE id = ?4 AND archived_at IS NULL",
+                    rusqlite::params![name, armour_set_id, plate_set_id, loadout_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(map_constraint("An active loadout already uses that name"))?;
+        self.loadout_by_id(loadout_id).await
     }
 
     pub async fn archive_set(&self, set_id: i64) -> Result<(), ProtectionError> {
@@ -475,12 +614,14 @@ impl ProtectionService {
                     .optional()?
                 {
                     return read_observation_outcome(conn, existing_id)
+                        .map(Box::new)
                         .map(ObservationWriteOutcome::Saved);
                 }
 
                 let previous = conn
                     .query_row(
-                        "SELECT id, tt_value_ped, observed_at FROM protection_observations \
+                        "SELECT id, tt_value_ped, observed_at, COALESCE(defence_event_cursor, 0) \
+                         FROM protection_observations \
                          WHERE set_id = ?1 ORDER BY observed_at DESC, id DESC LIMIT 1",
                         [set_id],
                         |row| {
@@ -488,22 +629,29 @@ impl ProtectionService {
                                 row.get::<_, i64>(0)?,
                                 row.get::<_, f64>(1)?,
                                 row.get::<_, f64>(2)?,
+                                row.get::<_, i64>(3)?,
                             ))
                         },
                     )
                     .optional()?;
 
                 if reset_reason.is_none()
-                    && previous.is_some_and(|(_, value, _)| tt_value_ped > value + 0.000_000_1)
+                    && previous.is_some_and(|(_, value, _, _)| tt_value_ped > value + 0.000_000_1)
                 {
                     return Ok(ObservationWriteOutcome::Increased);
                 }
 
                 let tx = conn.transaction()?;
+                let closing_cursor: i64 = tx.query_row(
+                    "SELECT COALESCE(MAX(id), 0) FROM protection_defence_events",
+                    [],
+                    |row| row.get(0),
+                )?;
                 tx.execute(
                     "INSERT INTO protection_observations \
-                     (set_id, client_token, tt_value_ped, source, raw_text, observed_at, reset_reason) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (set_id, client_token, tt_value_ped, source, raw_text, observed_at, \
+                      reset_reason, defence_event_cursor) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         set_id,
                         token,
@@ -511,65 +659,116 @@ impl ProtectionService {
                         source_text,
                         raw_text,
                         now,
-                        reset_reason
+                        reset_reason,
+                        closing_cursor
                     ],
                 )?;
                 let observation_id = tx.last_insert_rowid();
 
                 if reset_reason.is_none() {
-                    if let Some((opening_id, opening_value, opening_at)) = previous {
+                    if let Some((opening_id, opening_value, _opening_at, opening_cursor)) = previous
+                    {
                         let consumed_tt = (opening_value - tt_value_ped).max(0.0);
                         let cost = consumed_tt * markup / 100.0;
-                        let (status, session_id, reason) =
-                            resolve_single_session(&tx, set_id, opening_at, now)?;
-                        tx.execute(
-                            "INSERT INTO protection_reconciliations \
-                             (set_id, opening_observation_id, closing_observation_id, \
-                              consumed_tt_ped, markup_percent, cost_ped, status, session_id, \
-                              reason, created_at) \
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                            rusqlite::params![
-                                set_id,
-                                opening_id,
-                                observation_id,
-                                consumed_tt,
-                                markup,
-                                cost,
-                                status.as_str(),
-                                session_id,
-                                reason,
-                                now
-                            ],
+                        create_cost_window(
+                            &tx,
+                            CostWindowSpec {
+                                kind: "limited_decay",
+                                set_id: Some(set_id),
+                                armour_set_id: None,
+                                plate_set_id: None,
+                                opening_observation_id: Some(opening_id),
+                                closing_observation_id: Some(observation_id),
+                                opening_cursor,
+                                closing_cursor: Some(closing_cursor),
+                                consumed_tt_ped: Some(consumed_tt),
+                                markup_percent: Some(markup),
+                                cost_ped: cost,
+                                client_token: None,
+                                created_at: now,
+                            },
                         )?;
-                        if let Some(session_id) = &session_id {
-                            let started_at: f64 = tx.query_row(
-                                "SELECT started_at FROM tracking_sessions WHERE id = ?1",
-                                [session_id],
-                                |row| row.get(0),
-                            )?;
-                            tx.execute(
-                                "UPDATE tracking_sessions \
-                                 SET armour_cost = COALESCE(armour_cost, 0) + ?1 WHERE id = ?2",
-                                rusqlite::params![cost, session_id],
-                            )?;
-                            crate::daily_rollup::refresh_days(
-                                &tx,
-                                [crate::daily_rollup::epoch_day(started_at)],
-                            )?;
-                            crate::session_summary::write_session_summary(&tx, session_id)?;
-                        }
                     }
                 }
                 tx.commit()?;
-                read_observation_outcome(conn, observation_id).map(ObservationWriteOutcome::Saved)
+                read_observation_outcome(conn, observation_id)
+                    .map(Box::new)
+                    .map(ObservationWriteOutcome::Saved)
             })
             .await?;
         match outcome {
-            ObservationWriteOutcome::Saved(outcome) => Ok(outcome),
+            ObservationWriteOutcome::Saved(outcome) => Ok(*outcome),
             ObservationWriteOutcome::Increased => Err(ProtectionError::Conflict(
                 "TT value increased; reset the baseline instead",
             )),
         }
+    }
+
+    pub async fn confirm_repair_cost(
+        &self,
+        client_token: &str,
+        armour_set_id: Option<i64>,
+        plate_set_id: Option<i64>,
+        cost_ped: f64,
+    ) -> Result<RepairOutcome, ProtectionError> {
+        if client_token.trim().is_empty() {
+            return Err(ProtectionError::Invalid("Repair token is required"));
+        }
+        if !cost_ped.is_finite() || cost_ped < 0.0 {
+            return Err(ProtectionError::Invalid(
+                "Repair cost must be zero or greater",
+            ));
+        }
+        for (set_id, expected) in [
+            (armour_set_id, ProtectionSetKind::Armour),
+            (plate_set_id, ProtectionSetKind::Plates),
+        ] {
+            if let Some(set_id) = set_id {
+                let set = self.set_by_id(set_id).await?;
+                if set.kind != expected || set.economy_kind != ProtectionEconomyKind::Unlimited {
+                    return Err(ProtectionError::Invalid(
+                        "Repair costs require matching unlimited protection sets",
+                    ));
+                }
+            }
+        }
+        let token = format!("repair:{}", client_token.trim());
+        let now = self.now();
+        let id = self.db.with_writer(move |conn| {
+            if let Some(id) = conn.query_row(
+                "SELECT id FROM protection_cost_windows WHERE client_token = ?1 AND kind = 'repair'",
+                [&token],
+                |row| row.get::<_, i64>(0),
+            ).optional()? {
+                return Ok(id);
+            }
+            let tx = conn.transaction()?;
+            let id = create_cost_window(
+                &tx,
+                CostWindowSpec {
+                    kind: "repair",
+                    set_id: None,
+                    armour_set_id,
+                    plate_set_id,
+                    opening_observation_id: None,
+                    closing_observation_id: None,
+                    opening_cursor: 0,
+                    closing_cursor: None,
+                    consumed_tt_ped: None,
+                    markup_percent: None,
+                    cost_ped,
+                    client_token: Some(token.clone()),
+                    created_at: now,
+                },
+            )?;
+            tx.commit()?;
+            Ok(id)
+        }).await?;
+        let cost_window = self
+            .db
+            .with_reader(move |conn| read_cost_window(conn, id).map_err(protection_decode))
+            .await?;
+        Ok(RepairOutcome { cost_window })
     }
 
     async fn validate_component(
@@ -615,7 +814,7 @@ enum ArchiveOutcome {
 }
 
 enum ObservationWriteOutcome {
-    Saved(ObservationOutcome),
+    Saved(Box<ObservationOutcome>),
     Increased,
 }
 
@@ -624,6 +823,255 @@ fn map_constraint(message: &'static str) -> impl FnOnce(DbError) -> ProtectionEr
         DbError::Sqlite(rusqlite::Error::SqliteFailure(_, _)) => ProtectionError::Conflict(message),
         other => ProtectionError::Db(other),
     }
+}
+
+struct CostWindowSpec {
+    kind: &'static str,
+    set_id: Option<i64>,
+    armour_set_id: Option<i64>,
+    plate_set_id: Option<i64>,
+    opening_observation_id: Option<i64>,
+    closing_observation_id: Option<i64>,
+    opening_cursor: i64,
+    closing_cursor: Option<i64>,
+    consumed_tt_ped: Option<f64>,
+    markup_percent: Option<f64>,
+    cost_ped: f64,
+    client_token: Option<String>,
+    created_at: f64,
+}
+
+#[derive(Debug)]
+struct EvidenceRow {
+    event_id: i64,
+    session_id: String,
+    context_id: Option<i64>,
+    damage: Option<f64>,
+    deflected: bool,
+    armour_set_id: Option<i64>,
+    plate_set_id: Option<i64>,
+}
+
+fn create_cost_window(
+    tx: &rusqlite::Transaction<'_>,
+    spec: CostWindowSpec,
+) -> Result<i64, DbError> {
+    let candidates = read_eligible_evidence(tx, &spec)?;
+    let status = if candidates.is_empty() {
+        "pending"
+    } else {
+        "booked"
+    };
+    let reason = candidates
+        .is_empty()
+        .then_some("No unsettled defensive evidence matches this cost window");
+    tx.execute(
+        "INSERT INTO protection_cost_windows \
+         (kind, set_id, armour_set_id, plate_set_id, opening_observation_id, \
+          closing_observation_id, consumed_tt_ped, markup_percent, cost_ped, status, \
+          reason, client_token, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        rusqlite::params![
+            spec.kind,
+            spec.set_id,
+            spec.armour_set_id,
+            spec.plate_set_id,
+            spec.opening_observation_id,
+            spec.closing_observation_id,
+            spec.consumed_tt_ped,
+            spec.markup_percent,
+            spec.cost_ped,
+            status,
+            reason,
+            spec.client_token,
+            spec.created_at,
+        ],
+    )?;
+    let window_id = tx.last_insert_rowid();
+    if candidates.is_empty() {
+        return Ok(window_id);
+    }
+
+    use std::collections::BTreeMap;
+    let mut contexts: BTreeMap<(String, i64), (Option<i64>, f64, i64)> = BTreeMap::new();
+    for event in &candidates {
+        let context_key = event.context_id.unwrap_or(-1);
+        let entry = contexts
+            .entry((event.session_id.clone(), context_key))
+            .or_insert((event.context_id, 0.0, 0));
+        entry.1 += event.damage.unwrap_or(0.0);
+        entry.2 += i64::from(event.deflected);
+
+        if let Some(set_id) = spec.set_id {
+            tx.execute(
+                "INSERT OR IGNORE INTO protection_cost_evidence \
+                 (window_id, set_id, defence_event_id) VALUES (?1, ?2, ?3)",
+                rusqlite::params![window_id, set_id, event.event_id],
+            )?;
+        } else if spec.armour_set_id.is_none() && spec.plate_set_id.is_none() {
+            tx.execute(
+                "INSERT INTO protection_cost_evidence \
+                 (window_id, set_id, defence_event_id) VALUES (?1, NULL, ?2)",
+                rusqlite::params![window_id, event.event_id],
+            )?;
+        } else {
+            for set_id in [
+                spec.armour_set_id
+                    .filter(|id| event.armour_set_id == Some(*id)),
+                spec.plate_set_id
+                    .filter(|id| event.plate_set_id == Some(*id)),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                tx.execute(
+                    "INSERT OR IGNORE INTO protection_cost_evidence \
+                     (window_id, set_id, defence_event_id) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![window_id, set_id, event.event_id],
+                )?;
+            }
+        }
+    }
+
+    let total_damage: f64 = contexts.values().map(|(_, damage, _)| damage).sum();
+    let total_deflections: i64 = contexts
+        .values()
+        .map(|(_, _, deflections)| deflections)
+        .sum();
+    let context_count = contexts.len();
+    let mut allocated = 0.0;
+    let mut sessions: BTreeMap<String, (f64, i64, f64, f64)> = BTreeMap::new();
+    for (index, ((session_id, context_key), (context_id, damage, deflections))) in
+        contexts.into_iter().enumerate()
+    {
+        let share = if total_damage > 0.0 {
+            damage / total_damage
+        } else if total_deflections > 0 {
+            deflections as f64 / total_deflections as f64
+        } else {
+            1.0 / context_count as f64
+        };
+        let allocation = if index + 1 == context_count {
+            (spec.cost_ped - allocated).max(0.0)
+        } else {
+            spec.cost_ped * share
+        };
+        allocated += allocation;
+        tx.execute(
+            "INSERT INTO protection_cost_context_allocations \
+             (window_id, session_id, context_key, context_id, damage_weight, deflection_count, \
+              allocation_share, cost_ped) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                window_id,
+                session_id,
+                context_key,
+                context_id,
+                damage,
+                deflections,
+                share,
+                allocation
+            ],
+        )?;
+        let session = sessions.entry(session_id).or_default();
+        session.0 += damage;
+        session.1 += deflections;
+        session.2 += share;
+        session.3 += allocation;
+    }
+    for (session_id, (damage, deflections, share, allocation)) in sessions {
+        tx.execute(
+            "INSERT INTO protection_cost_allocations \
+             (window_id, session_id, damage_weight, deflection_count, allocation_share, cost_ped) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                window_id,
+                session_id,
+                damage,
+                deflections,
+                share,
+                allocation
+            ],
+        )?;
+        let started_at: f64 = tx.query_row(
+            "SELECT started_at FROM tracking_sessions WHERE id = ?1",
+            [&session_id],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "UPDATE tracking_sessions SET armour_cost = COALESCE(armour_cost, 0) + ?1 \
+             WHERE id = ?2",
+            rusqlite::params![allocation, session_id],
+        )?;
+        crate::daily_rollup::refresh_days(tx, [crate::daily_rollup::epoch_day(started_at)])?;
+        crate::session_summary::write_session_summary(tx, &session_id)?;
+    }
+    Ok(window_id)
+}
+
+fn read_eligible_evidence(
+    tx: &rusqlite::Transaction<'_>,
+    spec: &CostWindowSpec,
+) -> Result<Vec<EvidenceRow>, DbError> {
+    let layer_filter = if let Some(set_id) = spec.set_id {
+        let kind: String = tx.query_row(
+            "SELECT kind FROM protection_sets WHERE id = ?1",
+            [set_id],
+            |row| row.get(0),
+        )?;
+        match kind.as_str() {
+            "armour" => format!("sp.armour_set_id = {set_id}"),
+            "plates" => format!("sp.plate_set_id = {set_id}"),
+            _ => "0".to_string(),
+        }
+    } else {
+        match (spec.armour_set_id, spec.plate_set_id) {
+            (Some(armour), Some(plates)) => {
+                format!("(sp.armour_set_id = {armour} OR sp.plate_set_id = {plates})")
+            }
+            (Some(armour), None) => format!("sp.armour_set_id = {armour}"),
+            (None, Some(plates)) => format!("sp.plate_set_id = {plates}"),
+            (None, None) => "1".to_string(),
+        }
+    };
+    let claim_filter =
+        if spec.set_id.is_none() && spec.armour_set_id.is_none() && spec.plate_set_id.is_none() {
+            "NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+         WHERE ce.defence_event_id = d.id)"
+                .to_string()
+        } else {
+            let ids = [spec.set_id, spec.armour_set_id, spec.plate_set_id]
+                .into_iter()
+                .flatten()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+             WHERE ce.defence_event_id = d.id AND (ce.set_id IS NULL OR ce.set_id IN ({ids})))"
+            )
+        };
+    let closing = spec.closing_cursor.unwrap_or(i64::MAX);
+    let sql = format!(
+        "SELECT d.id, d.session_id, d.context_id, d.damage, d.deflected, \
+                sp.armour_set_id, sp.plate_set_id \
+         FROM protection_defence_events d \
+         LEFT JOIN session_protection_intervals sp ON sp.interval_id = d.protection_interval_id \
+         WHERE d.id > ?1 AND d.id <= ?2 AND ({layer_filter}) AND {claim_filter} \
+         ORDER BY d.id"
+    );
+    let mut stmt = tx.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![spec.opening_cursor, closing], |row| {
+        Ok(EvidenceRow {
+            event_id: row.get(0)?,
+            session_id: row.get(1)?,
+            context_id: row.get(2)?,
+            damage: row.get(3)?,
+            deflected: row.get::<_, i64>(4)? != 0,
+            armour_set_id: row.get(5)?,
+            plate_set_id: row.get(6)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn read_set(
@@ -653,11 +1101,21 @@ fn read_set(
     };
     let latest_observation = read_latest_observation(conn, id)?;
     let pending_reconciliations = conn.query_row(
-        "SELECT COUNT(*) FROM protection_reconciliations \
-         WHERE set_id = ?1 AND status = 'pending'",
+        "SELECT COUNT(*) FROM protection_cost_windows \
+         WHERE (set_id = ?1 OR armour_set_id = ?1 OR plate_set_id = ?1) \
+           AND status = 'pending'",
         [id],
         |row| row.get(0),
     )?;
+    let (unsettled_damage, unsettled_deflections, unsettled_sessions) =
+        read_unsettled_evidence(conn, id, ProtectionSetKind::parse(&kind)?)?;
+    let basis_locked = latest_observation.is_some()
+        || conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM session_protection_intervals \
+             WHERE armour_set_id = ?1 OR plate_set_id = ?1)",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )?;
     Ok(Some(ProtectionSet {
         id,
         kind: ProtectionSetKind::parse(&kind)?,
@@ -668,6 +1126,10 @@ fn read_set(
         archived_at,
         latest_observation,
         pending_reconciliations,
+        basis_locked,
+        unsettled_damage,
+        unsettled_deflections,
+        unsettled_sessions,
     }))
 }
 
@@ -748,7 +1210,8 @@ fn read_observation(
 ) -> Result<ProtectionObservation, ProtectionError> {
     let row = conn
         .query_row(
-            "SELECT id, set_id, tt_value_ped, source, raw_text, observed_at, reset_reason \
+            "SELECT id, set_id, tt_value_ped, source, raw_text, observed_at, reset_reason, \
+                    COALESCE(defence_event_cursor, 0) \
              FROM protection_observations WHERE id = ?1",
             [id],
             |row| {
@@ -760,6 +1223,7 @@ fn read_observation(
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, f64>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             },
         )
@@ -773,6 +1237,7 @@ fn read_observation(
         raw_text: row.4,
         observed_at: row.5,
         reset_reason: row.6,
+        defence_event_cursor: row.7,
     })
 }
 
@@ -789,6 +1254,105 @@ fn read_latest_observation(
         )
         .optional()?;
     id.map(|id| read_observation(conn, id)).transpose()
+}
+
+fn read_unsettled_evidence(
+    conn: &rusqlite::Connection,
+    set_id: i64,
+    kind: ProtectionSetKind,
+) -> Result<(f64, i64, i64), ProtectionError> {
+    let economy: String = conn.query_row(
+        "SELECT economy_kind FROM protection_sets WHERE id = ?1",
+        [set_id],
+        |row| row.get(0),
+    )?;
+    let cursor = if economy == "limited" {
+        conn.query_row(
+            "SELECT COALESCE(MAX(defence_event_cursor), 0) \
+             FROM protection_observations WHERE set_id = ?1",
+            [set_id],
+            |row| row.get::<_, i64>(0),
+        )?
+    } else {
+        0
+    };
+    let column = match kind {
+        ProtectionSetKind::Armour => "armour_set_id",
+        ProtectionSetKind::Plates => "plate_set_id",
+    };
+    let sql = format!(
+        "SELECT COALESCE(SUM(COALESCE(d.damage, 0)), 0), \
+                COALESCE(SUM(d.deflected), 0), COUNT(DISTINCT d.session_id) \
+         FROM protection_defence_events d \
+         JOIN session_protection_intervals sp ON sp.interval_id = d.protection_interval_id \
+         WHERE sp.{column} = ?1 AND d.id > ?2 \
+           AND NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+               WHERE ce.defence_event_id = d.id \
+                 AND (ce.set_id IS NULL OR ce.set_id = ?1))"
+    );
+    conn.query_row(&sql, rusqlite::params![set_id, cursor], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })
+    .map_err(Into::into)
+}
+
+fn read_cost_window(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<ProtectionCostWindow, ProtectionError> {
+    let row = conn
+        .query_row(
+            "SELECT id, kind, set_id, armour_set_id, plate_set_id, consumed_tt_ped, \
+                    markup_percent, cost_ped, status, reason, created_at \
+             FROM protection_cost_windows WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<f64>>(5)?,
+                    row.get::<_, Option<f64>>(6)?,
+                    row.get::<_, f64>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, f64>(10)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(ProtectionError::Stored("missing protection cost window"))?;
+    let mut stmt = conn.prepare(
+        "SELECT session_id, damage_weight, deflection_count, allocation_share, cost_ped \
+         FROM protection_cost_allocations WHERE window_id = ?1 ORDER BY session_id",
+    )?;
+    let allocations = stmt
+        .query_map([id], |allocation| {
+            Ok(ProtectionCostAllocation {
+                session_id: allocation.get(0)?,
+                damage_weight: allocation.get(1)?,
+                deflection_count: allocation.get(2)?,
+                allocation_share: allocation.get(3)?,
+                cost_ped: allocation.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ProtectionCostWindow {
+        id: row.0,
+        kind: row.1,
+        set_id: row.2,
+        armour_set_id: row.3,
+        plate_set_id: row.4,
+        consumed_tt_ped: row.5,
+        markup_percent: row.6,
+        cost_ped: row.7,
+        status: ReconciliationStatus::parse(&row.8)?,
+        reason: row.9,
+        created_at: row.10,
+        allocations,
+    })
 }
 
 fn read_reconciliation(
@@ -849,9 +1413,20 @@ fn read_observation_outcome(
     let reconciliation = reconciliation_id
         .map(|id| read_reconciliation(conn, id).map_err(protection_decode))
         .transpose()?;
+    let cost_window_id = conn
+        .query_row(
+            "SELECT id FROM protection_cost_windows WHERE closing_observation_id = ?1",
+            [observation_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let cost_window = cost_window_id
+        .map(|id| read_cost_window(conn, id).map_err(protection_decode))
+        .transpose()?;
     Ok(ObservationOutcome {
         observation,
         reconciliation,
+        cost_window,
     })
 }
 
@@ -916,75 +1491,24 @@ fn read_overview(conn: &rusqlite::Connection) -> Result<ProtectionOverview, DbEr
         .map(|id| read_reconciliation(conn, id).map_err(protection_decode))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let mut window_stmt = conn.prepare(
+        "SELECT id FROM protection_cost_windows ORDER BY created_at DESC, id DESC LIMIT 12",
+    )?;
+    let window_ids = window_stmt
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let recent_cost_windows = window_ids
+        .into_iter()
+        .map(|id| read_cost_window(conn, id).map_err(protection_decode))
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(ProtectionOverview {
         sets,
         loadouts,
         active_loadout_id,
         recent_reconciliations,
+        recent_cost_windows,
     })
-}
-
-fn resolve_single_session(
-    tx: &rusqlite::Transaction<'_>,
-    set_id: i64,
-    opening_at: f64,
-    closing_at: f64,
-) -> Result<(ReconciliationStatus, Option<String>, Option<String>), rusqlite::Error> {
-    let mut stmt = tx.prepare(
-        "SELECT id FROM tracking_sessions \
-         WHERE started_at >= ?1 AND ended_at IS NOT NULL AND ended_at <= ?2 \
-         ORDER BY started_at, id",
-    )?;
-    let sessions = stmt
-        .query_map(rusqlite::params![opening_at, closing_at], |row| {
-            row.get::<_, String>(0)
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    if sessions.len() != 1 {
-        return Ok((
-            ReconciliationStatus::Pending,
-            None,
-            Some(if sessions.is_empty() {
-                "No complete recorded session falls inside this observation window".to_string()
-            } else {
-                "This observation window spans more than one recorded session".to_string()
-            }),
-        ));
-    }
-    let session_id = &sessions[0];
-    let (distinct_armour, distinct_plates, armour_match, plates_match): (i64, i64, i64, i64) = tx
-        .query_row(
-        "SELECT \
-                 COUNT(DISTINCT COALESCE(sp.armour_set_id, -1)), \
-                 COUNT(DISTINCT COALESCE(sp.plate_set_id, -1)), \
-                 MAX(CASE WHEN sp.armour_set_id = ?1 THEN 1 ELSE 0 END), \
-                 MAX(CASE WHEN sp.plate_set_id = ?1 THEN 1 ELSE 0 END) \
-             FROM session_intervals si \
-             JOIN session_protection_intervals sp ON sp.interval_id = si.id \
-             WHERE si.session_id = ?2 AND si.kind = 'protection'",
-        rusqlite::params![set_id, session_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
-    let kind: String = tx.query_row(
-        "SELECT kind FROM protection_sets WHERE id = ?1",
-        [set_id],
-        |row| row.get(0),
-    )?;
-    let unambiguous = match kind.as_str() {
-        "armour" => distinct_armour == 1 && armour_match == 1,
-        "plates" => distinct_plates == 1 && plates_match == 1,
-        _ => false,
-    };
-    if !unambiguous {
-        return Ok((
-            ReconciliationStatus::Pending,
-            None,
-            Some(
-                "The measured layer changed or was not declared throughout the session".to_string(),
-            ),
-        ));
-    }
-    Ok((ReconciliationStatus::Booked, Some(session_id.clone()), None))
 }
 
 #[cfg(test)]
@@ -1037,6 +1561,7 @@ mod tests {
         let set_id = set.id;
         let set_name = set.name.clone();
         let markup = set.markup_percent;
+        let economy = set.economy_kind.as_str();
         db.with_writer(move |conn| {
             conn.execute(
                 "INSERT INTO tracking_sessions (id, started_at, ended_at, is_active) \
@@ -1054,15 +1579,22 @@ mod tests {
                 "INSERT INTO session_protection_intervals \
                  (interval_id, loadout_id, loadout_name, armour_set_id, armour_set_name, \
                   armour_economy_kind, armour_markup_percent) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'limited', ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 rusqlite::params![
                     interval_id,
                     loadout_id,
                     loadout_name,
                     set_id,
                     set_name,
+                    economy,
                     markup
                 ],
+            )?;
+            conn.execute(
+                "INSERT INTO protection_defence_events \
+                 (session_id, protection_interval_id, damage, deflected) \
+                 VALUES (?1, ?2, 100, 0)",
+                rusqlite::params![session_id, interval_id],
             )?;
             Ok(())
         })
@@ -1078,7 +1610,7 @@ mod tests {
             .confirm_observation(set.id, "open", 10.0, ObservationSource::Manual, None, None)
             .await
             .expect("opening observation");
-        assert!(opening.reconciliation.is_none());
+        assert!(opening.cost_window.is_none());
         let opening_at = opening.observation.observed_at;
 
         seed_completed_session(
@@ -1096,10 +1628,11 @@ mod tests {
             .confirm_observation(set.id, "close", 8.0, ObservationSource::Manual, None, None)
             .await
             .expect("closing observation");
-        let reconciliation = closing.reconciliation.expect("reconciliation");
-        assert_eq!(reconciliation.status, ReconciliationStatus::Booked);
-        assert_eq!(reconciliation.session_id.as_deref(), Some("session-1"));
-        assert!((reconciliation.cost_ped - 2.5).abs() < 1e-9);
+        let window = closing.cost_window.as_ref().expect("cost window");
+        assert_eq!(window.status, ReconciliationStatus::Booked);
+        assert_eq!(window.allocations.len(), 1);
+        assert_eq!(window.allocations[0].session_id, "session-1");
+        assert!((window.cost_ped - 2.5).abs() < 1e-9);
 
         let repeated = service
             .confirm_observation(set.id, "close", 7.0, ObservationSource::Manual, None, None)
@@ -1118,6 +1651,162 @@ mod tests {
             .await
             .expect("booked cost");
         assert!((booked - 2.5).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn deferred_limited_decay_spreads_across_sessions_by_recorded_damage() {
+        let (_dir, db, clock, service) = harness().await;
+        let (set, loadout) = limited_armour(&service, "Deferred armour", 120.0).await;
+        service
+            .confirm_observation(
+                set.id,
+                "deferred-open",
+                20.0,
+                ObservationSource::Manual,
+                None,
+                None,
+            )
+            .await
+            .expect("opening observation");
+        seed_completed_session(&db, "earlier", &loadout, &set, 1.0, 2.0).await;
+        seed_completed_session(&db, "later", &loadout, &set, 3.0, 4.0).await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "UPDATE protection_defence_events SET damage = 500 WHERE session_id = 'earlier'",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE protection_defence_events SET damage = 700 WHERE session_id = 'later'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("weight evidence");
+        clock.advance(10.0).expect("advance");
+
+        let closing = service
+            .confirm_observation(
+                set.id,
+                "deferred-close",
+                10.0,
+                ObservationSource::Manual,
+                None,
+                None,
+            )
+            .await
+            .expect("closing observation");
+        let window = closing.cost_window.expect("cost window");
+        assert_eq!(window.allocations.len(), 2);
+        assert!((window.cost_ped - 12.0).abs() < 1e-9);
+        assert!((window.allocations[0].cost_ped - 5.0).abs() < 1e-9);
+        assert!((window.allocations[1].cost_ped - 7.0).abs() < 1e-9);
+        let (context_count, context_cost): (i64, f64) = db
+            .with_reader(move |conn| {
+                conn.query_row(
+                    "SELECT COUNT(*), SUM(cost_ped) FROM protection_cost_context_allocations \
+                     WHERE window_id = ?1",
+                    [window.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .expect("context allocations");
+        assert_eq!(context_count, 2);
+        assert!((context_cost - 12.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn deferred_unlimited_repair_consumes_all_unsettled_sessions() {
+        let (_dir, db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Unlimited armour",
+                ProtectionEconomyKind::Unlimited,
+                None,
+            )
+            .await
+            .expect("create set");
+        let loadout = service
+            .create_loadout("Unlimited", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        seed_completed_session(&db, "repair-earlier", &loadout, &set, 1.0, 2.0).await;
+        seed_completed_session(&db, "repair-later", &loadout, &set, 3.0, 4.0).await;
+
+        let outcome = service
+            .confirm_repair_cost("repair-window", Some(set.id), None, 3.0)
+            .await
+            .expect("repair cost");
+        assert_eq!(outcome.cost_window.allocations.len(), 2);
+        assert!(outcome
+            .cost_window
+            .allocations
+            .iter()
+            .all(|allocation| (allocation.cost_ped - 1.5).abs() < 1e-9));
+        let repeated = service
+            .confirm_repair_cost("repair-window", Some(set.id), None, 9.0)
+            .await
+            .expect("idempotent repair repeat");
+        assert_eq!(repeated, outcome);
+        let overview = service.overview().await.expect("overview");
+        let refreshed = overview
+            .sets
+            .iter()
+            .find(|candidate| candidate.id == set.id)
+            .unwrap();
+        assert_eq!(refreshed.unsettled_sessions, 0);
+    }
+
+    #[tokio::test]
+    async fn deflection_only_windows_fall_back_to_equal_event_weights() {
+        let (_dir, db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Deflection armour",
+                ProtectionEconomyKind::Unlimited,
+                None,
+            )
+            .await
+            .expect("create set");
+        let loadout = service
+            .create_loadout("Deflection loadout", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        seed_completed_session(&db, "one-deflection", &loadout, &set, 1.0, 2.0).await;
+        seed_completed_session(&db, "two-deflections", &loadout, &set, 3.0, 4.0).await;
+        db.with_writer(|conn| {
+            conn.execute(
+                "UPDATE protection_defence_events SET damage = NULL, deflected = 1",
+                [],
+            )?;
+            let interval_id: i64 = conn.query_row(
+                "SELECT protection_interval_id FROM protection_defence_events \
+                 WHERE session_id = 'two-deflections' LIMIT 1",
+                [],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "INSERT INTO protection_defence_events \
+                 (session_id, protection_interval_id, damage, deflected) \
+                 VALUES ('two-deflections', ?1, NULL, 1)",
+                [interval_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("deflection evidence");
+
+        let outcome = service
+            .confirm_repair_cost("deflections", Some(set.id), None, 3.0)
+            .await
+            .expect("repair cost");
+        assert_eq!(outcome.cost_window.allocations.len(), 2);
+        assert!((outcome.cost_window.allocations[0].cost_ped - 1.0).abs() < 1e-9);
+        assert!((outcome.cost_window.allocations[1].cost_ped - 2.0).abs() < 1e-9);
     }
 
     #[tokio::test]
@@ -1159,9 +1848,9 @@ mod tests {
             )
             .await
             .expect("pending observation");
-        let reconciliation = closing.reconciliation.expect("reconciliation");
-        assert_eq!(reconciliation.status, ReconciliationStatus::Pending);
-        assert!(reconciliation.session_id.is_none());
+        let window = closing.cost_window.expect("cost window");
+        assert_eq!(window.status, ReconciliationStatus::Pending);
+        assert!(window.allocations.is_empty());
 
         let increase = service
             .confirm_observation(
@@ -1185,6 +1874,77 @@ mod tests {
             )
             .await
             .expect("reset baseline");
-        assert!(reset.reconciliation.is_none());
+        assert!(reset.cost_window.is_none());
+    }
+
+    #[tokio::test]
+    async fn configuration_edits_preserve_observation_economics_and_relationships() {
+        let (_dir, _db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Test armour",
+                ProtectionEconomyKind::Limited,
+                Some(120.0),
+            )
+            .await
+            .expect("create set");
+        let edited = service
+            .update_set(
+                set.id,
+                "Renamed armour",
+                ProtectionEconomyKind::Limited,
+                Some(125.0),
+            )
+            .await
+            .expect("edit unused set");
+        assert_eq!(edited.name, "Renamed armour");
+        assert_eq!(edited.markup_percent, Some(125.0));
+
+        let loadout = service
+            .create_loadout("First loadout", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        let edited_loadout = service
+            .update_loadout(loadout.id, "Renamed loadout", Some(set.id), None)
+            .await
+            .expect("edit loadout");
+        assert_eq!(edited_loadout.name, "Renamed loadout");
+        assert_eq!(
+            edited_loadout.armour.as_ref().map(|armour| armour.id),
+            Some(set.id)
+        );
+
+        service
+            .confirm_observation(
+                set.id,
+                "basis-lock",
+                10.0,
+                ObservationSource::Manual,
+                None,
+                None,
+            )
+            .await
+            .expect("set baseline");
+        let basis_change = service
+            .update_set(
+                set.id,
+                "Renamed again",
+                ProtectionEconomyKind::Limited,
+                Some(130.0),
+            )
+            .await;
+        assert!(matches!(basis_change, Err(ProtectionError::Conflict(_))));
+
+        let renamed = service
+            .update_set(
+                set.id,
+                "Renamed again",
+                ProtectionEconomyKind::Limited,
+                Some(125.0),
+            )
+            .await
+            .expect("rename observed set");
+        assert_eq!(renamed.name, "Renamed again");
     }
 }

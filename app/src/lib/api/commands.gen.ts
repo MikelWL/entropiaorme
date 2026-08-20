@@ -2066,6 +2066,29 @@ export interface ProspectSample {
  */
 export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
 
+export interface ProtectionCostAllocation {
+	sessionId: string;
+	damageWeight: number;
+	deflectionCount: number;
+	allocationShare: number;
+	costPed: number;
+}
+
+export interface ProtectionCostWindow {
+	id: string;
+	kind: string;
+	setId: string | null;
+	armourSetId: string | null;
+	plateSetId: string | null;
+	consumedTtPed: number | null;
+	markupPercent: number | null;
+	costPed: number;
+	status: ProtectionReconciliationStatus;
+	reason: string | null;
+	createdAt: number;
+	allocations: ProtectionCostAllocation[];
+}
+
 export type ProtectionEconomyKind = 'limited' | 'unlimited';
 
 export interface ProtectionLoadout {
@@ -2089,6 +2112,7 @@ export interface ProtectionObservation {
 	rawText: string | null;
 	observedAt: number;
 	resetReason: string | null;
+	defenceEventCursor: string;
 }
 
 export interface ProtectionObservationInput {
@@ -2103,6 +2127,7 @@ export interface ProtectionObservationInput {
 export interface ProtectionObservationOutcome {
 	observation: ProtectionObservation;
 	reconciliation: ProtectionReconciliation | null;
+	costWindow: ProtectionCostWindow | null;
 }
 
 export type ProtectionObservationSource = 'ocr' | 'manual';
@@ -2112,6 +2137,7 @@ export interface ProtectionOverview {
 	loadouts: ProtectionLoadout[];
 	activeLoadoutId: string | null;
 	recentReconciliations: ProtectionReconciliation[];
+	recentCostWindows: ProtectionCostWindow[];
 }
 
 export interface ProtectionReconciliation {
@@ -2130,6 +2156,17 @@ export interface ProtectionReconciliation {
 
 export type ProtectionReconciliationStatus = 'booked' | 'pending';
 
+export interface ProtectionRepairInput {
+	clientToken: string;
+	armourSetId?: number | null;
+	plateSetId?: number | null;
+	costPed: number;
+}
+
+export interface ProtectionRepairOutcome {
+	costWindow: ProtectionCostWindow;
+}
+
 export interface ProtectionScanResult {
 	valuePed: number | null;
 	rawText: string | null;
@@ -2146,6 +2183,10 @@ export interface ProtectionSet {
 	markupPercent: number | null;
 	latestObservation: ProtectionObservation | null;
 	pendingReconciliations: number;
+	basisLocked: boolean;
+	unsettledDamage: number;
+	unsettledDeflections: number;
+	unsettledSessions: number;
 }
 
 export interface ProtectionSetInput {
@@ -3144,8 +3185,16 @@ export async function protectionSetCreate(input: ProtectionSetInput): Promise<Pr
 	return invokeCommand('protection_set_create', { input });
 }
 
+export async function protectionSetUpdate(setId: number, input: ProtectionSetInput): Promise<ProtectionOverview> {
+	return invokeCommand('protection_set_update', { set_id: setId, input });
+}
+
 export async function protectionLoadoutCreate(input: ProtectionLoadoutInput): Promise<ProtectionOverview> {
 	return invokeCommand('protection_loadout_create', { input });
+}
+
+export async function protectionLoadoutUpdate(loadoutId: number, input: ProtectionLoadoutInput): Promise<ProtectionOverview> {
+	return invokeCommand('protection_loadout_update', { loadout_id: loadoutId, input });
 }
 
 export async function protectionSetArchive(setId: number): Promise<ProtectionOverview> {
@@ -3162,6 +3211,10 @@ export async function protectionSelect(loadoutId: number): Promise<ProtectionOve
 
 export async function protectionObservationConfirm(input: ProtectionObservationInput): Promise<ProtectionObservationOutcome> {
 	return invokeCommand('protection_observation_confirm', { input });
+}
+
+export async function protectionRepairConfirm(input: ProtectionRepairInput): Promise<ProtectionRepairOutcome> {
+	return invokeCommand('protection_repair_confirm', { input });
 }
 
 export async function protectionTradeTerminalScan(): Promise<ProtectionScanResult> {

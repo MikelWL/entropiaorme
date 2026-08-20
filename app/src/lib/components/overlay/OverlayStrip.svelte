@@ -6,6 +6,10 @@
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
+	import {
+		buildProtectionCostSteps,
+		protectionCostActionLabel,
+	} from '$lib/features/protection/protectionCostFlow';
 
 	type LastSessionStats = { cost: number; returns: number; pes: number; net: number };
 
@@ -146,6 +150,8 @@
 	const activeProtection = $derived(
 		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
+	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
+	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
 
 	function formatElapsed(seconds: number): string {
 		const h = Math.floor(seconds / 3600);
@@ -167,19 +173,19 @@
 		<div class="flex items-center gap-3 shrink-0 border-r border-white/10 pr-3">
 			{#if awaitingArmourTrackDecision && data.status === 'active'}
 				<div class="armour-prompt flex items-center gap-1.5 shrink-0">
-					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Track armour?</span>
+					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record protection?</span>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-yes"
 						disabled={toggling}
 						onclick={() => onArmourTrackDecision('yes')}
-					>Yes</button>
+					>Record</button>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-no"
 						disabled={toggling}
 						onclick={() => onArmourTrackDecision('no')}
-					>No</button>
+					>Later</button>
 				</div>
 			{:else if attributionWarning && data.status !== 'active'}
 				<div class="armour-prompt flex items-center gap-2 shrink-0 max-w-[420px]">
@@ -472,7 +478,7 @@
 			{/if}
 		</div>
 
-		<!-- Armour cost (standalone, user-initiated) -->
+		<!-- Active protection identity and live selection. -->
 		{#if protection && protection.loadouts.length > 0}
 			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
 				<span class="facet-label">Protection</span>
@@ -502,7 +508,7 @@
 			</div>
 		{/if}
 
-		<!-- Armour cost (standalone, user-initiated) -->
+		<!-- Protection cost, sequenced from the active loadout. -->
 		<div
 			class="flex flex-col shrink-0 border-l border-white/10 pl-3"
 			data-guide-anchor="overlay-armour-section"
@@ -511,16 +517,16 @@
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
 					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-						{armourSessionId
+						{armourSessionId && protectionCostSteps.length > 0
 							? armourCostOpen
 								? 'bg-accent/20 border-accent/40 text-accent'
 								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
 							: 'bg-white/5 border-white/10 text-white/20 cursor-not-allowed'}"
-					disabled={!armourSessionId}
+					disabled={!armourSessionId || protectionCostSteps.length === 0}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}
 					onclick={onArmourCostToggle}
-					title={armourSessionId ? 'Record armour cost' : 'Start or stop a session to enable'}
+					title={armourSessionId ? protectionCostTitle : 'Start or stop a session to enable'}
 					data-guide-anchor="overlay-armour-cost-btn"
 				>
 					Cost
@@ -610,7 +616,8 @@
 						aria-haspopup="dialog"
 						aria-expanded={armourCostOpen}
 						onclick={onArmourCostToggle}
-						title="Record armour cost"
+						disabled={protectionCostSteps.length === 0}
+						title={protectionCostTitle}
 					>
 						Cost
 					</button>

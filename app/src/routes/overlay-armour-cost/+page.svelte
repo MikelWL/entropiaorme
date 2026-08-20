@@ -3,11 +3,10 @@
 	import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
 	import { tick } from 'svelte';
-	import RepairCostPanel from '../overlay/RepairCostPanel.svelte';
+	import ProtectionCostPanel from '../overlay/ProtectionCostPanel.svelte';
 	import {
 		OVERLAY_ARMOUR_COST_CLOSED_EVENT,
 		OVERLAY_ARMOUR_COST_HIDE_EVENT,
-		OVERLAY_ARMOUR_COST_INTERACT_EVENT,
 		OVERLAY_ARMOUR_COST_READY_EVENT,
 		OVERLAY_ARMOUR_COST_SHOW_EVENT,
 		OVERLAY_ARMOUR_COST_UPDATE_EVENT,
@@ -23,7 +22,6 @@
 
 	let panelState = $state<OverlayArmourCostState | null>(null);
 	let shellEl: HTMLDivElement | null = $state(null);
-	let suppressBlurCloseUntil = 0;
 	let lastWidth: number | null = null;
 	let lastHeight: number | null = null;
 	let firstShowDone = false;
@@ -118,12 +116,6 @@
 		await currentWindow.emitTo('overlay', OVERLAY_ARMOUR_COST_CLOSED_EVENT).catch(() => {});
 	}
 
-	function signalInteraction() {
-		if (!panelState) return;
-		suppressBlurCloseUntil = Date.now() + 200;
-		void currentWindow.emitTo('overlay', OVERLAY_ARMOUR_COST_INTERACT_EVENT).catch(() => {});
-	}
-
 	$effect(() => {
 		if (!shellEl || !panelState) return;
 		const observer = new ResizeObserver(() => {
@@ -139,7 +131,6 @@
 		let unlistenShow: UnlistenFn | undefined;
 		let unlistenUpdate: UnlistenFn | undefined;
 		let unlistenHide: UnlistenFn | undefined;
-		let unlistenFocus: UnlistenFn | undefined;
 
 		const handleEscape = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape') return;
@@ -154,7 +145,6 @@
 					if (disposed) return;
 					resetPresentationState();
 					panelState = event.payload;
-					suppressBlurCloseUntil = Date.now() + 200;
 				}
 			);
 
@@ -174,18 +164,6 @@
 				await currentWindow.hide().catch(() => {});
 			});
 
-			unlistenFocus = await currentWindow.onFocusChanged(({ payload: focused }) => {
-				if (disposed || !panelState) return;
-				if (focused) {
-					// Each focus-gain refreshes the grace, so a snap-away blur landing
-					// right after the popup acquires focus is still ignored.
-					suppressBlurCloseUntil = Math.max(suppressBlurCloseUntil, Date.now() + 300);
-					return;
-				}
-				if (Date.now() < suppressBlurCloseUntil) return;
-				void requestClose();
-			});
-
 			await currentWindow
 				.emitTo('overlay', OVERLAY_ARMOUR_COST_READY_EVENT, { label: currentWindow.label })
 				.catch(() => {});
@@ -198,7 +176,6 @@
 			unlistenShow?.();
 			unlistenUpdate?.();
 			unlistenHide?.();
-			unlistenFocus?.();
 			window.removeEventListener('keydown', handleEscape);
 			cancelScheduledFrames();
 		};
@@ -206,21 +183,16 @@
 </script>
 
 {#if panelState}
-	<!-- Kept: pointer/wheel are liveness signals that hold the popup open during interaction, not actions; Escape (window keydown) closes it. -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div
-		class="armour-cost-shell"
-		bind:this={shellEl}
-		onpointerdown={signalInteraction}
-		onwheel={signalInteraction}
-	>
+	<!-- This workflow stays open while the player returns to the game to exchange armour and plates between steps. -->
+	<div class="armour-cost-shell" bind:this={shellEl}>
 		<div
 			class="armour-cost-panel"
 			class:armour-cost-panel-visible={panelVisible}
 		>
-			<RepairCostPanel
+			<ProtectionCostPanel
 				sessionId={panelState.sessionId}
 				repairOcrEnabled={panelState.repairOcrEnabled}
+				steps={panelState.steps}
 				onClose={() => void requestClose()}
 			/>
 		</div>

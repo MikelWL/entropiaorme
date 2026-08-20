@@ -609,13 +609,35 @@ seven armour pieces or exactly seven plates. Its client token is unique, making
 confirmation idempotent. `source` is `ocr` or `manual`; `raw_text` preserves the
 recognised text when present. A non-null `reset_reason` establishes a new
 baseline instead of claiming decay, which is required when a reading rises.
+Each observation also stores the latest defensive-event identifier visible at
+confirmation time. That durable cursor bounds limited decay without comparing
+game event time to wall-clock capture time.
 
 `protection_reconciliations` joins an opening and closing observation. It stores
 TT consumed, the frozen markup basis, resulting PED cost, and either a booked
 session identity or a pending reason. Automatic booking is deliberately narrow:
 the observation window must contain exactly one completed session and the
 measured layer identity must remain unambiguous throughout it. Every broader
-case is retained as pending rather than guessed.
+case is retained as pending rather than guessed. This table preserves the
+initial single-session implementation; new settlement uses the general cost
+windows below.
+
+`protection_cost_windows` is the authoritative settlement record for limited
+decay and unlimited repair readings. A limited window references its opening
+and closing observations, frozen markup, TT consumed, and effective PED cost.
+A repair window instead records the configured unlimited armour and plate
+scope. Both carry an idempotency token where the interaction can be repeated,
+plus a booked or pending status and an explanatory reason.
+
+`protection_cost_evidence` claims each defensive event consumed by a window.
+Claims are unique per configured physical layer; the legacy unconfigured repair
+path uses a global claim. This allows one incoming hit to support both its
+armour and plate cost while preventing either layer from charging that hit
+twice. `protection_cost_allocations` stores the conserved per-session split.
+`protection_cost_context_allocations` stores the finer split over the immutable
+activity contexts within those sessions. Numeric incoming damage is the primary
+weight. Deflections contribute only when the entire eligible window lacks a
+numeric amount, in which case each deflection has equal fallback weight.
 
 `session_protection_intervals` is the immutable economic snapshot beside each
 `session_intervals(kind = 'protection')` row. It retains the loadout identity and
@@ -625,8 +647,10 @@ catalogue changes cannot rewrite recorded play.
 `protection_defence_events` retains each numeric damage-taken event and each
 deflection, stamped with its session, attribution context, and protection
 interval. Deflection deliberately has no invented damage amount. This evidence
-supports later proportional allocation without contaminating the first
-unambiguous whole-session booking policy.
+supports proportional allocation even when the user postpones recording across
+several sessions. A later compatible limited observation or unlimited repair
+reading consumes all still-unsettled evidence in its bounded layer scope and
+repairs the affected session summaries and daily projections transactionally.
 
 #### `session_contexts`
 

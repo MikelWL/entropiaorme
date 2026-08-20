@@ -49,8 +49,9 @@ use eo_api::market::{
     MarketPastePreview, MarketUnitPriceResult,
 };
 use eo_api::protection::{
-    ProtectionLoadoutInput, ProtectionObservationInput, ProtectionObservationOutcome,
-    ProtectionOverview, ProtectionScanResult, ProtectionSetInput,
+    ProtectionLoadoutInput, ProtectionLoadoutUpdateInput, ProtectionObservationInput,
+    ProtectionObservationOutcome, ProtectionOverview, ProtectionRepairInput,
+    ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
 };
 use eo_api::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
@@ -164,11 +165,31 @@ pub async fn protection_set_create(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn protection_set_update(
+    app: tauri::AppHandle,
+    set_id: i64,
+    input: ProtectionSetUpdateInput,
+) -> Result<ProtectionOverview, ApiError> {
+    facade(&app)?.protection_set_update(set_id, &input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn protection_loadout_create(
     app: tauri::AppHandle,
     input: ProtectionLoadoutInput,
 ) -> Result<ProtectionOverview, ApiError> {
     facade(&app)?.protection_loadout_create(&input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn protection_loadout_update(
+    app: tauri::AppHandle,
+    loadout_id: i64,
+    input: ProtectionLoadoutUpdateInput,
+) -> Result<ProtectionOverview, ApiError> {
+    facade(&app)?
+        .protection_loadout_update(loadout_id, &input)
+        .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -201,6 +222,14 @@ pub async fn protection_observation_confirm(
     input: ProtectionObservationInput,
 ) -> Result<ProtectionObservationOutcome, ApiError> {
     facade(&app)?.protection_observation_confirm(&input).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn protection_repair_confirm(
+    app: tauri::AppHandle,
+    input: ProtectionRepairInput,
+) -> Result<ProtectionRepairOutcome, ApiError> {
+    facade(&app)?.protection_repair_confirm(&input).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1805,7 +1834,9 @@ mod tests {
         "equipment_detail",
         "protection_overview",
         "protection_set_create",
+        "protection_set_update",
         "protection_loadout_create",
+        "protection_loadout_update",
         "protection_set_archive",
         "protection_loadout_archive",
         "protection_select",

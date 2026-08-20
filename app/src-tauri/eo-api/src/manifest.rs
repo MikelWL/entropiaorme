@@ -51,8 +51,9 @@ use crate::market::{
     MarketPastePreview, MarketUnitPriceResult,
 };
 use crate::protection::{
-    ProtectionLoadoutInput, ProtectionObservationInput, ProtectionObservationOutcome,
-    ProtectionOverview, ProtectionScanResult, ProtectionSetInput,
+    ProtectionLoadoutInput, ProtectionLoadoutUpdateInput, ProtectionObservationInput,
+    ProtectionObservationOutcome, ProtectionOverview, ProtectionRepairInput,
+    ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
 };
 use crate::quests::{
     PlaylistAnalyticsRow, PlaylistInput, Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput,
@@ -162,11 +163,39 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(ProtectionOverview))),
         },
         CommandSpec {
+            name: "protection_set_update",
+            args: vec![
+                ArgSpec {
+                    name: "set_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(ProtectionSetUpdateInput)),
+                },
+            ],
+            returns: Some(schema(schema_for!(ProtectionOverview))),
+        },
+        CommandSpec {
             name: "protection_loadout_create",
             args: vec![ArgSpec {
                 name: "input",
                 schema: schema(schema_for!(ProtectionLoadoutInput)),
             }],
+            returns: Some(schema(schema_for!(ProtectionOverview))),
+        },
+        CommandSpec {
+            name: "protection_loadout_update",
+            args: vec![
+                ArgSpec {
+                    name: "loadout_id",
+                    schema: schema(schema_for!(i64)),
+                },
+                ArgSpec {
+                    name: "input",
+                    schema: schema(schema_for!(ProtectionLoadoutUpdateInput)),
+                },
+            ],
             returns: Some(schema(schema_for!(ProtectionOverview))),
         },
         CommandSpec {
@@ -200,6 +229,14 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(ProtectionObservationInput)),
             }],
             returns: Some(schema(schema_for!(ProtectionObservationOutcome))),
+        },
+        CommandSpec {
+            name: "protection_repair_confirm",
+            args: vec![ArgSpec {
+                name: "input",
+                schema: schema(schema_for!(ProtectionRepairInput)),
+            }],
+            returns: Some(schema(schema_for!(ProtectionRepairOutcome))),
         },
         CommandSpec {
             name: "protection_trade_terminal_scan",

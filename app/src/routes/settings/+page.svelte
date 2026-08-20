@@ -352,8 +352,8 @@
 				<div>
 					<p class="text-sm text-text">End-of-session armour reminder</p>
 					<p class="text-xs text-text-tertiary mt-0.5">
-						When you stop a session, the Stop button becomes a yellow "Track armour?"
-						prompt. Yes opens the armour-cost popup; No finishes the session without it.
+						When you stop a session, the Stop button becomes a yellow "Record protection?"
+						prompt. Record opens the protection-cost popup; Later carries recorded defensive evidence forward.
 						Turn off to stop sessions in one click.
 					</p>
 					{#if savedIndicator === 'armourReminder'}

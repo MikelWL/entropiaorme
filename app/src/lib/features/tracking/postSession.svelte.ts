@@ -3,10 +3,10 @@
  * the user asking to stop and the post-session readout clearing.
  *
  * One prompt: when the end-of-session armour reminder is enabled, the stop
- * request does not stop: it arms a Track armour? decision and the actual stop
- * runs only on the Yes/No answer. Yes also opens the armour-cost popup after
+ * request does not stop: it arms a Record protection? decision and the actual stop
+ * runs only on the Record/Later answer. Record also opens the armour-cost popup after
  * the stop attempt settles (even a failed stop opens it: the popup anchors to
- * the still-current session); No (or the reminder being disabled wholesale)
+ * the still-current session); Later (or the reminder being disabled wholesale)
  * suppresses it.
  *
  * The stop itself re-reads the snapshot BEFORE capturing the final stats
@@ -61,7 +61,7 @@ export interface PostSessionFlow {
 	readonly stopping: boolean;
 	/** Ask to stop: arms the armour prompt when the reminder is on, else stops. */
 	requestStop(): Promise<void>;
-	/** Answer the armour prompt; Yes opens the armour-cost popup after the stop. */
+	/** Answer the protection prompt; Record opens the cost popup after the stop. */
 	decideArmourTrack(action: 'yes' | 'no'): Promise<void>;
 	/** The armour-cost popup closed: run a clear that was deferred on it. */
 	notifyArmourPopupClosed(): void;

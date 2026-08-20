@@ -116,24 +116,22 @@
 					<Button onclick={scan}>Scan Trade Terminal</Button>
 					<Button variant="secondary" onclick={enterManually}>Enter manually</Button>
 				</div>
-				<p class="text-xs text-warning/90">
-					The Trade Terminal rectangle is provisional. Calibrate it before trusting the OCR result.
-				</p>
 			{:else if mode === 'scanning'}
 				<div class="py-7 text-center text-sm text-text-secondary animate-pulse">Reading the Trade Terminal total...</div>
 			{:else if mode === 'saved'}
-				{#if model.lastOutcome?.reconciliation}
-					{@const reconciliation = model.lastOutcome.reconciliation}
+				{#if model.lastOutcome?.costWindow}
+					{@const window = model.lastOutcome.costWindow}
 					<div class="space-y-2">
 						<p class="text-sm font-medium text-text">
-							{reconciliation.status === 'booked' ? 'Protection cost recorded' : 'Measurement saved for later allocation'}
+							{window.status === 'booked' ? 'Protection cost allocated' : 'Measurement saved without matching evidence'}
 						</p>
 						<div class="grid grid-cols-3 gap-4 border-y border-border/70 py-3">
-							<div><span class="eyebrow block">TT consumed</span><span class="tabular-nums text-sm text-text">{reconciliation.consumedTtPed.toFixed(4)} PED</span></div>
-							<div><span class="eyebrow block">Markup basis</span><span class="tabular-nums text-sm text-text">{reconciliation.markupPercent.toFixed(2)}%</span></div>
-							<div><span class="eyebrow block">Cost</span><span class="tabular-nums text-sm font-semibold text-accent">{reconciliation.costPed.toFixed(4)} PED</span></div>
+							<div><span class="eyebrow block">TT consumed</span><span class="tabular-nums text-sm text-text">{window.consumedTtPed?.toFixed(4)} PED</span></div>
+							<div><span class="eyebrow block">Markup basis</span><span class="tabular-nums text-sm text-text">{window.markupPercent?.toFixed(2)}%</span></div>
+							<div><span class="eyebrow block">Cost</span><span class="tabular-nums text-sm font-semibold text-accent">{window.costPed.toFixed(4)} PED</span></div>
 						</div>
-						{#if reconciliation.reason}<p class="text-xs text-warning">{reconciliation.reason}</p>{/if}
+						{#if window.allocations.length > 0}<p class="text-xs text-text-tertiary">Spread across {window.allocations.length} {window.allocations.length === 1 ? 'session' : 'sessions'} using recorded incoming damage.</p>{/if}
+						{#if window.reason}<p class="text-xs text-warning">{window.reason}</p>{/if}
 					</div>
 				{:else}
 					<div>

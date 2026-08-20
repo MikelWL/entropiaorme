@@ -302,7 +302,7 @@ describe('overlay popup readiness handshake', () => {
 describe('armour-cost popup', () => {
 	it('hands the popup its state and leaves sizing, placement and reveal to the popup', async () => {
 		render(OverlayPage);
-		const trigger = await screen.findByTitle('Record armour cost');
+		const trigger = await screen.findByTitle('Record repair cost');
 		trigger.click();
 
 		await waitFor(() => {
@@ -325,12 +325,13 @@ describe('armour-cost popup', () => {
 				expect.objectContaining({
 					sessionId: 's1',
 					repairOcrEnabled: false,
+					steps: [expect.objectContaining({ layer: 'combined', method: 'repair' })],
 					anchor: { centerX: expect.any(Number), top: expect.any(Number) },
 				}),
 			);
 		});
 		await waitFor(() => {
-			expect(screen.getByTitle('Record armour cost').getAttribute('aria-expanded')).toBe('true');
+			expect(screen.getByTitle('Record repair cost').getAttribute('aria-expanded')).toBe('true');
 		});
 		// The popup measures its panel and sizes, positions, reveals and
 		// focuses itself from the payload; a host-side reveal would flash the

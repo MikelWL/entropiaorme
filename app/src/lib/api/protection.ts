@@ -1,8 +1,11 @@
 /** Protection setup, selection, and limited-layer observation commands. */
 
+import type { ProtectionLoadoutInput, ProtectionSetInput } from './commands.gen';
 import * as commands from './commands.gen';
 
 export type {
+	ProtectionCostAllocation,
+	ProtectionCostWindow,
 	ProtectionEconomyKind,
 	ProtectionLoadout,
 	ProtectionLoadoutInput,
@@ -13,6 +16,8 @@ export type {
 	ProtectionOverview,
 	ProtectionReconciliation,
 	ProtectionReconciliationStatus,
+	ProtectionRepairInput,
+	ProtectionRepairOutcome,
 	ProtectionScanResult,
 	ProtectionSet,
 	ProtectionSetInput,
@@ -22,10 +27,15 @@ export type {
 
 export const getProtectionOverview = commands.protectionOverview;
 export const createProtectionSet = commands.protectionSetCreate;
+export const updateProtectionSet = (id: string, input: ProtectionSetInput) =>
+	commands.protectionSetUpdate(Number(id), input);
 export const createProtectionLoadout = commands.protectionLoadoutCreate;
+export const updateProtectionLoadout = (id: string, input: ProtectionLoadoutInput) =>
+	commands.protectionLoadoutUpdate(Number(id), input);
 export const archiveProtectionSet = (id: string) => commands.protectionSetArchive(Number(id));
 export const archiveProtectionLoadout = (id: string) =>
 	commands.protectionLoadoutArchive(Number(id));
 export const selectProtectionLoadout = (id: string) => commands.protectionSelect(Number(id));
 export const confirmProtectionObservation = commands.protectionObservationConfirm;
+export const confirmProtectionRepair = commands.protectionRepairConfirm;
 export const scanTradeTerminalValue = commands.protectionTradeTerminalScan;

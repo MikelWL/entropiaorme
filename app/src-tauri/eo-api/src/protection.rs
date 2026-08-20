@@ -6,11 +6,13 @@
 
 use eo_services::protection::{
     ObservationOutcome as ServiceObservationOutcome, ObservationSource as ServiceObservationSource,
+    ProtectionCostAllocation as ServiceCostAllocation, ProtectionCostWindow as ServiceCostWindow,
     ProtectionEconomyKind as ServiceEconomyKind, ProtectionError,
     ProtectionLoadout as ServiceLoadout, ProtectionObservation as ServiceObservation,
     ProtectionOverview as ServiceOverview, ProtectionReconciliation as ServiceReconciliation,
     ProtectionSet as ServiceSet, ProtectionSetKind as ServiceSetKind,
     ProtectionSetRef as ServiceSetRef, ReconciliationStatus as ServiceReconciliationStatus,
+    RepairOutcome as ServiceRepairOutcome,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -102,6 +104,7 @@ pub struct ProtectionObservation {
     pub raw_text: Nullable<String>,
     pub observed_at: f64,
     pub reset_reason: Nullable<String>,
+    pub defence_event_cursor: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -114,6 +117,10 @@ pub struct ProtectionSet {
     pub markup_percent: Nullable<f64>,
     pub latest_observation: Nullable<ProtectionObservation>,
     pub pending_reconciliations: i64,
+    pub basis_locked: bool,
+    pub unsettled_damage: f64,
+    pub unsettled_deflections: i64,
+    pub unsettled_sessions: i64,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -164,6 +171,34 @@ pub struct ProtectionOverview {
     pub loadouts: Vec<ProtectionLoadout>,
     pub active_loadout_id: Nullable<String>,
     pub recent_reconciliations: Vec<ProtectionReconciliation>,
+    pub recent_cost_windows: Vec<ProtectionCostWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectionCostAllocation {
+    pub session_id: String,
+    pub damage_weight: f64,
+    pub deflection_count: i64,
+    pub allocation_share: f64,
+    pub cost_ped: f64,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectionCostWindow {
+    pub id: String,
+    pub kind: String,
+    pub set_id: Nullable<String>,
+    pub armour_set_id: Nullable<String>,
+    pub plate_set_id: Nullable<String>,
+    pub consumed_tt_ped: Nullable<f64>,
+    pub markup_percent: Nullable<f64>,
+    pub cost_ped: f64,
+    pub status: ProtectionReconciliationStatus,
+    pub reason: Nullable<String>,
+    pub created_at: f64,
+    pub allocations: Vec<ProtectionCostAllocation>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -176,6 +211,8 @@ pub struct ProtectionSetInput {
     pub markup_percent: Option<f64>,
 }
 
+pub type ProtectionSetUpdateInput = ProtectionSetInput;
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtectionLoadoutInput {
@@ -185,6 +222,8 @@ pub struct ProtectionLoadoutInput {
     #[serde(default)]
     pub plate_set_id: Option<i64>,
 }
+
+pub type ProtectionLoadoutUpdateInput = ProtectionLoadoutInput;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +243,24 @@ pub struct ProtectionObservationInput {
 pub struct ProtectionObservationOutcome {
     pub observation: ProtectionObservation,
     pub reconciliation: Nullable<ProtectionReconciliation>,
+    pub cost_window: Nullable<ProtectionCostWindow>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectionRepairInput {
+    pub client_token: String,
+    #[serde(default)]
+    pub armour_set_id: Option<i64>,
+    #[serde(default)]
+    pub plate_set_id: Option<i64>,
+    pub cost_ped: f64,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectionRepairOutcome {
+    pub cost_window: ProtectionCostWindow,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -241,12 +298,70 @@ impl Api {
         self.protection_overview().await
     }
 
+    pub async fn protection_set_update(
+        &self,
+        set_id: i64,
+        input: &ProtectionSetUpdateInput,
+    ) -> Result<ProtectionOverview, ApiError> {
+        let overview = self.protection.overview().await.map_err(protection_error)?;
+        let active_uses_set = overview
+            .active_loadout_id
+            .and_then(|active_id| {
+                overview
+                    .loadouts
+                    .iter()
+                    .find(|loadout| loadout.id == active_id)
+            })
+            .is_some_and(|loadout| {
+                loadout.armour.as_ref().is_some_and(|set| set.id == set_id)
+                    || loadout.plates.as_ref().is_some_and(|set| set.id == set_id)
+            });
+        if active_uses_set && self.tracker.is_tracking() {
+            return Err(ApiError::conflict(
+                "Switch protection or stop the session before editing an active set",
+            ));
+        }
+        self.protection
+            .update_set(
+                set_id,
+                &input.name,
+                input.economy_kind.into(),
+                input.markup_percent,
+            )
+            .await
+            .map_err(protection_error)?;
+        self.protection_overview().await
+    }
+
     pub async fn protection_loadout_create(
         &self,
         input: &ProtectionLoadoutInput,
     ) -> Result<ProtectionOverview, ApiError> {
         self.protection
             .create_loadout(&input.name, input.armour_set_id, input.plate_set_id)
+            .await
+            .map_err(protection_error)?;
+        self.protection_overview().await
+    }
+
+    pub async fn protection_loadout_update(
+        &self,
+        loadout_id: i64,
+        input: &ProtectionLoadoutUpdateInput,
+    ) -> Result<ProtectionOverview, ApiError> {
+        let overview = self.protection.overview().await.map_err(protection_error)?;
+        if overview.active_loadout_id == Some(loadout_id) && self.tracker.is_tracking() {
+            return Err(ApiError::conflict(
+                "Switch protection or stop the session before editing the active loadout",
+            ));
+        }
+        self.protection
+            .update_loadout(
+                loadout_id,
+                &input.name,
+                input.armour_set_id,
+                input.plate_set_id,
+            )
             .await
             .map_err(protection_error)?;
         self.protection_overview().await
@@ -267,6 +382,12 @@ impl Api {
         &self,
         loadout_id: i64,
     ) -> Result<ProtectionOverview, ApiError> {
+        let overview = self.protection.overview().await.map_err(protection_error)?;
+        if overview.active_loadout_id == Some(loadout_id) && self.tracker.is_tracking() {
+            return Err(ApiError::conflict(
+                "Switch protection or stop the session before removing the active loadout",
+            ));
+        }
         self.protection
             .archive_loadout(loadout_id)
             .await
@@ -316,6 +437,22 @@ impl Api {
                 input.source.into(),
                 input.raw_text.as_deref(),
                 input.reset_reason.as_deref(),
+            )
+            .await
+            .map(Into::into)
+            .map_err(protection_error)
+    }
+
+    pub async fn protection_repair_confirm(
+        &self,
+        input: &ProtectionRepairInput,
+    ) -> Result<ProtectionRepairOutcome, ApiError> {
+        self.protection
+            .confirm_repair_cost(
+                &input.client_token,
+                input.armour_set_id,
+                input.plate_set_id,
+                input.cost_ped,
             )
             .await
             .map(Into::into)
@@ -372,6 +509,7 @@ impl From<ServiceObservation> for ProtectionObservation {
             raw_text: value.raw_text.into(),
             observed_at: value.observed_at,
             reset_reason: value.reset_reason.into(),
+            defence_event_cursor: value.defence_event_cursor.to_string(),
         }
     }
 }
@@ -386,6 +524,10 @@ impl From<ServiceSet> for ProtectionSet {
             markup_percent: value.markup_percent.into(),
             latest_observation: value.latest_observation.map(Into::into).into(),
             pending_reconciliations: value.pending_reconciliations,
+            basis_locked: value.basis_locked,
+            unsettled_damage: value.unsettled_damage,
+            unsettled_deflections: value.unsettled_deflections,
+            unsettled_sessions: value.unsettled_sessions,
         }
     }
 }
@@ -438,6 +580,49 @@ impl From<ServiceObservationOutcome> for ProtectionObservationOutcome {
         Self {
             observation: value.observation.into(),
             reconciliation: value.reconciliation.map(Into::into).into(),
+            cost_window: value.cost_window.map(Into::into).into(),
+        }
+    }
+}
+
+impl From<ServiceCostAllocation> for ProtectionCostAllocation {
+    fn from(value: ServiceCostAllocation) -> Self {
+        Self {
+            session_id: value.session_id,
+            damage_weight: value.damage_weight,
+            deflection_count: value.deflection_count,
+            allocation_share: value.allocation_share,
+            cost_ped: value.cost_ped,
+        }
+    }
+}
+
+impl From<ServiceCostWindow> for ProtectionCostWindow {
+    fn from(value: ServiceCostWindow) -> Self {
+        Self {
+            id: value.id.to_string(),
+            kind: value.kind,
+            set_id: value.set_id.map(|id| id.to_string()).into(),
+            armour_set_id: value.armour_set_id.map(|id| id.to_string()).into(),
+            plate_set_id: value.plate_set_id.map(|id| id.to_string()).into(),
+            consumed_tt_ped: value.consumed_tt_ped.into(),
+            markup_percent: value.markup_percent.into(),
+            cost_ped: value.cost_ped,
+            status: match value.status {
+                ServiceReconciliationStatus::Booked => ProtectionReconciliationStatus::Booked,
+                ServiceReconciliationStatus::Pending => ProtectionReconciliationStatus::Pending,
+            },
+            reason: value.reason.into(),
+            created_at: value.created_at,
+            allocations: value.allocations.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ServiceRepairOutcome> for ProtectionRepairOutcome {
+    fn from(value: ServiceRepairOutcome) -> Self {
+        Self {
+            cost_window: value.cost_window.into(),
         }
     }
 }
@@ -450,6 +635,11 @@ impl From<ServiceOverview> for ProtectionOverview {
             active_loadout_id: value.active_loadout_id.map(|id| id.to_string()).into(),
             recent_reconciliations: value
                 .recent_reconciliations
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            recent_cost_windows: value
+                .recent_cost_windows
                 .into_iter()
                 .map(Into::into)
                 .collect(),

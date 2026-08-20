@@ -28,6 +28,14 @@ pub(super) struct Accumulator {
     pub(super) tool_stats: Vec<(String, ToolStats)>,
 }
 
+struct DefenceEvidence {
+    session_id: String,
+    context_id: Option<i64>,
+    protection_interval_id: Option<i64>,
+    damage: Option<f64>,
+    deflected: bool,
+}
+
 impl Accumulator {
     pub(super) fn reset(&mut self) {
         *self = Accumulator::default();
@@ -199,7 +207,7 @@ impl TrackerActor {
         // on a real mutation, so a duplicate self-heal tick or an
         // unhandled combat kind does not wake listeners for a no-op.
         let mut mutated = false;
-        let mut defence: Option<(String, Option<i64>, Option<i64>, Option<f64>, bool)> = None;
+        let mut defence: Option<DefenceEvidence> = None;
 
         match payload {
             CombatPayload::DamageDealt { amount, .. } => {
@@ -218,16 +226,16 @@ impl TrackerActor {
             }
             CombatPayload::DamageReceived { amount, .. } => {
                 active.accumulator.damage_taken += amount;
-                defence = Some((
-                    active.session.id.clone(),
-                    active.intervals.context_id(),
-                    active
+                defence = Some(DefenceEvidence {
+                    session_id: active.session.id.clone(),
+                    context_id: active.intervals.context_id(),
+                    protection_interval_id: active
                         .intervals
                         .open_of_kind(super::IntervalKind::Protection)
                         .map(|interval| interval.id),
-                    Some(*amount),
-                    false,
-                ));
+                    damage: Some(*amount),
+                    deflected: false,
+                });
                 mutated = true;
             }
             CombatPayload::SelfHeal { amount, timestamp } => {
@@ -268,24 +276,23 @@ impl TrackerActor {
             | CombatPayload::PlayerJam { .. }
             | CombatPayload::MobMiss { .. } => {}
             CombatPayload::Deflect { .. } => {
-                defence = Some((
-                    active.session.id.clone(),
-                    active.intervals.context_id(),
-                    active
+                defence = Some(DefenceEvidence {
+                    session_id: active.session.id.clone(),
+                    context_id: active.intervals.context_id(),
+                    protection_interval_id: active
                         .intervals
                         .open_of_kind(super::IntervalKind::Protection)
                         .map(|interval| interval.id),
-                    None,
-                    true,
-                ));
-                mutated = true;
+                    damage: None,
+                    deflected: true,
+                });
             }
         }
 
         if mutated {
             active.dirty = true;
         }
-        if let Some((session_id, context_id, protection_interval_id, damage, deflected)) = defence {
+        if let Some(defence) = defence {
             let stored = db
                 .with_writer(move |conn| {
                     conn.execute(
@@ -293,11 +300,11 @@ impl TrackerActor {
                          (session_id, context_id, protection_interval_id, damage, deflected) \
                          VALUES (?1, ?2, ?3, ?4, ?5)",
                         rusqlite::params![
-                            session_id,
-                            context_id,
-                            protection_interval_id,
-                            damage,
-                            deflected as i64
+                            defence.session_id,
+                            defence.context_id,
+                            defence.protection_interval_id,
+                            defence.damage,
+                            defence.deflected as i64
                         ],
                     )?;
                     Ok(())

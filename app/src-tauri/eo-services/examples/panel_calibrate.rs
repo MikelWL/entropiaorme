@@ -408,16 +408,26 @@ fn main() {
         std::process::exit(1);
     }
     eprintln!();
-    eprintln!(
-        "Wrote {} fields to {}",
-        anchor.cells.len(),
-        options.out.display()
-    );
+    match options.panel {
+        PanelKind::SaleWindow => eprintln!(
+            "Wrote {} fields to {}",
+            anchor.cells.len(),
+            options.out.display()
+        ),
+        PanelKind::TradeTerminal => eprintln!(
+            "Wrote the Trade Terminal total-value rectangle to {}",
+            options.out.display()
+        ),
+    }
 
     // Read the file back through the loader the app uses, so what was
     // written is confirmed to be what the app will see.
     let presets = ScanPresets::new(&options.out);
-    if presets.sale_window != anchor {
+    let loaded = match options.panel {
+        PanelKind::SaleWindow => presets.sale_window,
+        PanelKind::TradeTerminal => presets.trade_terminal,
+    };
+    if loaded != anchor {
         eprintln!("calibrate: the file did not read back as recorded");
         std::process::exit(1);
     }

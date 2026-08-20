@@ -18,6 +18,11 @@
 			!model.loadoutPlateId &&
 			model.loadoutName.trim().toLowerCase() !== 'no protection'),
 	);
+	const editingSet = $derived(
+		model.editingSetId
+			? (model.overview.sets.find((set) => set.id === model.editingSetId) ?? null)
+			: null,
+	);
 
 	function basis(set: ProtectionSet): string {
 		return set.economyKind === 'limited'
@@ -99,6 +104,10 @@
 							</div>
 							{#if loadout.armour}<Badge>{loadout.armour.economyKind === 'limited' ? 'Armour L' : 'Armour UL'}</Badge>{/if}
 							{#if loadout.plates}<Badge>{loadout.plates.economyKind === 'limited' ? 'Plates L' : 'Plates UL'}</Badge>{/if}
+							<div class="flex items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+								<Button variant="ghost" size="sm" onclick={() => model.editLoadout(loadout.id)}>Edit</Button>
+								<Button variant="ghost" size="sm" class="text-error" onclick={() => model.askRemoveLoadout(loadout.id)}>Remove</Button>
+							</div>
 						</div>
 					{/each}
 				</div>
@@ -123,7 +132,10 @@
 											<Badge variant={set.economyKind === 'limited' ? 'accent' : 'neutral'}>{set.economyKind === 'limited' ? 'L' : 'UL'}</Badge>
 											{#if set.pendingReconciliations > 0}<Badge variant="warning">{set.pendingReconciliations} pending</Badge>{/if}
 										</div>
-										<p class="mt-0.5 text-xs text-text-tertiary">{basis(set)}</p>
+									<p class="mt-0.5 text-xs text-text-tertiary">{basis(set)}</p>
+									{#if set.unsettledSessions > 0}
+										<p class="mt-1 text-[10px] tabular-nums text-warning">Awaiting cost: {set.unsettledDamage.toFixed(1)} damage{set.unsettledDeflections > 0 ? ` + ${set.unsettledDeflections} deflected` : ''} across {set.unsettledSessions} {set.unsettledSessions === 1 ? 'session' : 'sessions'}</p>
+									{/if}
 									</div>
 									{#if set.latestObservation}
 										<div class="text-right shrink-0">
@@ -136,6 +148,10 @@
 									{:else}
 										<span class="max-w-28 text-right text-[10px] leading-tight text-text-tertiary">Record repair TT from the overlay</span>
 									{/if}
+									<div class="flex items-center gap-1">
+										<Button variant="ghost" size="sm" onclick={() => model.editSet(set)}>Edit</Button>
+										<Button variant="ghost" size="sm" class="text-error" onclick={() => model.askRemoveSet(set)}>Remove</Button>
+									</div>
 								</div>
 							{/each}
 						</div>
@@ -144,18 +160,18 @@
 			{/each}
 		</div>
 
-		{#if model.overview.recentReconciliations.length > 0}
+		{#if model.overview.recentCostWindows.length > 0}
 			<Divider />
 			<section aria-labelledby="protection-history-heading">
-				<h3 id="protection-history-heading" class="text-sm font-semibold text-text mb-3">Recent measurements</h3>
+				<h3 id="protection-history-heading" class="text-sm font-semibold text-text mb-3">Recent protection costs</h3>
 				<div class="divide-y divide-border/60 border-y border-border/70">
-					{#each model.overview.recentReconciliations as reconciliation (reconciliation.id)}
-						{@const set = model.overview.sets.find((candidate) => candidate.id === reconciliation.setId)}
+					{#each model.overview.recentCostWindows as window (window.id)}
+						{@const set = model.overview.sets.find((candidate) => candidate.id === window.setId)}
 						<div class="grid grid-cols-[minmax(0,1fr)_100px_110px_100px] items-center gap-4 py-2.5 text-xs">
-							<div class="min-w-0"><span class="font-medium text-text">{set?.name ?? 'Archived set'}</span><div class="truncate text-text-tertiary">{reconciliation.reason ?? `Session ${reconciliation.sessionId}`}</div></div>
-							<div class="tabular-nums text-text-secondary">{reconciliation.consumedTtPed.toFixed(4)} TT</div>
-							<div class="tabular-nums font-medium text-text">{reconciliation.costPed.toFixed(4)} PED</div>
-							<div class="text-right"><Badge variant={reconciliation.status === 'booked' ? 'positive' : 'warning'}>{reconciliation.status === 'booked' ? 'Recorded' : 'Pending'}</Badge></div>
+							<div class="min-w-0"><span class="font-medium text-text">{set?.name ?? (window.kind === 'repair' ? 'Repair cost' : 'Archived set')}</span><div class="truncate text-text-tertiary">{window.reason ?? `Allocated across ${window.allocations.length} ${window.allocations.length === 1 ? 'session' : 'sessions'}`}</div></div>
+							<div class="tabular-nums text-text-secondary">{window.consumedTtPed === null ? 'Repair' : `${window.consumedTtPed.toFixed(4)} TT`}</div>
+							<div class="tabular-nums font-medium text-text">{window.costPed.toFixed(4)} PED</div>
+							<div class="text-right"><Badge variant={window.status === 'booked' ? 'positive' : 'warning'}>{window.status === 'booked' ? 'Allocated' : 'Pending'}</Badge></div>
 						</div>
 					{/each}
 				</div>
@@ -164,23 +180,24 @@
 	{/if}
 </div>
 
-<Modal bind:open={model.setModalOpen} title={`Add ${model.setKind === 'armour' ? 'armour' : 'plate'} set`}>
+<Modal bind:open={model.setModalOpen} title={`${model.editingSetId ? 'Edit' : 'Add'} ${model.setKind === 'armour' ? 'armour' : 'plate'} set`}>
 	<div class="space-y-5">
 		<div><label for="protection-set-name" class="block eyebrow mb-1.5">Set name</label><Input id="protection-set-name" bind:value={model.setName} placeholder={model.setKind === 'armour' ? 'Viceroy' : '5B plates'} /></div>
 		<div>
 			<span class="block eyebrow mb-1.5">Item type</span>
-			<SegmentedControl options={[{ id: 'limited', label: 'Limited' }, { id: 'unlimited', label: 'Unlimited' }]} active={model.setEconomyKind} onchange={(id) => (model.setEconomyKind = id as 'limited' | 'unlimited')} />
+			<SegmentedControl options={[{ id: 'limited', label: 'Limited', disabled: editingSet?.basisLocked === true }, { id: 'unlimited', label: 'Unlimited', disabled: editingSet?.basisLocked === true }]} active={model.setEconomyKind} onchange={(id) => (model.setEconomyKind = id as 'limited' | 'unlimited')} />
+			{#if editingSet?.basisLocked}<p class="mt-1.5 text-xs text-text-tertiary">The economic basis is fixed after the set's first observation or recorded use.</p>{/if}
 		</div>
 		{#if model.setEconomyKind === 'limited'}
-			<div><label for="protection-set-markup" class="block eyebrow mb-1.5">Average acquisition markup</label><div class="flex items-center gap-2"><Input id="protection-set-markup" bind:value={model.setMarkup} type="number" min={100} step="0.01" class="max-w-32" /><span class="text-sm text-text-tertiary">%</span></div><p class="mt-1.5 text-xs text-text-tertiary">Use the TT-weighted average paid across all seven pieces. This is intentionally approximate.</p></div>
+			<div><label for="protection-set-markup" class="block eyebrow mb-1.5">Average acquisition markup</label><div class="flex items-center gap-2"><Input id="protection-set-markup" bind:value={model.setMarkup} type="number" min={100} step="0.01" disabled={editingSet?.basisLocked === true} class="max-w-32" /><span class="text-sm text-text-tertiary">%</span></div><p class="mt-1.5 text-xs text-text-tertiary">Use the TT-weighted average paid across all seven pieces. This is intentionally approximate.</p></div>
 		{:else}
 			<p class="border-l-2 border-border-bright pl-3 text-xs text-text-secondary">Unlimited protection is costed from raw TT repair cost. Purchase markup remains durable capital.</p>
 		{/if}
-		<div class="flex justify-end gap-2"><Button variant="secondary" onclick={() => (model.setModalOpen = false)}>Cancel</Button><Button onclick={model.saveSet} disabled={setSaveDisabled} loading={model.saving}>Add set</Button></div>
+		<div class="flex justify-end gap-2"><Button variant="secondary" onclick={() => (model.setModalOpen = false)}>Cancel</Button><Button onclick={model.saveSet} disabled={setSaveDisabled} loading={model.saving}>{model.editingSetId ? 'Save changes' : 'Add set'}</Button></div>
 	</div>
 </Modal>
 
-<Modal bind:open={model.loadoutModalOpen} title="New protection loadout">
+<Modal bind:open={model.loadoutModalOpen} title={model.editingLoadoutId ? 'Edit protection loadout' : 'New protection loadout'}>
 	<div class="space-y-5">
 		<div><label for="protection-loadout-name" class="block eyebrow mb-1.5">Loadout name</label><Input id="protection-loadout-name" bind:value={model.loadoutName} placeholder="L armour + 5B" /></div>
 		<div class="grid grid-cols-2 gap-4">
@@ -188,8 +205,25 @@
 			<div><label for="protection-loadout-plates" class="block eyebrow mb-1.5">Plates</label><Select id="protection-loadout-plates" bind:value={model.loadoutPlateId}><option value="">None</option>{#each model.plateSets as set}<option value={set.id}>{set.name} ({set.economyKind === 'limited' ? 'L' : 'UL'})</option>{/each}</Select></div>
 		</div>
 		{#if !model.loadoutArmourId && !model.loadoutPlateId}<p class="text-xs text-text-tertiary">An empty loadout is explicit evidence of unprotected play and must be named “No protection”.</p>{/if}
-		<div class="flex justify-end gap-2"><Button variant="secondary" onclick={() => (model.loadoutModalOpen = false)}>Cancel</Button><Button onclick={model.saveLoadout} disabled={loadoutSaveDisabled} loading={model.saving}>Create loadout</Button></div>
+		<div class="flex justify-end gap-2"><Button variant="secondary" onclick={() => (model.loadoutModalOpen = false)}>Cancel</Button><Button onclick={model.saveLoadout} disabled={loadoutSaveDisabled} loading={model.saving}>{model.editingLoadoutId ? 'Save changes' : 'Create loadout'}</Button></div>
 	</div>
+</Modal>
+
+<Modal bind:open={model.removalModalOpen} title={`Remove ${model.removalTarget?.kind === 'set' ? 'protection set' : 'loadout'}`}>
+	{#if model.removalTarget}
+		<div class="space-y-5">
+			<p class="text-sm text-text-secondary">
+				Remove <span class="font-medium text-text">{model.removalTarget.name}</span> from the available protection choices? Recorded sessions and measurements keep their historical identity.
+			</p>
+			{#if model.removalTarget.kind === 'set'}
+				<p class="border-l-2 border-warning pl-3 text-xs text-text-secondary">A set can only be removed after every loadout using it has been edited or removed.</p>
+			{/if}
+			<div class="flex justify-end gap-2">
+				<Button variant="secondary" onclick={() => (model.removalModalOpen = false)} disabled={model.saving}>Cancel</Button>
+				<Button variant="danger" onclick={model.confirmRemoval} loading={model.saving}>Remove</Button>
+			</div>
+		</div>
+	{/if}
 </Modal>
 
 <ProtectionObservationModal {model} />

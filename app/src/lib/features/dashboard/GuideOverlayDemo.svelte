@@ -83,8 +83,8 @@
 {/if}
 
 <!--
-	Guide-only: fake armour-cost popup. Mirrors RepairCostPanel's initial
-	state (label + Record + Enter manually) styled to match the OverlayStrip's
+	Guide-only: fake protection-cost popup. Mirrors ProtectionCostPanel's
+	legacy unlimited step styled to match the OverlayStrip's
 	glassmorphic look. Positioned dynamically below the strip's Cost
 	button via syncArmourPopupPosition(). pointer-events-none on the
 	wrapper so the live cursor never interacts with the stand-in;
@@ -106,12 +106,12 @@
 				<span class="text-xs text-white/60 shrink-0">Cost recorded:</span>
 				<span class="text-sm font-semibold text-emerald-400 tabular-nums">1.23 PED</span>
 			{:else}
-				<span class="text-xs text-white/50 shrink-0">Armour cost:</span>
+				<span class="text-xs text-white/50 shrink-0">Armour + plates:</span>
 				<button
 					type="button"
 					class="fake-armour-record-btn"
 					data-guide-anchor="overlay-armour-record-btn"
-				>Record</button>
+				>Scan Repair Terminal</button>
 				<button type="button" class="fake-armour-manual-btn">Enter manually</button>
 			{/if}
 		</div>

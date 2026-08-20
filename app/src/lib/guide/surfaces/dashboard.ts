@@ -23,8 +23,8 @@ type DashboardDemoApi = {
 	 */
 	setOverlayDemoTrackingStarted(started: boolean): void;
 	/**
-	 * Toggle the guide-only fake armour-cost popup that mirrors
-	 * RepairCostPanel's initial state (label + Record + Close). Real
+	 * Toggle the guide-only fake protection-cost popup that mirrors
+	 * ProtectionCostPanel's initial legacy step. Real
 	 * popup lives in a separate Tauri webview window which the inline
 	 * dashboard strip cannot reach, so the guide renders a styled
 	 * stand-in positioned below the strip's Cost button. Setting to
@@ -34,7 +34,7 @@ type DashboardDemoApi = {
 	 */
 	setOverlayArmourPopupVisible(visible: boolean): void;
 	/**
-	 * Flip the popup's body between initial (Record + Close) and the
+	 * Flip the popup's body between initial scan actions and the
 	 * post-record confirmation ("Cost recorded: 1.23 PED"). Fires
 	 * synchronised with the SVG flash so the screen-capture and the
 	 * recorded value read as one beat on screen.
@@ -405,11 +405,11 @@ export const dashboardSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'Armour costs can be added to a session. You can type them in manually, or set up automatic screen capture (OCR) of your repair terminal cost.',
+						text: 'Cost follows the active Protection loadout. Two unlimited layers use one combined repair reading; mixed or limited layers are recorded armour first, then plates.',
 					},
 					{
 						kind: 'p',
-						text: 'Place the repair terminal at the bottom right of the screen and hit Record.',
+						text: 'For an unlimited step, place the requested items in the bottom-right repair terminal and scan or enter the value manually.',
 					},
 					{
 						kind: 'svg',
@@ -440,7 +440,7 @@ export const dashboardSurface: GuideSurface = {
 </svg>`,
 					},
 				],
-				note: 'Note: Enable repair OCR in settings. Cost for (L) armour is work in progress.',
+				note: 'Repair OCR applies to unlimited steps. Limited steps read the calibrated Trade Terminal total.',
 			},
 			async play({ cursor, demoApi }) {
 				// Looped sync: cursor → Cost click → fake popup mounts + SVG

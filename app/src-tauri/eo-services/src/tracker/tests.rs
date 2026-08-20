@@ -2476,6 +2476,44 @@ fn tick_flushed_coalesces_dirty_mutations() {
     }));
     assert_eq!(updated_events(&captured).len(), 1, "only the start event");
 
+    // A deflection is durable protection evidence, but does not move
+    // the live tracking readout and therefore keeps the next tick quiet.
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::Deflect {
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+        timestamp: Some("2026-01-01T00:00:01".into()),
+    }));
+    assert_eq!(
+        updated_events(&captured).len(),
+        1,
+        "deflection is not a tracking mutation"
+    );
+    let evidence = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT session_id, context_id, protection_interval_id, damage, deflected \
+                 FROM protection_defence_events ORDER BY id DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<f64>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )?)
+        }))
+        .unwrap();
+    assert_eq!(evidence.0, session.id);
+    assert!(
+        evidence.1.is_some(),
+        "the active session context is retained"
+    );
+    assert_eq!((evidence.2, evidence.3, evidence.4), (None, None, 1));
+
     // A mutating event then a tick: one update stamped with the
     // tick's own instant.
     rig.bus
