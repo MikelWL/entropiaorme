@@ -2603,6 +2603,35 @@ fn tick_flushed_coalesces_dirty_mutations() {
 }
 
 #[test]
+fn defensive_evidence_failure_surfaces_accounting_degradation() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let captured = rig.capture();
+    rig.wait(tracker.start_session()).unwrap();
+    rig.execute("DROP TABLE protection_defence_events");
+
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::Deflect {
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    rig.bus.publish(&BusEvent::TickFlushed(TickFlushedPayload {
+        timestamp: Some("2026-01-01T00:00:01".into()),
+    }));
+
+    let warnings = rig.probe(&tracker, |actor| {
+        actor.session.active().unwrap().warnings.clone()
+    });
+    assert_eq!(
+        warnings,
+        vec!["Protection accounting degraded: defensive evidence could not be saved"]
+    );
+    assert_eq!(
+        updated_events(&captured).len(),
+        2,
+        "the warning invalidates the live tracking readout"
+    );
+}
+
+#[test]
 fn tool_change_emits_a_direct_overlay_nudge() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());

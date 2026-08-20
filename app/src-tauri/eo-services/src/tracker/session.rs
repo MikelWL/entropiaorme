@@ -68,6 +68,7 @@ pub(super) struct ActiveSession {
     pub(super) heal_cost: Ped,
     pub(super) heal_warning_emitted: bool,
     pub(super) harvest_warning_emitted: bool,
+    pub(super) protection_evidence_warning_emitted: bool,
     pub(super) warnings: Vec<String>,
     /// The declared mob that kills take their stamp from (None: no
     /// declaration; kills stamp "Unknown" with no stamp source).
@@ -103,6 +104,7 @@ impl ActiveSession {
             heal_cost: Ped::ZERO,
             heal_warning_emitted: false,
             harvest_warning_emitted: false,
+            protection_evidence_warning_emitted: false,
             warnings: Vec::new(),
             declared_mob: None,
             facets,

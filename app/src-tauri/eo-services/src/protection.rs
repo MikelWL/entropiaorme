@@ -1267,8 +1267,11 @@ fn read_unsettled_evidence(
         |row| row.get(0),
     )?;
     let cursor = if economy == "limited" {
+        // The first baseline is the evidence horizon. Later resets start new
+        // measurement windows, but must not make older unclaimed defence
+        // disappear from the outstanding-evidence readout.
         conn.query_row(
-            "SELECT COALESCE(MAX(defence_event_cursor), 0) \
+            "SELECT COALESCE(MIN(defence_event_cursor), 0) \
              FROM protection_observations WHERE set_id = ?1",
             [set_id],
             |row| row.get::<_, i64>(0),
@@ -1812,7 +1815,7 @@ mod tests {
     #[tokio::test]
     async fn ambiguous_windows_stay_pending_and_increases_require_a_reset() {
         let (_dir, db, clock, service) = harness().await;
-        let (measured, _) = limited_armour(&service, "Measured armour", 110.0).await;
+        let (measured, measured_loadout) = limited_armour(&service, "Measured armour", 110.0).await;
         let (other, other_loadout) = limited_armour(&service, "Other armour", 120.0).await;
         let opening = service
             .confirm_observation(
@@ -1863,6 +1866,15 @@ mod tests {
             )
             .await;
         assert!(matches!(increase, Err(ProtectionError::Conflict(_))));
+        seed_completed_session(
+            &db,
+            "session-before-reset",
+            &measured_loadout,
+            &measured,
+            opening_at + 5.0,
+            opening_at + 6.0,
+        )
+        .await;
         let reset = service
             .confirm_observation(
                 measured.id,
@@ -1875,6 +1887,14 @@ mod tests {
             .await
             .expect("reset baseline");
         assert!(reset.cost_window.is_none());
+        let overview = service.overview().await.expect("overview after reset");
+        let measured = overview
+            .sets
+            .iter()
+            .find(|candidate| candidate.id == measured.id)
+            .expect("measured set");
+        assert_eq!(measured.unsettled_damage, 100.0);
+        assert_eq!(measured.unsettled_sessions, 1);
     }
 
     #[tokio::test]

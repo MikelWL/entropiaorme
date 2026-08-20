@@ -55,6 +55,7 @@ export function createProtectionModel() {
 	let loadoutPlateId = $state('');
 
 	let observationSet = $state<ProtectionSet | null>(null);
+	let observationToken: string | null = null;
 	let lastOutcome = $state<ProtectionObservationOutcome | null>(null);
 	let removalTarget = $state<
 		{ kind: 'set'; id: string; name: string } | { kind: 'loadout'; id: string; name: string } | null
@@ -233,11 +234,13 @@ export function createProtectionModel() {
 
 	function openObservation(set: ProtectionSet): void {
 		observationSet = set;
+		observationToken = clientToken();
 		lastOutcome = null;
 	}
 
 	function closeObservation(): void {
 		observationSet = null;
+		observationToken = null;
 	}
 
 	async function scan(): Promise<ProtectionScanResult> {
@@ -254,17 +257,23 @@ export function createProtectionModel() {
 		saving = true;
 		error = null;
 		try {
+			if (!observationToken) observationToken = clientToken();
 			const outcome = await confirmProtectionObservation({
 				setId: Number(observationSet.id),
-				clientToken: clientToken(),
+				clientToken: observationToken,
 				ttValuePed: input.valuePed,
 				source: input.source,
 				rawText: input.rawText ?? null,
 				resetReason: input.resetReason ?? null,
 			});
 			lastOutcome = outcome;
-			overview = await getProtectionOverview();
-			observationSet = overview.sets.find((set) => set.id === observationSet?.id) ?? null;
+			observationToken = null;
+			try {
+				overview = await getProtectionOverview();
+				observationSet = overview.sets.find((set) => set.id === observationSet?.id) ?? null;
+			} catch (cause) {
+				error = `TT value recorded, but protection failed to refresh: ${describeError(cause, 'Unknown refresh error')}`;
+			}
 			return outcome;
 		} catch (cause) {
 			error = describeError(cause, 'Failed to record TT value');
@@ -363,7 +372,7 @@ export function createProtectionModel() {
 			return observationSet !== null;
 		},
 		set observationModalOpen(value: boolean) {
-			if (!value) observationSet = null;
+			if (!value) closeObservation();
 		},
 		get lastOutcome() {
 			return lastOutcome;

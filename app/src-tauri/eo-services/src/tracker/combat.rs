@@ -312,6 +312,14 @@ impl TrackerActor {
                 .await;
             if let Err(error) = stored {
                 tracing::error!(target: "eo::tracker", %error, "defensive evidence write failed");
+                if !active.protection_evidence_warning_emitted {
+                    active.warnings.push(
+                        "Protection accounting degraded: defensive evidence could not be saved"
+                            .to_string(),
+                    );
+                    active.protection_evidence_warning_emitted = true;
+                }
+                active.dirty = true;
             }
         }
     }
