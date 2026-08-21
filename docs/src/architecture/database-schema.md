@@ -735,7 +735,7 @@ path uses a global claim. This allows one incoming hit to support both its
 armour and plate cost while preventing either layer from charging that hit
 twice. `protection_cost_allocations` stores the conserved per-session split.
 `protection_cost_context_allocations` stores the finer split over the immutable
-activity contexts within those sessions. Migration `0050` adds `hit_count` to
+activity contexts within those sessions. Migration `0052` adds `hit_count` to
 both allocation tables: every defensive event is one equal-weight hit, whether
 the game reported numeric damage or a deflection. Damage and deflection totals
 remain raw evidence but do not estimate absorbed damage. The migration

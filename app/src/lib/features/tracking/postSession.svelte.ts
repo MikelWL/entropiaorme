@@ -3,7 +3,7 @@
  * the user asking to stop and the post-session readout clearing.
  *
  * One prompt: when the end-of-session armour reminder is enabled, the stop
- * request does not stop: it arms a Record protection? decision and the actual stop
+ * request does not stop: it arms a Record armour costs? decision and the actual stop
  * runs only on the Record/Later answer. Record opens the armour-cost popup after
  * the stop settles. For a session that opted out of segment declarations, Later
  * still captures the whole-session setup so a later reading has an identity to
