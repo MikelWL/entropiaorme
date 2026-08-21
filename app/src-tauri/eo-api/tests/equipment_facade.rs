@@ -31,6 +31,11 @@ fn write_snapshot(dir: &Path) {
     )
     .unwrap();
     std::fs::write(
+        dir.join("medical_tools.json"),
+        r#"[{"id": "h1", "name": "Restoration Chip", "uses_per_minute": 60, "mindforce": {"cooldown": 3.75}, "min_heal": 25, "max_heal": 30, "economy": {"decay": 1}}]"#,
+    )
+    .unwrap();
+    std::fs::write(
         dir.join("weapon_amplifiers.json"),
         r#"[{"id": "a1", "name": "Mayhem MF-Amplifier Delta (L)", "lifesteal_percent": 2.0, "economy": {"decay": 0.1, "ammo_burn": 0}}]"#,
     )
@@ -139,6 +144,13 @@ async fn search_gates_and_hits_match_the_route_behaviour() {
         .await
         .unwrap();
     assert!(hits.is_empty());
+
+    let hits = api
+        .equipment_search("restoration", SearchKind::Healer)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].reload_seconds, Some(3.75));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

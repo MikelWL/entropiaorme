@@ -13,9 +13,9 @@ use super::actor::TrackerActor;
 use super::time::{epoch_to_instant, local_isoformat};
 
 impl TrackerActor {
-    /// Close sessions left open by a crash: end at the latest kill
-    /// (or the start), write the ledger gains and the summary, and
-    /// clear the active flag.
+    /// Close sessions left open by a crash: end at the latest kill or
+    /// healing output (or the start), write the ledger gains and the
+    /// summary, and clear the active flag.
     pub(super) async fn recover_orphaned_sessions(&self) -> Result<(), DbError> {
         {
             let rows: Vec<(String, f64)> = self

@@ -348,7 +348,8 @@
 				<h3 class="eyebrow">Healing evidence</h3>
 				<div class="text-xs text-text-tertiary">
 					{detail.healing.activationCount} paid activation{detail.healing.activationCount === 1 ? '' : 's'} ·
-					{detail.healing.passiveOutputs} passive · {detail.healing.effectOutputs} effect ·
+					{detail.healing.directOutputs} direct · {detail.healing.passiveOutputs} passive ·
+					{detail.healing.effectOutputs} effect ·
 					{detail.healing.unattributedOutputs} unresolved
 				</div>
 			</div>

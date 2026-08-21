@@ -185,6 +185,8 @@ impl TrackerActor {
         match payload.item_kind {
             HotbarItemKind::Healing => {
                 let Some(profile) = payload.healing_profile.clone() else {
+                    close_healing_intent(&mut active.healing, payload.occurred_at);
+                    active.healing.recent_intent = None;
                     return;
                 };
                 active.healing.intent = Some(intent_from_payload(payload, profile));
@@ -372,8 +374,13 @@ impl TrackerActor {
         match decision {
             HealingDecision::Activation { session_id, write } => {
                 let profile_json = serde_json::to_string(&write.intent.profile)
-                    .unwrap_or_else(|_| "{}".to_string());
-                let effect = write.effect.clone();
+                    .expect("a healing profile always serialises");
+                let classification =
+                    if write.effect.is_some() && !write.intent.profile.mode.has_direct() {
+                        "effect"
+                    } else {
+                        "direct"
+                    };
                 let db_write = write.clone();
                 let sid = session_id.clone();
                 let stored = self
@@ -437,12 +444,8 @@ impl TrackerActor {
                                  classification = ?, reason = ? WHERE id = ? AND session_id = ?",
                                 rusqlite::params![
                                     db_write.activation_id,
-                                    effect.as_ref().map(|window| window.id.as_str()),
-                                    if effect.is_some() && !db_write.intent.profile.mode.has_direct() {
-                                        "effect"
-                                    } else {
-                                        "direct"
-                                    },
+                                    db_write.effect.as_ref().map(|window| window.id.as_str()),
+                                    classification,
                                     "reconciled with an earlier hotbar occurrence",
                                     db_write.output_id,
                                     sid,
@@ -458,16 +461,12 @@ impl TrackerActor {
                                     db_write.output_id,
                                     sid,
                                     db_write.activation_id,
-                                    effect.as_ref().map(|window| window.id.as_str()),
+                                    db_write.effect.as_ref().map(|window| window.id.as_str()),
                                     db_write.context_id,
                                     db_write.observed_at,
                                     db_write.chat_timestamp,
                                     db_write.amount,
-                                    if effect.is_some() && !db_write.intent.profile.mode.has_direct() {
-                                        "effect"
-                                    } else {
-                                        "direct"
-                                    },
+                                    classification,
                                     "confirmed a paid healing activation",
                                 ],
                             )?;
@@ -488,7 +487,7 @@ impl TrackerActor {
                             .last_activation
                             .insert(write.intent.equipment_id, write.observed_at);
                         active.healing.activation_count += 1;
-                        if write.effect.is_some() && !write.intent.profile.mode.has_direct() {
+                        if classification == "effect" {
                             active.healing.effect_output_count += 1;
                         } else {
                             active.healing.direct_output_count += 1;

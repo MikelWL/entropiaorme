@@ -387,11 +387,8 @@ fn search_hit(row: &Value) -> EquipmentSearchHit {
         is_limited: is_limited(entity),
         heal_min: entity.get("min_heal").and_then(Value::as_f64).into(),
         heal_max: entity.get("max_heal").and_then(Value::as_f64).into(),
-        reload_seconds: entity
-            .get("uses_per_minute")
-            .and_then(Value::as_f64)
-            .filter(|uses| *uses > 0.0)
-            .map(|uses| round_half_even(60.0 / uses, 2))
+        reload_seconds: (row["endpoint"].as_str() == Some("medical_tools"))
+            .then(|| round_half_even(heal_reload_seconds(entity), 2))
             .into(),
         lifesteal_percent: entity
             .get("lifesteal_percent")

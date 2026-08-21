@@ -458,6 +458,8 @@ export function createLibraryModel() {
 					? await updateLibrary(editingEquipmentId, payload)
 					: await addToLibrary(payload);
 				replaceEquipment(item);
+				showAddModal = false;
+				editingEquipmentId = null;
 				detailCache[item.id] = await getEquipmentDetail(item.id);
 			} else if (addType === 'tool') {
 				const tool = toolPicker.selected;

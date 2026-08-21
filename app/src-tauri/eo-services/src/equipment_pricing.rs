@@ -111,6 +111,7 @@ pub fn lifesteal_percent_from_props(properties_json: &str) -> Option<f64> {
         .into_iter()
         .filter_map(|key| props.get(key))
         .filter_map(|entity| entity.get("lifesteal_percent").and_then(Value::as_f64))
+        .filter(|value| value.is_finite() && *value > 0.0)
         .sum();
     (total > 0.0).then_some(total)
 }
@@ -136,6 +137,7 @@ pub fn lifesteal_percent_from_props_with_catalog(
                 .get(entity_key)
                 .and_then(|entity| entity.get("lifesteal_percent"))
                 .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
                 .or_else(|| {
                     props
                         .get(id_key)
@@ -143,6 +145,7 @@ pub fn lifesteal_percent_from_props_with_catalog(
                         .and_then(|id| game_data.find_entity(endpoint, id))
                         .and_then(|entity| entity.get("lifesteal_percent"))
                         .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite() && *value > 0.0)
                 })
         })
         .sum();
@@ -309,6 +312,21 @@ mod tests {
         assert_eq!(
             lifesteal_percent_from_props_with_catalog(&stored_override.to_string(), &catalogue),
             Some(3.0)
+        );
+
+        let stale_values = json!({
+            "weapon_catalog_id": "chip-15",
+            "weapon_entity": {"id": "chip-15", "lifesteal_percent": 0.0},
+            "amp_catalog_id": "delta",
+            "amp_entity": {"id": "delta", "lifesteal_percent": -2.0}
+        });
+        assert_eq!(
+            lifesteal_percent_from_props_with_catalog(&stale_values.to_string(), &catalogue),
+            Some(5.0)
+        );
+        assert_eq!(
+            lifesteal_percent_from_props(&stale_values.to_string()),
+            None
         );
     }
 

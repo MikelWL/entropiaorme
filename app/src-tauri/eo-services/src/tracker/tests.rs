@@ -1435,6 +1435,49 @@ fn healing_cost_requires_compatible_intent_and_respects_cooldown() {
 }
 
 #[test]
+fn an_unprofiled_healer_press_invalidates_the_previous_activation_candidate() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        7,
+        "FAP",
+        0.03,
+        5.0,
+        now,
+        HealingProfile {
+            direct_min: Some(8.0),
+            direct_max: Some(12.0),
+            ..HealingProfile::default()
+        },
+    ));
+    rig.bus
+        .publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+            slot: "9".into(),
+            occurred_at: now + 0.1,
+            equipment_id: 9,
+            item_name: "Unprofiled healer".into(),
+            item_kind: HotbarItemKind::Healing,
+            cost_per_use_ped: 0.05,
+            reload_seconds: 3.0,
+            healing_profile: None,
+            lifesteal_percent: None,
+        }));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped::ZERO);
+        assert_eq!(active.healing.activation_count, 0);
+        assert_eq!(active.healing.unattributed_output_count, 1);
+    });
+}
+
+#[test]
 fn rapid_healer_activation_survives_the_switch_back_to_a_lifesteal_weapon() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());

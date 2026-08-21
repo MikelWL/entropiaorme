@@ -180,6 +180,42 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 		healingProfile: null,
 		lifestealPercent: null,
 	},
+	'4': {
+		id: '4',
+		type: 'healing',
+		weapon: {
+			catalogId: 'vivo-t1',
+			name: 'Vivo T1',
+			decay: 0.18,
+			ammoBurn: 0,
+			markupPercent: 100,
+			isLimited: false,
+			damageEnhancers: 0,
+		},
+		amplifier: null,
+		scope: null,
+		absorber: null,
+		implant: null,
+		costBreakdown: [
+			{
+				component: 'Vivo T1 decay',
+				costPec: 0.18,
+				markupMultiplier: 1,
+				effectiveCostPec: 0.18,
+			},
+		],
+		totalCostPerUse: 0.18,
+		healingProfile: {
+			mode: 'direct',
+			directMin: 8,
+			directMax: 10,
+			effectDurationSeconds: null,
+			tickMin: null,
+			tickMax: null,
+			tickSeconds: null,
+		},
+		lifestealPercent: null,
+	},
 };
 
 export const equipmentDemoTrifecta: TrifectaSettings = {
