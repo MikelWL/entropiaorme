@@ -74,7 +74,7 @@ Every backend operation is a typed command dispatched into `eo-api::Api`; a comm
 | Tracking (producer) | `start`; `stop`; `manual-mob-suggestions`; `release-mob`, `manual-mob-lock`, `session-config`, `definition-select`; activity `activate`, `deactivate` (one pair over quest stretches and player-named segments alike) |
 | Session definitions | definitions list (active only or including archived definitions), create, update, Archive, and Restore: each definition keeps its authored activity roster and recorded instances throughout the lifecycle; active rosters feed the overlay's Activities control, while archived definitions remain available to Review |
 | Tracking (session edits) | session `reassign` between active definitions, `rename-mob`, `restore-mob`, the loot-item flip, `armour-cost`, `repair-scan`, and session delete |
-| Protection | overview; set and loadout create/update/archive; live loadout select; limited-set observation confirm; Trade Terminal value scan |
+| Protection | overview; set and loadout create/update/archive; live loadout select; limited-set observation confirm; unlimited repair confirm; Trade Terminal value scan |
 | Scan | skills `status`; `start`, `capture`, `cancel`, `undo`, `process`, `accept`, `reject`; skills capture read by page; skills `pending`; `spacebar-capture` |
 | Maps | planet-map catalogue and coordinate scan; pin list/viewport/nearby/create/update/delete; named map list/create/rename/delete; coordinate calibration start/cancel/status; navigation snapshot/start/update/mark-visited/skip/resolve-harvest/undo/end; radar calibration start/cancel/status/geometry |
 | Settings | settings read/patch; overlay-position read/update |
