@@ -433,15 +433,23 @@ mod tests {
         })
     }
 
-    fn drain_resolutions(rig: &Rig) {
-        // The resolve worker is asynchronous; give it a moment to
-        // drain (bounded, not timing-sensitive: the queue is tiny).
-        for _ in 0..50 {
+    fn wait_for_intents(rig: &Rig, expected: usize) {
+        // The resolve worker is asynchronous. Wait for the observable
+        // publication boundary rather than assuming the queue's speed.
+        for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(10));
-            if !rig.stream.lock().unwrap().is_empty() {
-                break;
+            let count = rig
+                .stream
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(topic, _)| *topic == Topic::HotbarIntent)
+                .count();
+            if count >= expected {
+                return;
             }
         }
+        panic!("timed out waiting for {expected} hotbar intents");
     }
 
     /// Captures the message + `attached` field of each `eo::input` event,
@@ -501,7 +509,7 @@ mod tests {
                     session_id: "s1".into(),
                 }));
             rig.source.inject("1", now(), KeystrokeKind::Press);
-            drain_resolutions(&rig);
+            wait_for_intents(&rig, 1);
             rig.listener.stop();
         });
         let events = captured.lock().unwrap();
@@ -562,10 +570,11 @@ mod tests {
             }));
 
         rig.source.inject("1", now(), KeystrokeKind::Press);
-        drain_resolutions(&rig);
+        wait_for_intents(&rig, 1);
         rig.source.inject("2", now(), KeystrokeKind::Press);
         rig.source.inject("3", now(), KeystrokeKind::Press);
         rig.source.inject("9", now(), KeystrokeKind::Press);
+        wait_for_intents(&rig, 3);
         rig.listener.stop();
 
         let stream = rig.stream.lock().unwrap();
