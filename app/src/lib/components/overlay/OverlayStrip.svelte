@@ -6,10 +6,7 @@
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
-	import {
-		buildProtectionCostSteps,
-		protectionCostActionLabel,
-	} from '$lib/features/protection/protectionCostFlow';
+	import { protectionCostAction } from '$lib/features/protection/protectionCostFlow';
 
 	type LastSessionStats = { cost: number; returns: number; pes: number; net: number };
 
@@ -150,8 +147,9 @@
 	const activeProtection = $derived(
 		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
-	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
-	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
+	const costAction = $derived(
+		protectionCostAction(protection, data.trackProtectionBySegment !== false),
+	);
 	const trackingWarnings = $derived(data.warnings ?? []);
 
 	function formatElapsed(seconds: number): string {
@@ -543,16 +541,16 @@
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
 					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-						{armourSessionId && protectionCostSteps.length > 0
+						{armourSessionId && costAction.enabled
 							? armourCostOpen
 								? 'bg-accent/20 border-accent/40 text-accent'
 								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
 							: 'bg-white/5 border-white/10 text-white/20 cursor-not-allowed'}"
-					disabled={!armourSessionId || protectionCostSteps.length === 0}
+					disabled={!armourSessionId || !costAction.enabled}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}
 					onclick={onArmourCostToggle}
-					title={armourSessionId ? protectionCostTitle : 'Start or stop a session to enable'}
+					title={armourSessionId ? costAction.label : 'Start or stop a session to enable'}
 					data-guide-anchor="overlay-armour-cost-btn"
 				>
 					Cost
@@ -644,8 +642,8 @@
 						aria-haspopup="dialog"
 						aria-expanded={armourCostOpen}
 						onclick={onArmourCostToggle}
-						disabled={protectionCostSteps.length === 0}
-						title={protectionCostTitle}
+						disabled={!costAction.enabled}
+						title={costAction.label}
 					>
 						Cost
 					</button>

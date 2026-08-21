@@ -28,13 +28,14 @@
 	import { createPostSessionFlow } from '$lib/features/tracking/postSession.svelte';
 	import { createSessionFacets } from '$lib/features/tracking/sessionFacets.svelte';
 	import { createActivitiesModel } from '$lib/features/tracking/activitiesModel.svelte';
-	import { buildProtectionCostSteps } from '$lib/features/protection/protectionCostFlow';
+	import { protectionCostAction } from '$lib/features/protection/protectionCostFlow';
 	import { createOverlayProtectionModel } from '$lib/features/protection/overlayProtectionModel.svelte';
+	import { createOverlayArmourCostModel } from '$lib/features/protection/overlayArmourCostModel.svelte';
 	import { createTypeahead } from '$lib/view/typeahead.svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { PhysicalPosition } from '@tauri-apps/api/dpi';
 	import { listen } from '@tauri-apps/api/event';
-	import { anchorBelow, anchorCentreBelow, createAnchorTracker } from '$lib/windows/anchor';
+	import { anchorBelow } from '$lib/windows/anchor';
 	import { createSatelliteWindow } from '$lib/windows/satellite';
 	import { createWindowSizeSync } from '$lib/windows/windowSize';
 	import {
@@ -61,9 +62,7 @@
 		OVERLAY_ARMOUR_COST_HIDE_EVENT,
 		OVERLAY_ARMOUR_COST_READY_EVENT,
 		OVERLAY_ARMOUR_COST_SHOW_EVENT,
-		OVERLAY_ARMOUR_COST_UPDATE_EVENT,
-		OVERLAY_ARMOUR_COST_WINDOW_LABEL,
-		type OverlayArmourCostState
+		OVERLAY_ARMOUR_COST_WINDOW_LABEL
 	} from '$lib/windows/overlayArmourCost';
 	import OverlayStrip from '$lib/components/overlay/OverlayStrip.svelte';
 
@@ -78,16 +77,6 @@
 
 	let overlayRoot: HTMLDivElement | null = $state(null);
 	let overlayMenuKind = $state<OverlayMenuKind | null>(null);
-	let armourCostOpen = $state(false);
-	// Stamped when the popup self-closes (blur, ESC, post-save). The Cost-button
-	// click handler races against the CLOSED event: if blur arrives first,
-	// armourCostOpen flips to false before toggleArmourCost reads it, and the
-	// click would reopen the popup that the same gesture just dismissed.
-	// Gating the open branch on this timestamp suppresses that reopen.
-	let armourCostClosedAt = 0;
-	let armourCostError = $state<string | null>(null);
-	let armourCostAnchor: HTMLElement | null = $state(null);
-	let armourRecordNow = true;
 	let postSessionArmourButton: HTMLButtonElement | null = $state(null);
 	// Yellow attribution-not-ready warning that replaces the TRACK button when
 	// startTracking is refused by the backend (no hotbar slot bound in hotbar
@@ -163,7 +152,8 @@
 		armourReminderEnabled: () =>
 			data.trackProtectionCosts !== false &&
 			data.endOfSessionArmourReminderEnabled === true &&
-			buildProtectionCostSteps(protection.overview).length > 0,
+			protectionCostAction(protection.overview, data.trackProtectionBySegment !== false)
+				.enabled,
 		refresh: () => snapshot.hydrate(),
 		readStats: () => ({
 			cost: snapshot.current?.cost ?? 0,
@@ -176,9 +166,9 @@
 			data.trackProtectionCosts !== false &&
 			data.trackProtectionBySegment === false &&
 			(protection.overview?.loadouts.length ?? 0) > 0,
-		showArmourPopup: showPostSessionArmourPopup,
+		showArmourPopup: (recordNow: boolean) => armourCost.showPostSession(recordNow),
 		onPromptShown: () => {
-			void tick().then(scheduleArmourCostAnchorSync);
+			void tick().then(() => armourCost.scheduleAnchorSync());
 		}
 	});
 	const toggling = $derived(starting || flow.stopping);
@@ -217,8 +207,8 @@
 		if (overlayMenuKind) {
 			await hideOverlayMenu();
 		}
-		if (armourCostOpen) {
-			await hideArmourCost();
+		if (armourCost.open) {
+			await armourCost.hide();
 		}
 		await getCurrentWindow().startDragging();
 	}
@@ -249,7 +239,7 @@
 	// Keep this window's OS size in step with the strip; each sync re-anchors
 	// the armour-cost popup, which hangs off a strip button.
 	const windowSizeSync = createWindowSizeSync(() => overlayRoot, {
-		afterSync: () => scheduleArmourCostAnchorSync()
+		afterSync: () => armourCost.scheduleAnchorSync()
 	});
 
 	function buildMobMenuState(anchorWidth: number): OverlayMenuState | null {
@@ -285,30 +275,6 @@
 				name: preset.name,
 				active: preset.id === trifecta.activePresetId
 			}))
-		};
-	}
-
-	async function buildArmourCostState(
-		anchor: HTMLElement,
-		recordNow = armourRecordNow
-	): Promise<OverlayArmourCostState | null> {
-		const sessionId = armourSessionId;
-		if (!sessionId || !anchor.isConnected) return null;
-		const requiresLoadoutSelection = data.trackProtectionBySegment === false;
-		const steps = requiresLoadoutSelection ? [] : buildProtectionCostSteps(protection.overview);
-		if (!requiresLoadoutSelection && steps.length === 0) return null;
-		if (requiresLoadoutSelection && (protection.overview?.loadouts.length ?? 0) === 0) {
-			throw new Error('Create an armour setup in Equipment before recording its cost');
-		}
-
-		return {
-			sessionId,
-			repairOcrEnabled: data.repairOcrEnabled === true,
-			steps,
-			protection: protection.overview,
-			requiresLoadoutSelection,
-			recordNow,
-			anchor: await anchorCentreBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 		};
 	}
 
@@ -464,80 +430,16 @@
 		if (failure) facets.facetError = failure;
 	}
 
-	async function showArmourCost(anchor: HTMLElement, recordNow = true): Promise<boolean> {
-		try {
-			armourRecordNow = recordNow;
-			await armourCostWindow.ensure();
-			const state = await buildArmourCostState(anchor, recordNow);
-			if (!state) return false;
-
-			armourCostAnchor = anchor;
-			// The popup measures its panel, sizes+positions itself accurately, then
-			// reveals + focuses on its own (never revealed from here) so it cannot
-			// flash for one frame at the wrong (initial-guess) location.
-			await armourCostWindow.show(state, undefined, { reveal: false });
-			armourCostError = null;
-			armourCostOpen = true;
-			scheduleArmourCostAnchorSync();
-			return true;
-		} catch (error) {
-			armourCostOpen = false;
-			armourCostAnchor = null;
-			armourCostError = error instanceof ApiError || error instanceof Error
-				? error.message
-				: 'Popup window failed to open';
-			console.error('Armour cost popup failed', error);
-			return false;
-		}
-	}
-
-	async function syncArmourCostAnchor() {
-		if (!armourCostOpen || !armourCostAnchor) return;
-		const state = await buildArmourCostState(armourCostAnchor);
-		if (!state) return;
-
-		await armourCostWindow.emitTo(OVERLAY_ARMOUR_COST_UPDATE_EVENT, state);
-	}
-
-	const armourAnchorTracker = createAnchorTracker(() => void syncArmourCostAnchor());
-
-	function scheduleArmourCostAnchorSync() {
-		if (!armourCostOpen || !armourCostAnchor) return;
-		armourAnchorTracker.schedule();
-	}
-
-	function clearArmourCostOpenState() {
-		armourCostOpen = false;
-		armourCostAnchor = null;
-		armourAnchorTracker.cancel();
-		flow.notifyArmourPopupClosed();
-	}
-
-	async function hideArmourCost() {
-		clearArmourCostOpenState();
-		await armourCostWindow.hide();
-	}
-
-	async function toggleArmourCost(event: MouseEvent) {
-		if (armourCostOpen) {
-			await hideArmourCost();
-			return;
-		}
-		if (Date.now() - armourCostClosedAt < 250) return;
-		const anchor = event.currentTarget as HTMLElement | null;
-		if (!anchor) return;
-		await showArmourCost(anchor, true);
-	}
-
-	// The armour-cost popup after a Yes on the armour prompt: the anchor
-	// button only renders once the post-session readout has, hence the tick.
-	async function showPostSessionArmourPopup(recordNow: boolean): Promise<boolean> {
-		await tick();
-		if (postSessionArmourButton && armourSessionId && !armourCostOpen) {
-			return showArmourCost(postSessionArmourButton, recordNow);
-		}
-		return false;
-	}
+	const armourCost = createOverlayArmourCostModel({
+		window: armourCostWindow,
+		anchorGap: OVERLAY_MENU_VERTICAL_GAP,
+		sessionId: () => armourSessionId,
+		repairOcrEnabled: () => data.repairOcrEnabled === true,
+		bySegment: () => data.trackProtectionBySegment !== false,
+		protection: () => protection.overview,
+		postSessionAnchor: () => postSessionArmourButton,
+		onClosed: () => flow.notifyArmourPopupClosed()
+	});
 
 	async function handleTrifectaPresetSelection(presetId: string) {
 		const trifecta = data.trifectaAttribution;
@@ -607,17 +509,17 @@
 				windowSizeSync.schedule();
 			} else {
 				void hideOverlayMenu();
-				void hideArmourCost();
+				void armourCost.hide();
 			}
 		};
 		const handleFocus = () => {
 			windowSizeSync.schedule();
-			scheduleArmourCostAnchorSync();
+			armourCost.scheduleAnchorSync();
 		};
 
 		const resizeObserver = new ResizeObserver(() => {
 			windowSizeSync.schedule();
-			scheduleArmourCostAnchorSync();
+			armourCost.scheduleAnchorSync();
 		});
 		resizeObserver.observe(overlayRoot);
 
@@ -793,8 +695,7 @@
 		void (async () => {
 			unlistenClosed = await listen(OVERLAY_ARMOUR_COST_CLOSED_EVENT, () => {
 				if (disposed) return;
-				armourCostClosedAt = Date.now();
-				clearArmourCostOpenState();
+				armourCost.noteClosed();
 				void protection.refresh();
 			});
 		})();
@@ -1024,8 +925,8 @@
 		{selectingMob}
 		{trifectaSaving}
 		{trifectaError}
-		{armourCostOpen}
-		{armourCostError}
+		armourCostOpen={armourCost.open}
+		armourCostError={armourCost.error}
 		{armourSessionId}
 		protection={protection.overview}
 		protectionSaving={protection.saving}
@@ -1060,7 +961,7 @@
 		onBoostCommit={facets.commitBoost}
 		onActivitiesTrigger={toggleActivitiesMenu}
 		onTrifectaTrigger={toggleTrifectaMenu}
-		onArmourCostToggle={toggleArmourCost}
+		onArmourCostToggle={armourCost.toggle}
 		onProtectionSelect={protection.select}
 	/>
 </div>

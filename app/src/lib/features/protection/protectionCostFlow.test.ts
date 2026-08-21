@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProtectionOverview } from '$lib/api';
-import { buildProtectionCostSteps } from './protectionCostFlow';
+import { buildProtectionCostSteps, protectionCostAction } from './protectionCostFlow';
 
 const EMPTY: ProtectionOverview = {
 	sets: [],
@@ -109,5 +109,41 @@ describe('protection cost sequence', () => {
 
 	it('has no cost action for the explicit no-protection loadout', () => {
 		expect(buildProtectionCostSteps(overview(null, null))).toEqual([]);
+	});
+});
+
+describe('armour cost control', () => {
+	it('offers the whole-session flow whenever a setup exists, whatever is selected', () => {
+		const unselected = { ...overview('unlimited', null), activeLoadoutId: null };
+		// Per-segment attribution follows the active loadout, so it has nothing
+		// to read; whole-session attribution asks which setup was worn instead.
+		expect(protectionCostAction(unselected, true)).toEqual({
+			enabled: false,
+			label: 'Select an armour loadout first',
+		});
+		expect(protectionCostAction(unselected, false)).toEqual({
+			enabled: true,
+			label: 'Record armour cost',
+		});
+	});
+
+	it('keeps the generic combined reading when the catalogue holds no setups', () => {
+		// Nothing to choose between, so whole-session attribution falls back to
+		// the reading that needs no composition rather than refusing the click.
+		expect(protectionCostAction(EMPTY, false)).toEqual({
+			enabled: true,
+			label: 'Record repair cost',
+		});
+		expect(protectionCostAction(null, false)).toEqual({
+			enabled: true,
+			label: 'Record repair cost',
+		});
+	});
+
+	it('follows the active loadout under per-segment attribution', () => {
+		expect(protectionCostAction(overview('limited', 'unlimited'), true)).toEqual({
+			enabled: true,
+			label: 'Record 2 armour costs',
+		});
 	});
 });

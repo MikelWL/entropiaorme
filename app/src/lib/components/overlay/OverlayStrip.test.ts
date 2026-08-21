@@ -607,6 +607,34 @@ describe('armour cost control', () => {
 		);
 	});
 
+	it('stays available under whole-session attribution with no live selection', () => {
+		// Whole-session attribution asks which setup was worn rather than reading
+		// the live selection, so the control must not go dark just because
+		// nothing is selected.
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionBySegment: false }),
+				armourSessionId: 's1',
+				protection: { ...mixedProtection, activeLoadoutId: null },
+			},
+		});
+		const button = screen.getByTitle('Record armour cost') as HTMLButtonElement;
+		expect(button.disabled).toBe(false);
+	});
+
+	it('keeps the generic repair reading when the catalogue holds no setups', () => {
+		// Nothing to choose between: the control offers the reading that needs no
+		// composition rather than promising a flow it would refuse.
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionBySegment: false }),
+				armourSessionId: 's1',
+			},
+		});
+		const button = screen.getByTitle('Record repair cost') as HTMLButtonElement;
+		expect(button.disabled).toBe(false);
+	});
+
 	it('surfaces the armour cost error while the popup is closed', () => {
 		render(OverlayStrip, {
 			props: {

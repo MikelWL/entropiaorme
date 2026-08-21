@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import {
-		assignSessionProtectionLoadout,
 		confirmProtectionObservation,
 		confirmProtectionRepair,
 		scanRepairCost,
@@ -12,8 +11,12 @@
 	import type { ProtectionOverview } from '$lib/api';
 	import {
 		buildProtectionCostStepsForLoadout,
+		protectionCostClientToken,
+		protectionCostInstruction,
+		protectionCostLayerLabel,
 		type ProtectionCostStep,
 	} from '$lib/features/protection/protectionCostFlow';
+	import ArmourSetupChoice from '$lib/features/protection/ArmourSetupChoice.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 
@@ -52,16 +55,11 @@
 	let savedWindow = $state<ProtectionCostWindow | null>(null);
 	let currentSteps = $state<ProtectionCostStep[]>(untrack(() => steps));
 	let selectedLoadoutId = $state<string | null>(null);
-	let assigningLoadout = $state(false);
 	let setupSaved = $state(false);
 	let tokens = $state<string[]>([]);
 
 	function tokenFor(index: number): string {
-		if (!tokens[index]) {
-			tokens[index] =
-				globalThis.crypto?.randomUUID?.() ??
-				`protection-cost-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-		}
+		tokens[index] ??= protectionCostClientToken(index);
 		return tokens[index];
 	}
 
@@ -82,21 +80,6 @@
 		(!increased || resetReason.trim().length > 0) &&
 		!saving,
 	);
-
-	function layerLabel(layer: ProtectionCostStep['layer']): string {
-		if (layer === 'armour') return 'Armour';
-		if (layer === 'plates') return 'Plates';
-		return 'Armour + plates';
-	}
-
-	function instruction(current: ProtectionCostStep): string {
-		if (current.layer === 'combined') {
-			return 'Place all equipped armour and plates in the Repair Terminal.';
-		}
-		const items = current.layer === 'armour' ? 'seven armour pieces' : 'seven plates';
-		const terminal = current.method === 'limited' ? 'Trade Terminal' : 'Repair Terminal';
-		return `Place the ${items} in the ${terminal}. Do not complete the transaction.`;
-	}
 
 	function resetEntry(): void {
 		mode = 'ready';
@@ -195,47 +178,17 @@
 		resetEntry();
 	}
 
-	async function assignLoadout(loadoutId: string) {
-		if (!protection || assigningLoadout) return;
-		assigningLoadout = true;
-		errorHint = null;
-		try {
-			await assignSessionProtectionLoadout(sessionId, loadoutId);
-			selectedLoadoutId = loadoutId;
-			currentSteps = buildProtectionCostStepsForLoadout(protection, loadoutId);
-			stepIndex = 0;
-			setupSaved = !recordNow || currentSteps.length === 0;
-		} catch (error) {
-			errorHint = error instanceof Error ? error.message : 'Armour setup could not be saved';
-		} finally {
-			assigningLoadout = false;
-		}
+	function adoptLoadout(loadoutId: string) {
+		if (!protection) return;
+		selectedLoadoutId = loadoutId;
+		currentSteps = buildProtectionCostStepsForLoadout(protection, loadoutId);
+		stepIndex = 0;
+		setupSaved = !recordNow || currentSteps.length === 0;
 	}
 </script>
 
 {#if requiresLoadoutSelection && selectedLoadoutId === null}
-	<div class="flex min-w-[390px] flex-col gap-3 text-white">
-		<div class="border-b border-white/10 pb-2.5">
-			<p class="text-xs font-semibold">Armour used</p>
-			<p class="mt-1 text-[11px] text-white/45">Choose the setup worn during this session. Its cost will stay at whole-session level.</p>
-		</div>
-		<div class="flex items-center gap-2">
-			<select
-				class="min-w-64 rounded-[4px] border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-accent/60"
-				disabled={assigningLoadout}
-				onchange={(event) => {
-					if (event.currentTarget.value) void assignLoadout(event.currentTarget.value);
-				}}
-			>
-				<option value="">Choose armour setup</option>
-				{#each protection?.loadouts ?? [] as loadout (loadout.id)}
-					<option value={loadout.id}>{loadout.name}</option>
-				{/each}
-			</select>
-			{#if assigningLoadout}<span class="text-[10px] text-white/40">Saving...</span>{/if}
-		</div>
-		{#if errorHint}<p class="border-l-2 border-amber-400/70 pl-2 text-[10px] text-amber-200/80">{errorHint}</p>{/if}
-	</div>
+	<ArmourSetupChoice {sessionId} {protection} onassigned={adoptLoadout} />
 {:else if setupSaved}
 	<div class="flex min-w-[390px] items-center justify-between gap-6 text-white">
 		<div>
@@ -251,7 +204,7 @@
 		<div class="flex items-start justify-between gap-6 border-b border-white/10 pb-2.5">
 			<div>
 				<div class="flex items-center gap-2">
-					<span class="text-xs font-semibold">{layerLabel(step.layer)}</span>
+					<span class="text-xs font-semibold">{protectionCostLayerLabel(step.layer)}</span>
 					<span class="text-[10px] uppercase tracking-wider text-white/35">{step.method === 'limited' ? 'Limited' : 'Unlimited'}</span>
 				</div>
 				<p class="mt-0.5 text-[11px] text-white/45">{step.name}</p>
@@ -285,10 +238,10 @@
 						<p class="mt-1 text-[11px] text-white/45">{savedWindow.costPed.toFixed(4)} PED spread across {savedWindow.allocations.length} {savedWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded hits.</p>
 					{/if}
 				</div>
-				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${layerLabel(currentSteps[stepIndex + 1].layer).toLowerCase()}`}</Button>
+				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${protectionCostLayerLabel(currentSteps[stepIndex + 1].layer).toLowerCase()}`}</Button>
 			</div>
 		{:else}
-			<p class="text-[11px] text-white/55">{instruction(step)}</p>
+			<p class="text-[11px] text-white/55">{protectionCostInstruction(step)}</p>
 
 			{#if mode === 'ready'}
 				<div class="flex items-center gap-2">
