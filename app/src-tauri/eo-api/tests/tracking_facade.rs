@@ -1654,6 +1654,7 @@ async fn the_session_list_scopes_to_one_definitions_instances() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await
@@ -1710,6 +1711,7 @@ async fn re_filing_moves_the_instance_and_restamps_its_name() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await
@@ -1765,6 +1767,7 @@ async fn re_filing_replaces_a_legacy_free_text_name() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await
@@ -1802,6 +1805,7 @@ async fn re_filing_refuses_an_active_session() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await
@@ -1850,6 +1854,7 @@ async fn re_filing_refuses_an_archived_definition() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await
@@ -1889,6 +1894,7 @@ async fn an_archived_definition_keeps_its_instances_reachable() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
+            track_protection_by_segment: true,
             roster: Vec::new(),
         })
         .await

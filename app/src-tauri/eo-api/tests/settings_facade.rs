@@ -91,6 +91,7 @@ async fn the_settings_assembly_shapes_the_default_config() {
             "declaredSkillBoostPercent",
             "hotbar",
             "trifecta",
+            "passiveEffectSources",
             "harvestGuardrail",
             "lootFilterBlacklist",
             "dbPath",
@@ -132,6 +133,7 @@ async fn the_settings_assembly_shapes_the_default_config() {
         serde_json::json!(["Universal Ammo"])
     );
     assert_eq!(body["trifecta"]["activePresetId"], "default");
+    assert_eq!(body["passiveEffectSources"], serde_json::json!([]));
     assert_eq!(body["trifecta"]["presets"][0]["ready"], false);
     assert_eq!(
         body["trifecta"]["message"],
@@ -201,6 +203,48 @@ async fn a_partial_update_writes_and_returns_the_assembly() {
     assert_eq!(cfg["hotbar_hooks_enabled"], true);
     assert_eq!(cfg["session_name"], "Daily Hunt");
     assert_eq!(cfg["declared_skill_boost_percent"], 50);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reload_speed_sources_round_trip_as_typed_persistent_effects() {
+    use eo_api::settings::{PassiveEffectInput, PassiveEffectKind, PassiveEffectSourceInput};
+
+    let dir = tempfile::tempdir().unwrap();
+    let api = settings_api(dir.path()).await;
+    let updated = api
+        .settings_update(SettingsPatch {
+            passive_effect_sources: Some(vec![PassiveEffectSourceInput {
+                id: "ares-perfect".into(),
+                name: "Ares Ring, Perfected".into(),
+                enabled: true,
+                effects: vec![PassiveEffectInput {
+                    kind: PassiveEffectKind::ReloadSpeed,
+                    magnitude_percent: 14.0,
+                }],
+            }]),
+            ..SettingsPatch::default()
+        })
+        .await
+        .expect("save passive effect");
+
+    assert_eq!(updated.passive_effect_sources.len(), 1);
+    assert_eq!(
+        updated.passive_effect_sources[0].name,
+        "Ares Ring, Perfected"
+    );
+    assert_eq!(
+        updated.passive_effect_sources[0].effects[0].magnitude_percent,
+        14.0
+    );
+    let stored = read_settings(&dir.path().join("data"));
+    assert_eq!(
+        stored["passive_effect_sources"][0]["effects"][0]["kind"],
+        "reload_speed"
+    );
+    assert_eq!(
+        stored["passive_effect_sources"][0]["effects"][0]["magnitude_percent"],
+        14.0
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

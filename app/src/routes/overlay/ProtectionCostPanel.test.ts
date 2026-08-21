@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectionCostStep } from '$lib/features/protection/protectionCostFlow';
 
 const api = vi.hoisted(() => ({
+	assignSessionProtectionLoadout: vi.fn(),
 	confirmProtectionRepair: vi.fn(),
 	scanRepairCost: vi.fn(),
 	scanTradeTerminalValue: vi.fn(),
@@ -54,9 +55,7 @@ beforeEach(() => {
 			status: 'booked',
 			reason: null,
 			createdAt: 1,
-			allocations: [
-				{ sessionId: 's1', damageWeight: 10, deflectionCount: 0, allocationShare: 1, costPed: 1.5 },
-			],
+			allocations: [{ sessionId: 's1', hitCount: 1, allocationShare: 1, costPed: 1.5 }],
 		},
 	});
 	api.scanTradeTerminalValue.mockResolvedValue({
@@ -134,5 +133,64 @@ describe('protection cost panel', () => {
 		expect(screen.getByText('Baseline established')).toBeTruthy();
 		await fireEvent.click(screen.getByText('Done'));
 		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('captures a whole-session setup on Later without recording a cost', async () => {
+		const onClose = vi.fn();
+		api.assignSessionProtectionLoadout.mockResolvedValue({});
+		render(ProtectionCostPanel, {
+			props: {
+				sessionId: 's1',
+				repairOcrEnabled: false,
+				steps: [],
+				requiresLoadoutSelection: true,
+				recordNow: false,
+				protection: {
+					sets: [],
+					loadouts: [
+						{
+							id: '10',
+							name: 'Jaguar and plates',
+							armour: { id: '1', name: 'Jaguar', economyKind: 'unlimited', markupPercent: null },
+							plates: null,
+						},
+					],
+					activeLoadoutId: null,
+					recentReconciliations: [],
+					recentCostWindows: [],
+				},
+				onClose,
+			},
+		});
+
+		await fireEvent.change(screen.getByRole('combobox'), { target: { value: '10' } });
+		await waitFor(() =>
+			expect(api.assignSessionProtectionLoadout).toHaveBeenCalledWith('s1', '10'),
+		);
+		expect(screen.getByText('Protection setup saved')).toBeTruthy();
+		expect(api.confirmProtectionRepair).not.toHaveBeenCalled();
+		await fireEvent.click(screen.getByText('Done'));
+		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('accepts a lower limited-armour reading without an implementation assertion', async () => {
+		render(ProtectionCostPanel, {
+			props: {
+				sessionId: 's1',
+				repairOcrEnabled: false,
+				steps: [{ ...mixedSteps[1], baselineTtPed: 10 }],
+				onClose: vi.fn(),
+			},
+		});
+
+		await fireEvent.click(screen.getByText('Enter manually'));
+		await fireEvent.input(screen.getByPlaceholderText('0.00 PED'), { target: { value: '9' } });
+		expect(screen.queryByText(/This set was not replaced/)).toBeNull();
+		await fireEvent.click(screen.getByText('Confirm'));
+		await waitFor(() =>
+			expect(api.confirmProtectionObservation).toHaveBeenCalledWith(
+				expect.objectContaining({ setId: 2, ttValuePed: 9 }),
+			),
+		);
 	});
 });

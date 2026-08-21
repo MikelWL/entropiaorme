@@ -154,8 +154,7 @@ pub struct ProtectionObservation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProtectionCostAllocation {
     pub session_id: String,
-    pub damage_weight: f64,
-    pub deflection_count: i64,
+    pub hit_count: i64,
     pub allocation_share: f64,
     pub cost_ped: f64,
 }
@@ -572,6 +571,149 @@ impl ProtectionService {
             .map_err(ProtectionError::from)
     }
 
+    /// Attach one whole-session protection setup after an opted-out session
+    /// ends. Raw event contexts remain untouched, but allocation deliberately
+    /// collapses them to session grain through the stamped session policy.
+    pub async fn assign_session_loadout(
+        &self,
+        session_id: &str,
+        loadout_id: i64,
+    ) -> Result<ProtectionSelection, ProtectionError> {
+        let selection = self.selection(loadout_id).await?;
+        let session_id = session_id.to_string();
+        let stored = selection.clone();
+        self.db
+            .with_writer(move |conn| {
+                let tx = conn.transaction()?;
+                let session = tx
+                    .query_row(
+                        "SELECT started_at, ended_at, track_protection_by_segment \
+                         FROM tracking_sessions WHERE id = ?1",
+                        [&session_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, f64>(0)?,
+                                row.get::<_, Option<f64>>(1)?,
+                                row.get::<_, i64>(2)? != 0,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((started_at, ended_at, tracks_segments)) = session else {
+                    return Ok(false);
+                };
+                if tracks_segments || ended_at.is_none() {
+                    return Ok(false);
+                }
+
+                let claimed: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM protection_cost_evidence e \
+                     JOIN protection_defence_events d ON d.id = e.defence_event_id \
+                     WHERE d.session_id = ?1)",
+                    [&session_id],
+                    |row| row.get(0),
+                )?;
+
+                let existing: Option<(i64, i64)> = tx
+                    .query_row(
+                        "SELECT i.id, p.loadout_id FROM session_intervals i \
+                         JOIN session_protection_intervals p ON p.interval_id = i.id \
+                         WHERE i.session_id = ?1 AND i.kind = 'protection' \
+                         ORDER BY i.id LIMIT 1",
+                        [&session_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                if let Some((interval_id, existing_loadout)) = existing {
+                    if existing_loadout == stored.loadout_id {
+                        tx.commit()?;
+                        return Ok(true);
+                    }
+                    if claimed {
+                        return Ok(false);
+                    }
+                    tx.execute(
+                        "UPDATE session_intervals SET label = ?1, ref_id = ?2 WHERE id = ?3",
+                        rusqlite::params![stored.loadout_name, stored.loadout_id, interval_id],
+                    )?;
+                    tx.execute(
+                        "UPDATE session_protection_intervals SET \
+                         loadout_id = ?1, loadout_name = ?2, \
+                         armour_set_id = ?3, armour_set_name = ?4, \
+                         armour_economy_kind = ?5, armour_markup_percent = ?6, \
+                         plate_set_id = ?7, plate_set_name = ?8, \
+                         plate_economy_kind = ?9, plate_markup_percent = ?10 \
+                         WHERE interval_id = ?11",
+                        rusqlite::params![
+                            stored.loadout_id,
+                            stored.loadout_name,
+                            stored.armour.as_ref().map(|set| set.id),
+                            stored.armour.as_ref().map(|set| set.name.as_str()),
+                            stored.armour.as_ref().map(|set| set.economy_kind.as_str()),
+                            stored.armour.as_ref().and_then(|set| set.markup_percent),
+                            stored.plates.as_ref().map(|set| set.id),
+                            stored.plates.as_ref().map(|set| set.name.as_str()),
+                            stored.plates.as_ref().map(|set| set.economy_kind.as_str()),
+                            stored.plates.as_ref().and_then(|set| set.markup_percent),
+                            interval_id,
+                        ],
+                    )?;
+                    tx.commit()?;
+                    return Ok(true);
+                }
+                if claimed {
+                    return Ok(false);
+                }
+
+                tx.execute(
+                    "INSERT INTO session_intervals \
+                     (session_id, kind, label, ref_id, started_at, ended_at) \
+                     VALUES (?1, 'protection', ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session_id,
+                        stored.loadout_name,
+                        stored.loadout_id,
+                        started_at,
+                        ended_at,
+                    ],
+                )?;
+                let interval_id = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO session_protection_intervals \
+                     (interval_id, loadout_id, loadout_name, armour_set_id, armour_set_name, \
+                      armour_economy_kind, armour_markup_percent, plate_set_id, plate_set_name, \
+                      plate_economy_kind, plate_markup_percent) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    rusqlite::params![
+                        interval_id,
+                        stored.loadout_id,
+                        stored.loadout_name,
+                        stored.armour.as_ref().map(|set| set.id),
+                        stored.armour.as_ref().map(|set| set.name.as_str()),
+                        stored.armour.as_ref().map(|set| set.economy_kind.as_str()),
+                        stored.armour.as_ref().and_then(|set| set.markup_percent),
+                        stored.plates.as_ref().map(|set| set.id),
+                        stored.plates.as_ref().map(|set| set.name.as_str()),
+                        stored.plates.as_ref().map(|set| set.economy_kind.as_str()),
+                        stored.plates.as_ref().and_then(|set| set.markup_percent),
+                    ],
+                )?;
+                tx.execute(
+                    "UPDATE protection_defence_events SET protection_interval_id = ?1 \
+                     WHERE session_id = ?2",
+                    rusqlite::params![interval_id, session_id],
+                )?;
+                tx.commit()?;
+                Ok(true)
+            })
+            .await?
+            .then_some(())
+            .ok_or(ProtectionError::Conflict(
+                "Whole-session protection can only be assigned to a completed opted-out session before its evidence is settled",
+            ))?;
+        Ok(selection)
+    }
+
     pub async fn confirm_observation(
         &self,
         set_id: i64,
@@ -918,14 +1060,15 @@ fn create_cost_window(
     }
 
     use std::collections::BTreeMap;
-    let mut contexts: BTreeMap<(String, i64), (Option<i64>, f64, i64)> = BTreeMap::new();
+    let mut contexts: BTreeMap<(String, i64), (Option<i64>, f64, i64, i64)> = BTreeMap::new();
     for event in &candidates {
         let context_key = event.context_id.unwrap_or(-1);
         let entry = contexts
             .entry((event.session_id.clone(), context_key))
-            .or_insert((event.context_id, 0.0, 0));
+            .or_insert((event.context_id, 0.0, 0, 0));
         entry.1 += event.damage.unwrap_or(0.0);
         entry.2 += i64::from(event.deflected);
+        entry.3 += 1;
 
         if let Some(set_id) = spec.set_id {
             tx.execute(
@@ -958,21 +1101,15 @@ fn create_cost_window(
         }
     }
 
-    let total_damage: f64 = contexts.values().map(|(_, damage, _)| damage).sum();
-    let total_deflections: i64 = contexts
-        .values()
-        .map(|(_, _, deflections)| deflections)
-        .sum();
+    let total_hits: i64 = contexts.values().map(|(_, _, _, hits)| hits).sum();
     let context_count = contexts.len();
     let mut allocated = 0.0;
-    let mut sessions: BTreeMap<String, (f64, i64, f64, f64)> = BTreeMap::new();
-    for (index, ((session_id, context_key), (context_id, damage, deflections))) in
+    let mut sessions: BTreeMap<String, (f64, i64, i64, f64, f64)> = BTreeMap::new();
+    for (index, ((session_id, context_key), (context_id, damage, deflections, hits))) in
         contexts.into_iter().enumerate()
     {
-        let share = if total_damage > 0.0 {
-            damage / total_damage
-        } else if total_deflections > 0 {
-            deflections as f64 / total_deflections as f64
+        let share = if total_hits > 0 {
+            hits as f64 / total_hits as f64
         } else {
             1.0 / context_count as f64
         };
@@ -985,7 +1122,7 @@ fn create_cost_window(
         tx.execute(
             "INSERT INTO protection_cost_context_allocations \
              (window_id, session_id, context_key, context_id, damage_weight, deflection_count, \
-              allocation_share, cost_ped) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+              allocation_share, cost_ped, hit_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 window_id,
                 session_id,
@@ -994,27 +1131,30 @@ fn create_cost_window(
                 damage,
                 deflections,
                 share,
-                allocation
+                allocation,
+                hits,
             ],
         )?;
         let session = sessions.entry(session_id).or_default();
         session.0 += damage;
         session.1 += deflections;
-        session.2 += share;
-        session.3 += allocation;
+        session.2 += hits;
+        session.3 += share;
+        session.4 += allocation;
     }
-    for (session_id, (damage, deflections, share, allocation)) in sessions {
+    for (session_id, (damage, deflections, hits, share, allocation)) in sessions {
         tx.execute(
             "INSERT INTO protection_cost_allocations \
-             (window_id, session_id, damage_weight, deflection_count, allocation_share, cost_ped) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (window_id, session_id, damage_weight, deflection_count, allocation_share, cost_ped, hit_count) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 window_id,
                 session_id,
                 damage,
                 deflections,
                 share,
-                allocation
+                allocation,
+                hits,
             ],
         )?;
         let started_at: f64 = tx.query_row(
@@ -1111,9 +1251,12 @@ fn read_eligible_evidence(
         };
     let closing = spec.closing_cursor.unwrap_or(i64::MAX);
     let sql = format!(
-        "SELECT d.id, d.session_id, d.context_id, d.damage, d.deflected, \
+        "SELECT d.id, d.session_id, \
+                CASE WHEN s.track_protection_by_segment != 0 THEN d.context_id END, \
+                d.damage, d.deflected, \
                 sp.armour_set_id, sp.plate_set_id \
          FROM protection_defence_events d \
+         JOIN tracking_sessions s ON s.id = d.session_id \
          LEFT JOIN session_protection_intervals sp ON sp.interval_id = d.protection_interval_id \
          WHERE d.id > ?1 AND d.id <= ?2 AND ({layer_filter}) AND {claim_filter} \
          ORDER BY d.id"
@@ -1387,17 +1530,16 @@ fn read_cost_window(
         .optional()?
         .ok_or(ProtectionError::Stored("missing protection cost window"))?;
     let mut stmt = conn.prepare(
-        "SELECT session_id, damage_weight, deflection_count, allocation_share, cost_ped \
+        "SELECT session_id, hit_count, allocation_share, cost_ped \
          FROM protection_cost_allocations WHERE window_id = ?1 ORDER BY session_id",
     )?;
     let allocations = stmt
         .query_map([id], |allocation| {
             Ok(ProtectionCostAllocation {
                 session_id: allocation.get(0)?,
-                damage_weight: allocation.get(1)?,
-                deflection_count: allocation.get(2)?,
-                allocation_share: allocation.get(3)?,
-                cost_ped: allocation.get(4)?,
+                hit_count: allocation.get(1)?,
+                allocation_share: allocation.get(2)?,
+                cost_ped: allocation.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1718,7 +1860,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deferred_limited_decay_spreads_across_sessions_by_recorded_damage() {
+    async fn deferred_limited_decay_spreads_across_sessions_by_hit_count_not_damage() {
         let (_dir, db, clock, service) = harness().await;
         let (set, loadout) = limited_armour(&service, "Deferred armour", 120.0).await;
         service
@@ -1763,8 +1905,10 @@ mod tests {
         let window = closing.cost_window.expect("cost window");
         assert_eq!(window.allocations.len(), 2);
         assert!((window.cost_ped - 12.0).abs() < 1e-9);
-        assert!((window.allocations[0].cost_ped - 5.0).abs() < 1e-9);
-        assert!((window.allocations[1].cost_ped - 7.0).abs() < 1e-9);
+        assert_eq!(window.allocations[0].hit_count, 1);
+        assert_eq!(window.allocations[1].hit_count, 1);
+        assert!((window.allocations[0].cost_ped - 6.0).abs() < 1e-9);
+        assert!((window.allocations[1].cost_ped - 6.0).abs() < 1e-9);
         let (context_count, context_cost): (i64, f64) = db
             .with_reader(move |conn| {
                 conn.query_row(
@@ -1825,7 +1969,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deflection_only_windows_fall_back_to_equal_event_weights() {
+    async fn deflections_and_damage_events_are_equal_weight_hits() {
         let (_dir, db, _clock, service) = harness().await;
         let set = service
             .create_set(
@@ -1871,6 +2015,67 @@ mod tests {
         assert_eq!(outcome.cost_window.allocations.len(), 2);
         assert!((outcome.cost_window.allocations[0].cost_ped - 1.0).abs() < 1e-9);
         assert!((outcome.cost_window.allocations[1].cost_ped - 2.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn opted_out_session_accepts_one_whole_session_loadout_after_stop() {
+        let (_dir, db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Whole-session armour",
+                ProtectionEconomyKind::Unlimited,
+                None,
+            )
+            .await
+            .expect("create set");
+        let loadout = service
+            .create_loadout("Whole-session setup", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, track_protection_by_segment) \
+                 VALUES ('whole-session', 10, 20, 0, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO protection_defence_events \
+                 (session_id, damage, deflected) VALUES ('whole-session', 80, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO protection_defence_events \
+                 (session_id, damage, deflected) VALUES ('whole-session', NULL, 1)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("seed opted-out session");
+
+        let assigned = service
+            .assign_session_loadout("whole-session", loadout.id)
+            .await
+            .expect("assign whole-session setup");
+        assert_eq!(assigned.loadout_id, loadout.id);
+        service
+            .assign_session_loadout("whole-session", loadout.id)
+            .await
+            .expect("same setup is idempotent");
+
+        let outcome = service
+            .confirm_repair_cost("whole-session-window", Some(set.id), None, 4.0)
+            .await
+            .expect("book repair cost");
+        assert_eq!(outcome.cost_window.allocations.len(), 1);
+        assert_eq!(
+            outcome.cost_window.allocations[0].session_id,
+            "whole-session"
+        );
+        assert_eq!(outcome.cost_window.allocations[0].hit_count, 2);
+        assert!((outcome.cost_window.allocations[0].cost_ped - 4.0).abs() < 1e-9);
     }
 
     #[tokio::test]

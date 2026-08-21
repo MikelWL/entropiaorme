@@ -23,7 +23,12 @@ import {
 	equipmentDemoTrifecta,
 } from '$lib/guide/fixtures/equipment';
 import type { Equipment, EquipmentDetail, HealingMode, HealingTool } from '$lib/types';
-import type { HarvestGuardrailSettings, Hotbar, TrifectaSettings } from '$lib/types/settings';
+import type {
+	HarvestGuardrailSettings,
+	Hotbar,
+	PassiveEffectSourceView,
+	TrifectaSettings,
+} from '$lib/types/settings';
 import { describeError } from '$lib/view/errorState';
 import { createTypeahead } from '$lib/view/typeahead.svelte';
 import { previewCostPerUse } from './costPreview';
@@ -52,6 +57,7 @@ export function createLibraryModel() {
 		longToolId: null,
 		hugeToolId: null,
 	});
+	let passiveEffectSources = $state<PassiveEffectSourceView[]>([]);
 	let error = $state<string | null>(null);
 
 	// ── Rows ──
@@ -205,6 +211,10 @@ export function createLibraryModel() {
 				hotbarHooksEnabled = settings.hotbarHooksEnabled;
 				trifecta = settings.trifecta;
 				harvestGuardrail = settings.harvestGuardrail;
+				passiveEffectSources = (settings.passiveEffectSources ?? []).map((source) => ({
+					...source,
+					effects: source.effects.map((effect) => ({ ...effect })),
+				}));
 				detailCache = {};
 			}
 		} catch (e) {
@@ -553,6 +563,12 @@ export function createLibraryModel() {
 		},
 		set harvestGuardrail(value: HarvestGuardrailSettings) {
 			harvestGuardrail = value;
+		},
+		get passiveEffectSources() {
+			return passiveEffectSources;
+		},
+		set passiveEffectSources(value: PassiveEffectSourceView[]) {
+			passiveEffectSources = value;
 		},
 		get error() {
 			return error;

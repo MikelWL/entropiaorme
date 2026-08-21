@@ -13,6 +13,7 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		id: '2',
 		name: 'Easter Mayhem 2026',
 		adHocSegments: false,
+		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,
 		instanceCount: 35,

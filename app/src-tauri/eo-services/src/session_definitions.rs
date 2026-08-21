@@ -107,6 +107,7 @@ pub struct SessionDefinition {
     pub id: i64,
     pub name: String,
     pub ad_hoc_segments: bool,
+    pub track_protection_by_segment: bool,
     pub is_active: bool,
     /// A definition that must not be archived: tracking always has one
     /// to be an instance of, and this is the one that guarantees it.
@@ -179,6 +180,7 @@ pub struct DefinitionLifetimeStats {
 pub struct SessionDefinitionInput {
     pub name: String,
     pub ad_hoc_segments: bool,
+    pub track_protection_by_segment: bool,
     pub roster: Vec<RosterEntryInput>,
 }
 
@@ -195,7 +197,8 @@ pub struct SessionDefinitionService {
 }
 
 const DEFINITION_SELECT: &str = "\
-    SELECT d.id, d.name, d.ad_hoc_segments, d.is_active, d.is_protected, \
+    SELECT d.id, d.name, d.ad_hoc_segments, d.track_protection_by_segment, \
+           d.is_active, d.is_protected, \
            d.created_at, d.updated_at, \
            (SELECT COUNT(*) FROM tracking_sessions s \
             WHERE s.definition_id = d.id) AS instance_count \
@@ -368,13 +371,15 @@ impl SessionDefinitionService {
         let roster = self.validated_roster(&input.roster).await?;
 
         let ad_hoc = input.ad_hoc_segments;
+        let track_protection = input.track_protection_by_segment;
         let definition_id = self
             .db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
                 tx.execute(
-                    "INSERT INTO session_definitions (name, ad_hoc_segments) VALUES (?, ?)",
-                    rusqlite::params![name, ad_hoc as i64],
+                    "INSERT INTO session_definitions \
+                     (name, ad_hoc_segments, track_protection_by_segment) VALUES (?, ?, ?)",
+                    rusqlite::params![name, ad_hoc as i64, track_protection as i64],
                 )?;
                 let definition_id = tx.last_insert_rowid();
                 write_roster(&tx, definition_id, &roster)?;
@@ -405,15 +410,16 @@ impl SessionDefinitionService {
         let roster = self.validated_roster(&input.roster).await?;
 
         let ad_hoc = input.ad_hoc_segments;
+        let track_protection = input.track_protection_by_segment;
         let now = self.now_epoch();
         self.db
             .with_writer(move |conn| {
                 let tx = conn.transaction()?;
                 tx.execute(
                     "UPDATE session_definitions \
-                     SET name = ?, ad_hoc_segments = ?, updated_at = ? \
+                     SET name = ?, ad_hoc_segments = ?, track_protection_by_segment = ?, updated_at = ? \
                      WHERE id = ?",
-                    rusqlite::params![name, ad_hoc as i64, now, definition_id],
+                    rusqlite::params![name, ad_hoc as i64, track_protection as i64, now, definition_id],
                 )?;
                 tx.execute(
                     "DELETE FROM session_definition_roster WHERE definition_id = ?",
@@ -764,16 +770,22 @@ impl SessionDefinitionService {
 pub async fn resolve_selection(
     db: &Db,
     configured: Option<i64>,
-) -> Result<Option<(i64, String)>, DbError> {
+) -> Result<Option<(i64, String, bool)>, DbError> {
     db.with_reader(move |conn| {
         use rusqlite::OptionalExtension as _;
         if let Some(id) = configured {
             let selected = conn
                 .query_row(
-                    "SELECT id, name FROM session_definitions \
+                    "SELECT id, name, track_protection_by_segment FROM session_definitions \
                      WHERE id = ? AND is_active = 1",
                     rusqlite::params![id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)? != 0,
+                        ))
+                    },
                 )
                 .optional()?;
             if selected.is_some() {
@@ -782,11 +794,17 @@ pub async fn resolve_selection(
         }
         Ok(conn
             .query_row(
-                "SELECT id, name FROM session_definitions \
+                "SELECT id, name, track_protection_by_segment FROM session_definitions \
                  WHERE is_active = 1 AND is_protected = 1 \
                  ORDER BY id ASC LIMIT 1",
                 [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? != 0,
+                    ))
+                },
             )
             .optional()?)
     })
@@ -799,6 +817,7 @@ fn row_to_definition(row: &rusqlite::Row) -> Result<SessionDefinition, rusqlite:
         id: row.get("id")?,
         name: row.get("name")?,
         ad_hoc_segments: row.get::<_, i64>("ad_hoc_segments")? != 0,
+        track_protection_by_segment: row.get::<_, i64>("track_protection_by_segment")? != 0,
         is_active: row.get::<_, i64>("is_active")? != 0,
         is_protected: row.get::<_, i64>("is_protected")? != 0,
         created_at: row.get("created_at")?,

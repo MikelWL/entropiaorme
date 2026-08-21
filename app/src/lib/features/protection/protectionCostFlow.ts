@@ -52,6 +52,15 @@ export function buildProtectionCostSteps(
 
 	const active = overview.loadouts.find((loadout) => loadout.id === overview.activeLoadoutId);
 	if (!active) return [];
+	return buildProtectionCostStepsForLoadout(overview, active.id);
+}
+
+export function buildProtectionCostStepsForLoadout(
+	overview: ProtectionOverview,
+	loadoutId: string,
+): ProtectionCostStep[] {
+	const active = overview.loadouts.find((loadout) => loadout.id === loadoutId);
+	if (!active) return [];
 
 	const components: ProtectionCostStep[] = [];
 	if (active.armour) components.push(componentStep(overview, 'armour', active.armour));

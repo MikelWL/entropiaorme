@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import {
+		assignSessionProtectionLoadout,
 		confirmProtectionObservation,
 		confirmProtectionRepair,
 		scanRepairCost,
@@ -8,7 +9,11 @@
 		type ProtectionObservationOutcome,
 		type ProtectionCostWindow,
 	} from '$lib/api';
-	import type { ProtectionCostStep } from '$lib/features/protection/protectionCostFlow';
+	import type { ProtectionOverview } from '$lib/api';
+	import {
+		buildProtectionCostStepsForLoadout,
+		type ProtectionCostStep,
+	} from '$lib/features/protection/protectionCostFlow';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 
@@ -16,10 +21,21 @@
 		sessionId: string;
 		repairOcrEnabled: boolean;
 		steps: ProtectionCostStep[];
+		protection?: ProtectionOverview | null;
+		requiresLoadoutSelection?: boolean;
+		recordNow?: boolean;
 		onClose: () => void;
 	}
 
-	let { sessionId, repairOcrEnabled, steps, onClose }: Props = $props();
+	let {
+		sessionId,
+		repairOcrEnabled,
+		steps,
+		protection = null,
+		requiresLoadoutSelection = false,
+		recordNow = true,
+		onClose,
+	}: Props = $props();
 
 	type Mode = 'ready' | 'scanning' | 'review' | 'saved';
 	let stepIndex = $state(0);
@@ -30,21 +46,27 @@
 	let calibrated = $state(true);
 	let errorHint = $state<string | null>(null);
 	let saving = $state(false);
-	let asserted = $state(false);
 	let resetReason = $state('');
 	let limitedOutcome = $state<ProtectionObservationOutcome | null>(null);
 	let savedRepairCost = $state<number | null>(null);
 	let savedWindow = $state<ProtectionCostWindow | null>(null);
-	const tokens = untrack(() =>
-		steps.map(
-			(_, index) =>
-				globalThis.crypto?.randomUUID?.() ??
-				`protection-cost-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
-		),
-	);
+	let currentSteps = $state<ProtectionCostStep[]>(untrack(() => steps));
+	let selectedLoadoutId = $state<string | null>(null);
+	let assigningLoadout = $state(false);
+	let setupSaved = $state(false);
+	let tokens = $state<string[]>([]);
 
-	const step = $derived(steps[stepIndex]);
-	const lastStep = $derived(stepIndex === steps.length - 1);
+	function tokenFor(index: number): string {
+		if (!tokens[index]) {
+			tokens[index] =
+				globalThis.crypto?.randomUUID?.() ??
+				`protection-cost-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
+		}
+		return tokens[index];
+	}
+
+	const step = $derived(currentSteps[stepIndex]);
+	const lastStep = $derived(stepIndex === currentSteps.length - 1);
 	const parsedValue = $derived.by(() => {
 		const parsed = Number(value.trim().replace(',', '.'));
 		return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -55,12 +77,8 @@
 		parsedValue !== null &&
 		parsedValue > step.baselineTtPed + 0.0000001,
 	);
-	const requiresAssertion = $derived(
-		step?.method === 'limited' && step.baselineTtPed !== null && !increased,
-	);
 	const canConfirm = $derived(
 		parsedValue !== null &&
-		(!requiresAssertion || asserted) &&
 		(!increased || resetReason.trim().length > 0) &&
 		!saving,
 	);
@@ -87,7 +105,6 @@
 		rawText = null;
 		calibrated = true;
 		errorHint = null;
-		asserted = false;
 		resetReason = '';
 		limitedOutcome = null;
 		savedRepairCost = null;
@@ -145,7 +162,7 @@
 			if (step.method === 'limited' && step.setId) {
 				limitedOutcome = await confirmProtectionObservation({
 					setId: Number(step.setId),
-					clientToken: tokens[stepIndex],
+					clientToken: tokenFor(stepIndex),
 					ttValuePed: parsedValue,
 					source,
 					rawText,
@@ -153,7 +170,7 @@
 				});
 			} else {
 				const outcome = await confirmProtectionRepair({
-					clientToken: tokens[stepIndex],
+					clientToken: tokenFor(stepIndex),
 					armourSetId: step.armourSetId ? Number(step.armourSetId) : null,
 					plateSetId: step.plateSetId ? Number(step.plateSetId) : null,
 					costPed: parsedValue,
@@ -177,9 +194,59 @@
 		stepIndex += 1;
 		resetEntry();
 	}
+
+	async function assignLoadout(loadoutId: string) {
+		if (!protection || assigningLoadout) return;
+		assigningLoadout = true;
+		errorHint = null;
+		try {
+			await assignSessionProtectionLoadout(sessionId, loadoutId);
+			selectedLoadoutId = loadoutId;
+			currentSteps = buildProtectionCostStepsForLoadout(protection, loadoutId);
+			stepIndex = 0;
+			setupSaved = !recordNow || currentSteps.length === 0;
+		} catch (error) {
+			errorHint = error instanceof Error ? error.message : 'Protection setup could not be saved';
+		} finally {
+			assigningLoadout = false;
+		}
+	}
 </script>
 
-{#if step}
+{#if requiresLoadoutSelection && selectedLoadoutId === null}
+	<div class="flex min-w-[390px] flex-col gap-3 text-white">
+		<div class="border-b border-white/10 pb-2.5">
+			<p class="text-xs font-semibold">Protection used</p>
+			<p class="mt-1 text-[11px] text-white/45">Choose the setup worn during this session. Its cost will stay at whole-session level.</p>
+		</div>
+		<div class="flex items-center gap-2">
+			<select
+				class="min-w-64 rounded-[4px] border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-accent/60"
+				disabled={assigningLoadout}
+				onchange={(event) => {
+					if (event.currentTarget.value) void assignLoadout(event.currentTarget.value);
+				}}
+			>
+				<option value="">Choose protection setup</option>
+				{#each protection?.loadouts ?? [] as loadout (loadout.id)}
+					<option value={loadout.id}>{loadout.name}</option>
+				{/each}
+			</select>
+			{#if assigningLoadout}<span class="text-[10px] text-white/40">Saving...</span>{/if}
+		</div>
+		{#if errorHint}<p class="border-l-2 border-amber-400/70 pl-2 text-[10px] text-amber-200/80">{errorHint}</p>{/if}
+	</div>
+{:else if setupSaved}
+	<div class="flex min-w-[390px] items-center justify-between gap-6 text-white">
+		<div>
+			<p class="text-xs font-medium">Protection setup saved</p>
+			<p class="mt-1 text-[11px] text-white/45">
+				{recordNow ? 'No protection cost needs recording.' : 'You can record its measured cost later.'}
+			</p>
+		</div>
+		<Button size="sm" onclick={onClose}>Done</Button>
+	</div>
+{:else if step}
 	<div class="flex min-w-[390px] flex-col gap-3 text-white">
 		<div class="flex items-start justify-between gap-6 border-b border-white/10 pb-2.5">
 			<div>
@@ -213,12 +280,12 @@
 						<p class="mt-1 text-[11px] text-white/45">
 							{limitedOutcome.costWindow.consumedTtPed?.toFixed(4)} TT at {limitedOutcome.costWindow.markupPercent?.toFixed(2)}% MU = {limitedOutcome.costWindow.costPed.toFixed(4)} PED
 						</p>
-						{#if limitedOutcome.costWindow.allocations.length > 0}<p class="mt-1 text-[10px] text-white/35">Spread across {limitedOutcome.costWindow.allocations.length} {limitedOutcome.costWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded damage.</p>{/if}
+						{#if limitedOutcome.costWindow.allocations.length > 0}<p class="mt-1 text-[10px] text-white/35">Spread across {limitedOutcome.costWindow.allocations.length} {limitedOutcome.costWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded hits.</p>{/if}
 					{:else if savedWindow?.allocations.length}
-						<p class="mt-1 text-[11px] text-white/45">{savedWindow.costPed.toFixed(4)} PED spread across {savedWindow.allocations.length} {savedWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded damage.</p>
+						<p class="mt-1 text-[11px] text-white/45">{savedWindow.costPed.toFixed(4)} PED spread across {savedWindow.allocations.length} {savedWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded hits.</p>
 					{/if}
 				</div>
-				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${layerLabel(steps[stepIndex + 1].layer).toLowerCase()}`}</Button>
+				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${layerLabel(currentSteps[stepIndex + 1].layer).toLowerCase()}`}</Button>
 			</div>
 		{:else}
 			<p class="text-[11px] text-white/55">{instruction(step)}</p>
@@ -251,11 +318,6 @@
 						<span class="text-[10px] text-white/45">Above the baseline. Explain the reset:</span>
 						<Input class="min-w-52" bind:value={resetReason} placeholder="Pieces replaced or reading corrected" />
 					</div>
-				{:else if requiresAssertion}
-					<label class="flex items-start gap-2 text-[10px] text-white/45">
-						<input class="mt-0.5 accent-accent" type="checkbox" bind:checked={asserted} />
-						<span>This set was not replaced and was used only while EntropiaOrme was recording between these readings.</span>
-					</label>
 				{/if}
 			{/if}
 

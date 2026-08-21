@@ -4,19 +4,19 @@
  *
  * One prompt: when the end-of-session armour reminder is enabled, the stop
  * request does not stop: it arms a Record protection? decision and the actual stop
- * runs only on the Record/Later answer. Record also opens the armour-cost popup after
- * the stop attempt settles (even a failed stop opens it: the popup anchors to
- * the still-current session); Later (or the reminder being disabled wholesale)
- * suppresses it.
+ * runs only on the Record/Later answer. Record opens the armour-cost popup after
+ * the stop settles. For a session that opted out of segment declarations, Later
+ * still captures the whole-session setup so a later reading has an identity to
+ * reconcile against.
  *
  * The stop itself re-reads the snapshot BEFORE capturing the final stats
  * (they are confirmed-ledger PED figures, so the readout must show the
  * session's true totals, not a stale frame), then stops, then re-reads again
  * for the idle state.
  *
- * The readout (session id + final stats) clears once the stop settles; while
- * the armour-cost popup is open the clear is deferred until the popup closes
- * (`notifyArmourPopupClosed`) so the readout does not vanish underneath it.
+ * The readout (session id + final stats) clears once the stop settles. While
+ * the armour workflow is open, or when its satellite failed to open, the clear
+ * is deferred so the stopped-session anchor does not vanish underneath it.
  * (The post-stop quest-link prompt this flow used to run retired with the
  * curated link model: the quest lifecycle records its own stretches now, so
  * there is nothing left to ask after the stop.)
@@ -42,10 +42,10 @@ export interface PostSessionFlowOptions {
 	readStats(): PostSessionStats;
 	/** Stop the session; resolves with the stopped session's id. */
 	stopTracking(): Promise<{ session_id: string }>;
-	/** Whether the armour-cost popup is open (defers the readout clear). */
-	isArmourPopupOpen(): boolean;
-	/** Open the armour-cost popup (the Yes branch, after the stop settles). */
-	showArmourPopup(): Promise<void>;
+	/** Whether Later must still capture a whole-session protection setup. */
+	captureArmourSetupOnLater(): boolean;
+	/** Open the armour workflow and report only once the satellite is open. */
+	showArmourPopup(recordNow: boolean): Promise<boolean>;
 	/** A prompt or notice just became visible (hosts re-anchor satellites here). */
 	onPromptShown?(): void;
 }
@@ -80,14 +80,6 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 		lastSessionStats = null;
 	}
 
-	function clearWhenReady(): void {
-		if (options.isArmourPopupOpen()) {
-			clearPending = true;
-			return;
-		}
-		clear();
-	}
-
 	async function stop(showArmour: boolean): Promise<void> {
 		stopping = true;
 		const wasActive = options.isSessionActive();
@@ -106,13 +98,22 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 		}
 		stopping = false;
 
-		// The armour-cost popup is opt-in via the prompt's Yes branch;
-		// suppressed when the user picked No or the reminder is disabled.
-		if (wasActive && showArmour) {
-			await options.showArmourPopup();
+		// Recording cost is opt-in via the prompt's Record branch. An opted-out
+		// session still needs its whole-session setup captured on Later.
+		const openArmourWorkflow = wasActive && (showArmour || options.captureArmourSetupOnLater());
+		if (openArmourWorkflow) {
+			const opened = await options.showArmourPopup(showArmour);
+			if (opened) {
+				clearPending = true;
+				return;
+			}
+			// Keep the stopped-session anchor and totals available when the
+			// satellite fails to open. The host surfaces the launch error and
+			// the user can retry instead of silently losing the workflow.
+			return;
 		}
 
-		clearWhenReady();
+		clear();
 	}
 
 	return {

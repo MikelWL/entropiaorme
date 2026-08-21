@@ -13,6 +13,7 @@
 	import { inDevelopment } from '$lib/inDevelopment';
 	import type { Hotbar } from '$lib/types/settings';
 	import GuardrailsTab from './GuardrailsTab.svelte';
+	import EffectsTab from './EffectsTab.svelte';
 	import HotbarTab from './HotbarTab.svelte';
 	import TrifectaTab from './TrifectaTab.svelte';
 
@@ -22,6 +23,7 @@
 	const tabs = $derived([
 		{ id: 'library', label: 'Library' },
 		...(inDevelopment.visible ? [{ id: 'protection', label: 'Protection' }] : []),
+		{ id: 'effects', label: 'Effects' },
 		{ id: 'trifecta', label: 'Trifecta' },
 		{ id: 'hotbar', label: 'Hotbar' },
 		{ id: 'guardrails', label: 'Guardrails' }
@@ -160,6 +162,13 @@
 			guardrail={model.harvestGuardrail}
 			onchange={(value) => {
 				model.harvestGuardrail = value;
+			}}
+		/>
+	{:else if activeTab === 'effects'}
+		<EffectsTab
+			sources={model.passiveEffectSources}
+			onchange={(value) => {
+				model.passiveEffectSources = value;
 			}}
 		/>
 	{:else if activeTab === 'protection' && inDevelopment.visible}

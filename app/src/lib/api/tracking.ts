@@ -49,9 +49,11 @@ export interface TrackingLive {
 	 * session's stamped reference when tracking, the configured
 	 * selection when idle. */
 	sessionDefinitionId?: string | null;
+	trackProtectionBySegment?: boolean | null;
 	skillBoostPercent?: number | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
+	currentToolKind?: 'weapon' | 'healing' | 'consumable' | 'harvesting' | null;
 	/** What the held tool implies the next action records as. */
 	currentActivity?: ToolActivity | null;
 	/** The Activities control's strip-level readout: whether the control

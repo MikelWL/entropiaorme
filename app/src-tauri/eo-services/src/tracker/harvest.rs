@@ -92,8 +92,13 @@ impl TrackerActor {
             name: payload.tool_name.clone(),
             cost_per_use: Ped(payload.cost_per_use_ped),
         });
-        let hand_changed = !self.hand_is_harvest;
-        self.hand_is_harvest = true;
+        let hand_changed = self.held_item.as_ref().is_none_or(|item| {
+            item.0 != payload.tool_name || item.1 != crate::bus_events::HotbarItemKind::Harvesting
+        });
+        self.held_item = Some((
+            payload.tool_name.clone(),
+            crate::bus_events::HotbarItemKind::Harvesting,
+        ));
 
         let nudge_session_id = {
             let Some(active) = self.session.active_mut() else {

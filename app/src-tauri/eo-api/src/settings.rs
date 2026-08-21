@@ -84,6 +84,42 @@ pub struct HarvestGuardrailSettings {
     pub huge_tool_id: Nullable<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PassiveEffectKind {
+    ReloadSpeed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PassiveEffectView {
+    pub kind: PassiveEffectKind,
+    pub magnitude_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PassiveEffectSourceView {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub effects: Vec<PassiveEffectView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PassiveEffectInput {
+    pub kind: PassiveEffectKind,
+    pub magnitude_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PassiveEffectSourceInput {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub effects: Vec<PassiveEffectInput>,
+}
+
 /// The full assembled settings response. Field order is the wire order
 /// the frontend contract expects (and the HTTP body carried).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -103,6 +139,7 @@ pub struct AppSettings {
     /// order (`serde_json`'s `preserve_order`), so slot "0" stays last.
     pub hotbar: Map<String, Value>,
     pub trifecta: TrifectaSettings,
+    pub passive_effect_sources: Vec<PassiveEffectSourceView>,
     pub harvest_guardrail: HarvestGuardrailSettings,
     pub loot_filter_blacklist: Vec<String>,
     pub db_path: String,
@@ -182,6 +219,8 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub trifecta_presets: Option<Vec<TrifectaPresetInput>>,
     #[serde(default)]
+    pub passive_effect_sources: Option<Vec<PassiveEffectSourceInput>>,
+    #[serde(default)]
     pub harvest_guardrail: Option<HarvestGuardrailInput>,
     #[serde(default)]
     pub loot_filter_blacklist: Option<Vec<String>>,
@@ -256,6 +295,9 @@ impl SettingsPatch {
         if let Some(value) = self.trifecta_presets {
             updates.insert("trifecta_presets".into(), json!(value));
         }
+        if let Some(value) = self.passive_effect_sources {
+            updates.insert("passive_effect_sources".into(), json!(value));
+        }
         if let Some(value) = self.harvest_guardrail {
             updates.insert("harvest_guardrail".into(), json!(value));
         }
@@ -293,6 +335,27 @@ impl Api {
                 .filter(|percent| *percent >= 0),
             hotbar: config.hotbar.clone(),
             trifecta,
+            passive_effect_sources: config
+                .passive_effect_sources
+                .iter()
+                .map(|source| PassiveEffectSourceView {
+                    id: source.id.clone(),
+                    name: source.name.clone(),
+                    enabled: source.enabled,
+                    effects: source
+                        .effects
+                        .iter()
+                        .map(|effect| PassiveEffectView {
+                            kind: match effect.kind {
+                                eo_services::passive_effects::PassiveEffectKind::ReloadSpeed => {
+                                    PassiveEffectKind::ReloadSpeed
+                                }
+                            },
+                            magnitude_percent: effect.magnitude_percent,
+                        })
+                        .collect(),
+                })
+                .collect(),
             harvest_guardrail: HarvestGuardrailSettings {
                 enabled: config.harvest_guardrail.enabled,
                 short_tool_id: config.harvest_guardrail.short_tool_id.into(),
@@ -353,6 +416,9 @@ impl Api {
     /// config), and reply with the full assembled settings.
     pub async fn settings_update(&self, patch: SettingsPatch) -> Result<AppSettings, ApiError> {
         let disables_developer_mode = patch.developer_mode_enabled == Some(false);
+        if let Some(sources) = patch.passive_effect_sources.as_deref() {
+            validate_passive_effect_sources(sources)?;
+        }
         let mut updates = patch.into_updates();
         // An empty patch is the backend's 400 (nothing to update).
         if updates.is_empty() {
@@ -455,6 +521,44 @@ impl Api {
             message: active_message.into(),
         })
     }
+}
+
+fn validate_passive_effect_sources(sources: &[PassiveEffectSourceInput]) -> Result<(), ApiError> {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut enabled_reload_speed = 0.0;
+    for source in sources {
+        if source.id.trim().is_empty() || source.name.trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "Passive effect sources require an id and name",
+            ));
+        }
+        if !ids.insert(source.id.trim()) {
+            return Err(ApiError::bad_request(
+                "Passive effect source ids must be unique",
+            ));
+        }
+        if source.effects.is_empty() {
+            return Err(ApiError::bad_request(
+                "Passive effect sources require at least one effect",
+            ));
+        }
+        for effect in &source.effects {
+            if !effect.magnitude_percent.is_finite() {
+                return Err(ApiError::bad_request(
+                    "Passive effect magnitudes must be finite",
+                ));
+            }
+            if source.enabled && matches!(effect.kind, PassiveEffectKind::ReloadSpeed) {
+                enabled_reload_speed += effect.magnitude_percent;
+            }
+        }
+    }
+    if enabled_reload_speed <= -100.0 {
+        return Err(ApiError::bad_request(
+            "Combined reload speed must be greater than -100%",
+        ));
+    }
+    Ok(())
 }
 
 /// Mirror the backend's `_validate_chatlog_path`: a non-empty path whose

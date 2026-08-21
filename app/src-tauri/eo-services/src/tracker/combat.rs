@@ -4,7 +4,7 @@
 
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 
-use crate::bus_events::{BusEvent, CombatPayload};
+use crate::bus_events::{BusEvent, CombatPayload, HotbarItemKind};
 use crate::expected_hunting::OffensiveLoadoutEvidence;
 use crate::ped::Ped;
 use crate::tracking_models::ToolStats;
@@ -327,7 +327,7 @@ impl TrackerActor {
             let Self {
                 session,
                 providers,
-                hand_is_harvest,
+                held_item,
                 ..
             } = &mut *self;
             if payload.tool_name.is_empty() {
@@ -338,8 +338,10 @@ impl TrackerActor {
             // before the trifecta early-return: the equip signal means
             // the hand holds a weapon whatever the attribution mode,
             // and a stale flag would pin the displayed tool.
-            let hand_changed = *hand_is_harvest;
-            *hand_is_harvest = false;
+            let hand_changed = held_item
+                .as_ref()
+                .is_none_or(|item| item.0 != payload.tool_name || item.1 != HotbarItemKind::Weapon);
+            *held_item = Some((payload.tool_name.clone(), HotbarItemKind::Weapon));
             if providers.config.weapon_attribution_trifecta() {
                 return;
             }
@@ -437,10 +439,15 @@ impl TrackerActor {
         let BusEvent::ActiveHealToolChanged(payload) = event else {
             return;
         };
+        let name = Some(payload.tool_name.clone());
+        let held_changed = self
+            .held_item
+            .as_ref()
+            .is_none_or(|item| item.0 != payload.tool_name || item.1 != HotbarItemKind::Healing);
+        self.held_item = Some((payload.tool_name.clone(), HotbarItemKind::Healing));
         if self.providers.config.weapon_attribution_trifecta() {
             return;
         }
-        let name = Some(payload.tool_name.clone());
 
         let nudge_session_id = {
             let heal_tool_changed = self.heal_tool.name != name;
@@ -457,7 +464,7 @@ impl TrackerActor {
             active.heal_warning_emitted = false;
             // Equipping a different heal tool changes the overlay readout;
             // emit a direct re-hydrate nudge (mirrors the weapon path).
-            if heal_tool_changed {
+            if heal_tool_changed || held_changed {
                 Some(active.session.id.clone())
             } else {
                 None

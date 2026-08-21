@@ -7,6 +7,7 @@ function definition(id: string, name: string): SessionDefinition {
 		id,
 		name,
 		adHocSegments: false,
+		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,
 		instanceCount: 0,

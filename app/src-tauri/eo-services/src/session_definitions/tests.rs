@@ -49,6 +49,7 @@ fn input(name: &str, roster: Vec<RosterEntryInput>) -> SessionDefinitionInput {
     SessionDefinitionInput {
         name: name.to_string(),
         ad_hoc_segments: false,
+        track_protection_by_segment: true,
         roster,
     }
 }
@@ -88,6 +89,7 @@ async fn definition_crud_round_trips() {
         .create(SessionDefinitionInput {
             name: "  ARIS Dailies  ".to_string(),
             ad_hoc_segments: true,
+            track_protection_by_segment: true,
             roster: vec![
                 family_entry(family_id),
                 quest_entry(quest_id),
@@ -154,6 +156,7 @@ async fn update_replaces_the_roster_wholesale() {
             SessionDefinitionInput {
                 name: "General Hunting".to_string(),
                 ad_hoc_segments: true,
+                track_protection_by_segment: true,
                 roster: vec![segment_entry("Grind")],
             },
         )
@@ -385,21 +388,21 @@ async fn the_protected_default_cannot_be_archived_and_backs_every_selection() {
     for configured in [None, Some(9999), Some(default_id)] {
         assert_eq!(
             super::resolve_selection(&db, configured).await.unwrap(),
-            Some((default_id, "General Play".to_string()))
+            Some((default_id, "General Play".to_string(), true))
         );
     }
     assert_eq!(
         super::resolve_selection(&db, Some(authored.id))
             .await
             .unwrap(),
-        Some((authored.id, "ARIS Dailies".to_string()))
+        Some((authored.id, "ARIS Dailies".to_string(), true))
     );
     svc.archive(authored.id).await.unwrap();
     assert_eq!(
         super::resolve_selection(&db, Some(authored.id))
             .await
             .unwrap(),
-        Some((default_id, "General Play".to_string()))
+        Some((default_id, "General Play".to_string(), true))
     );
 }
 

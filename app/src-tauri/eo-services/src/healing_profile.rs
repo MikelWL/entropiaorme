@@ -43,6 +43,14 @@ pub struct HealingProfile {
     pub tick_min: Option<f64>,
     pub tick_max: Option<f64>,
     pub tick_seconds: Option<f64>,
+    /// Reload evidence is populated by the live hotbar resolver. Catalogue
+    /// profiles outside an activation leave these fields absent.
+    #[serde(default)]
+    pub base_reload_seconds: Option<f64>,
+    #[serde(default)]
+    pub reload_speed_percent: Option<f64>,
+    #[serde(default)]
+    pub effective_reload_seconds: Option<f64>,
 }
 
 impl HealingProfile {
@@ -101,6 +109,9 @@ mod tests {
             tick_min: Some(9.0),
             tick_max: Some(11.0),
             tick_seconds: Some(2.0),
+            base_reload_seconds: None,
+            reload_speed_percent: None,
+            effective_reload_seconds: None,
         };
         assert!(profile.direct_matches(80.0));
         assert!(!profile.direct_matches(10.0));

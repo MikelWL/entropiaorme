@@ -36,6 +36,8 @@ export const archiveProtectionSet = (id: string) => commands.protectionSetArchiv
 export const archiveProtectionLoadout = (id: string) =>
 	commands.protectionLoadoutArchive(Number(id));
 export const selectProtectionLoadout = (id: string) => commands.protectionSelect(Number(id));
+export const assignSessionProtectionLoadout = (sessionId: string, loadoutId: string) =>
+	commands.protectionAssignSessionLoadout(sessionId, Number(loadoutId));
 export const confirmProtectionObservation = commands.protectionObservationConfirm;
 export const confirmProtectionRepair = commands.protectionRepairConfirm;
 export const scanTradeTerminalValue = commands.protectionTradeTerminalScan;

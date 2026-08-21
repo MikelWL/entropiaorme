@@ -11,7 +11,6 @@
 	let rawText = $state<string | null>(null);
 	let calibrated = $state(true);
 	let scanError = $state<string | null>(null);
-	let asserted = $state(false);
 	let resetReason = $state('');
 
 	const parsedValue = $derived.by(() => {
@@ -22,10 +21,8 @@
 	const increased = $derived(
 		parsedValue !== null && baseline !== null && parsedValue > baseline.ttValuePed + 0.0000001,
 	);
-	const requiresAssertion = $derived(baseline !== null && !increased);
 	const canConfirm = $derived(
 		parsedValue !== null &&
-		(!requiresAssertion || asserted) &&
 		(!increased || resetReason.trim().length > 0) &&
 		!model.saving,
 	);
@@ -38,7 +35,6 @@
 		rawText = null;
 		calibrated = true;
 		scanError = null;
-		asserted = false;
 		resetReason = '';
 	});
 
@@ -165,11 +161,6 @@
 							<label for="protection-reset-reason" class="block eyebrow">Why the baseline changed</label>
 							<Input id="protection-reset-reason" bind:value={resetReason} placeholder="Pieces replaced, replenished, or earlier read corrected" />
 						</div>
-					{:else if requiresAssertion}
-						<label class="flex items-start gap-2 text-xs text-text-secondary cursor-pointer">
-							<input class="mt-0.5 accent-accent" type="checkbox" bind:checked={asserted} />
-							<span>This set was not replaced and was used only while EntropiaOrme was recording between these readings.</span>
-						</label>
 					{/if}
 
 					<div class="flex items-center justify-between pt-1">

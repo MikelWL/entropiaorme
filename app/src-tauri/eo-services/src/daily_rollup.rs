@@ -44,9 +44,10 @@ use crate::db::DbError;
 
 /// Bump when a rollup column's meaning changes: below-version rows heal
 /// on the next read.
-// Bumped to 3 when confirmed non-ammo quest-item TT joined the projection:
-// below-version rows heal on the next read.
-pub const ROLLUP_VERSION: i64 = 3;
+// Bumped to 3 when confirmed non-ammo quest-item TT joined the projection;
+// to 4 when protection costs were re-attributed by hit count. Below-version
+// rows heal on the next read.
+pub const ROLLUP_VERSION: i64 = 4;
 
 /// The UTC day of an epoch second, rendered as SQLite's
 /// `date(epoch, 'unixepoch')` renders it (`YYYY-MM-DD`).

@@ -1,3 +1,4 @@
+import type { ProtectionOverview } from '$lib/api';
 import type { ProtectionCostStep } from '$lib/features/protection/protectionCostFlow';
 
 export const OVERLAY_ARMOUR_COST_WINDOW_LABEL = 'overlay-armour-cost';
@@ -10,6 +11,9 @@ export interface OverlayArmourCostState {
 	sessionId: string;
 	repairOcrEnabled: boolean;
 	steps: ProtectionCostStep[];
+	protection: ProtectionOverview | null;
+	requiresLoadoutSelection: boolean;
+	recordNow: boolean;
 	// Logical screen-px anchor: horizontal centre and top edge for the popup,
 	// so it can re-centre against the cost button as it resizes.
 	anchor: { centerX: number; top: number };

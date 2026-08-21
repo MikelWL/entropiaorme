@@ -88,6 +88,7 @@ use eo_services::hotbar_listener::{
 use eo_services::keystroke_source::{HookKeystrokeSource, KeystrokeSource, SharedKeystrokeSource};
 use eo_services::ocr_engine::load_bgr_png;
 pub use eo_services::ocr_engine::OcrEngine;
+use eo_services::passive_effects::{effective_reload_seconds, reload_speed_percent};
 use eo_services::paths::{resolve_data_dir, DB_FILE_NAME};
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
@@ -1426,14 +1427,23 @@ fn build_hotbar_resolver(
             };
             let outcome = match item_type.as_str() {
                 "healing" => {
-                    let (cost_ped, reload_seconds) = heal_cost_from_props(&properties_json);
+                    let (cost_ped, base_reload_seconds) = heal_cost_from_props(&properties_json);
+                    let speed_percent = reload_speed_percent(&config.passive_effect_sources);
+                    let reload_seconds = effective_reload_seconds(
+                        base_reload_seconds,
+                        &config.passive_effect_sources,
+                    );
+                    let mut healing_profile = healing_profile_from_props(&properties_json);
+                    healing_profile.base_reload_seconds = Some(base_reload_seconds);
+                    healing_profile.reload_speed_percent = Some(speed_percent);
+                    healing_profile.effective_reload_seconds = Some(reload_seconds);
                     ResolvedHotbarItem {
                         equipment_id: equip_id,
                         name,
                         kind: HotbarItemKind::Healing,
                         cost_per_use_ped: cost_ped,
                         reload_seconds,
-                        healing_profile: Some(healing_profile_from_props(&properties_json)),
+                        healing_profile: Some(healing_profile),
                         lifesteal_percent: None,
                     }
                 }

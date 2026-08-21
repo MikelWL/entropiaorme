@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::passive_effects::{PassiveEffect, PassiveEffectKind, PassiveEffectSource};
+
 pub const HOTBAR_SLOTS: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 pub const DEFAULT_TRIFECTA_PRESET_ID: &str = "default";
 pub const DEFAULT_TRIFECTA_PRESET_NAME: &str = "Default";
@@ -98,6 +100,9 @@ pub struct AppConfig {
     pub hotbar: Map<String, Value>,
     pub trifecta_presets: Vec<TrifectaPresetConfig>,
     pub active_trifecta_preset_id: Option<String>,
+    /// Persistent item or condition effects. Each source owns typed effects so
+    /// new capabilities and future time-bounded sources can share evaluators.
+    pub passive_effect_sources: Vec<PassiveEffectSource>,
     pub harvest_guardrail: HarvestGuardrailConfig,
     pub loot_filter_blacklist: Vec<String>,
     pub overlay_x: Option<i64>,
@@ -135,6 +140,7 @@ impl Default for AppConfig {
             hotbar,
             trifecta_presets: vec![TrifectaPresetConfig::default_preset()],
             active_trifecta_preset_id: Some(DEFAULT_TRIFECTA_PRESET_ID.to_string()),
+            passive_effect_sources: Vec::new(),
             harvest_guardrail: HarvestGuardrailConfig::default(),
             loot_filter_blacklist: vec!["Universal Ammo".to_string()],
             overlay_x: None,
@@ -424,6 +430,9 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
         hotbar: normalize_hotbar(data.get("hotbar")),
         trifecta_presets,
         active_trifecta_preset_id: Some(active_id),
+        passive_effect_sources: normalize_passive_effect_sources(
+            data.get("passive_effect_sources"),
+        ),
         harvest_guardrail: normalize_harvest_guardrail(data.get("harvest_guardrail")),
         loot_filter_blacklist: data
             .get("loot_filter_blacklist")
@@ -459,7 +468,7 @@ fn from_stored(data: &Map<String, Value>) -> AppConfig {
 // facet splits into "not declared" and "declared zero". Reading it
 // forward would turn every existing store's default into a claim the
 // user never made, so it stays unknown and carries through untouched.
-const KNOWN_KEYS: [&str; 19] = [
+const KNOWN_KEYS: [&str; 20] = [
     "chatlog_path",
     "player_name",
     "hotbar_hooks_enabled",
@@ -474,6 +483,7 @@ const KNOWN_KEYS: [&str; 19] = [
     "hotbar",
     "trifecta_presets",
     "active_trifecta_preset_id",
+    "passive_effect_sources",
     "harvest_guardrail",
     "loot_filter_blacklist",
     "overlay_x",
@@ -490,6 +500,48 @@ fn json_truthy(value: &Value) -> bool {
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
     }
+}
+
+fn normalize_passive_effect_sources(raw: Option<&Value>) -> Vec<PassiveEffectSource> {
+    let Some(items) = raw.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    items
+        .iter()
+        .filter_map(|value| {
+            let object = value.as_object()?;
+            let id = object.get("id")?.as_str()?.trim().to_string();
+            let name = object.get("name")?.as_str()?.trim().to_string();
+            if id.is_empty() || name.is_empty() || !seen.insert(id.clone()) {
+                return None;
+            }
+            let effects = object
+                .get("effects")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|effect| {
+                    let effect = effect.as_object()?;
+                    let kind = match effect.get("kind")?.as_str()? {
+                        "reload_speed" => PassiveEffectKind::ReloadSpeed,
+                        _ => return None,
+                    };
+                    let magnitude_percent = effect.get("magnitude_percent")?.as_f64()?;
+                    magnitude_percent.is_finite().then_some(PassiveEffect {
+                        kind,
+                        magnitude_percent,
+                    })
+                })
+                .collect::<Vec<_>>();
+            (!effects.is_empty()).then_some(PassiveEffectSource {
+                id,
+                name,
+                enabled: object.get("enabled").map(json_truthy).unwrap_or(true),
+                effects,
+            })
+        })
+        .collect()
 }
 
 /// Normalise a stored or submitted guardrail block: a non-object reads
@@ -652,6 +704,9 @@ fn apply_updates(config: &mut AppConfig, updates: &Map<String, Value>) {
                     Value::String(s) => Some(s.clone()),
                     _ => continue,
                 };
+            }
+            "passive_effect_sources" => {
+                config.passive_effect_sources = normalize_passive_effect_sources(Some(value));
             }
             "harvest_guardrail" => {
                 config.harvest_guardrail = normalize_harvest_guardrail(Some(value));

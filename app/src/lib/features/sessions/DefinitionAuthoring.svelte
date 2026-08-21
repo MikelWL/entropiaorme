@@ -150,6 +150,22 @@
 				disabled={model.saving}
 			/>
 
+			<div class="flex items-start justify-between gap-6 border-y border-border/60 py-4">
+				<div>
+					<p class="text-sm font-medium text-text">Protection by segment</p>
+					<p class="mt-1 max-w-lg text-sm leading-6 text-text-secondary">
+						Show protection selectors while tracking and attribute measured cost between activity segments.
+						Turn this off when whole-session protection cost is sufficient.
+					</p>
+				</div>
+				<Toggle
+					checked={model.trackProtectionBySegment}
+					label="Track protection by segment"
+					disabled={model.saving}
+					onchange={(checked) => (model.trackProtectionBySegment = checked)}
+				/>
+			</div>
+
 			<!-- Activities: the roster and its on-the-fly option, folded away
 				 behind one disclosure. What is authored here is what the
 				 overlay's Activities control offers while the session runs. -->

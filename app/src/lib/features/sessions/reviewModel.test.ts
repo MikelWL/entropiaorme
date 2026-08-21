@@ -21,6 +21,7 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		id: '1',
 		name: 'Default Tracking',
 		adHocSegments: false,
+		trackProtectionBySegment: true,
 		isProtected: true,
 		isActive: true,
 		instanceCount: 0,

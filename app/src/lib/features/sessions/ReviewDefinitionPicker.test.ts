@@ -25,6 +25,7 @@ function definition(
 		id,
 		name,
 		adHocSegments: false,
+		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,
 		instanceCount: 0,

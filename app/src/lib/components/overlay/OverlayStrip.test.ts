@@ -348,6 +348,57 @@ describe('derived activity feedback', () => {
 		});
 		expect(screen.queryByTestId('activity-feedback')).toBeNull();
 	});
+
+	it('shows a held healer as the sole item without backend healing telemetry', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					weaponAttribution: 'trifecta',
+					currentTool: 'Restoration Chip 10',
+					currentToolKind: 'healing',
+					currentActivity: null,
+					trifectaAttribution: {
+						activePresetId: 'p1',
+						presetName: 'Hunting Set',
+						presets: [{ id: 'p1', name: 'Hunting Set' }],
+						smallWeapon: null,
+						bigWeapon: null,
+						healTool: null,
+					},
+					healing: {
+						toolName: 'Restoration Chip 10',
+						state: 'cooldown',
+						cooldownUntil: 20,
+						effectUntil: null,
+						activations: 2,
+						directOutputs: 1,
+						effectOutputs: 0,
+						passiveOutputs: 3,
+						unattributedOutputs: 0,
+					},
+				}),
+			},
+		});
+
+		expect(screen.getByText('Restoration Chip 10')).toBeTruthy();
+		expect(screen.queryByText('Hunting Set')).toBeNull();
+		expect(screen.queryByTestId('activity-feedback')).toBeNull();
+		expect(screen.queryByTestId('healing-state')).toBeNull();
+		expect(screen.queryByText(/passive heal/i)).toBeNull();
+		expect(screen.queryByText(/cooldown/i)).toBeNull();
+	});
+});
+
+describe('protection declaration policy', () => {
+	it('hides segment protection selectors when the definition records whole-session cost only', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ trackProtectionBySegment: false }),
+				protection: mixedProtection,
+			},
+		});
+		expect(screen.queryByTestId('protection-facet')).toBeNull();
+	});
 });
 
 describe('customisable stat pills', () => {

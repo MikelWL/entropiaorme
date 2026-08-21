@@ -87,6 +87,7 @@
 	let armourCostClosedAt = 0;
 	let armourCostError = $state<string | null>(null);
 	let armourCostAnchor: HTMLElement | null = $state(null);
+	let armourRecordNow = true;
 	let postSessionArmourButton: HTMLButtonElement | null = $state(null);
 	// Yellow attribution-not-ready warning that replaces the TRACK button when
 	// startTracking is refused by the backend (no hotbar slot bound in hotbar
@@ -170,7 +171,8 @@
 			net: snapshot.current?.net ?? 0
 		}),
 		stopTracking,
-		isArmourPopupOpen: () => armourCostOpen,
+		captureArmourSetupOnLater: () =>
+			data.trackProtectionBySegment === false && (protection.overview?.loadouts.length ?? 0) > 0,
 		showArmourPopup: showPostSessionArmourPopup,
 		onPromptShown: () => {
 			void tick().then(scheduleArmourCostAnchorSync);
@@ -283,16 +285,26 @@
 		};
 	}
 
-	async function buildArmourCostState(anchor: HTMLElement): Promise<OverlayArmourCostState | null> {
+	async function buildArmourCostState(
+		anchor: HTMLElement,
+		recordNow = armourRecordNow
+	): Promise<OverlayArmourCostState | null> {
 		const sessionId = armourSessionId;
 		if (!sessionId || !anchor.isConnected) return null;
-		const steps = buildProtectionCostSteps(protection.overview);
-		if (steps.length === 0) return null;
+		const requiresLoadoutSelection = data.trackProtectionBySegment === false;
+		const steps = requiresLoadoutSelection ? [] : buildProtectionCostSteps(protection.overview);
+		if (!requiresLoadoutSelection && steps.length === 0) return null;
+		if (requiresLoadoutSelection && (protection.overview?.loadouts.length ?? 0) === 0) {
+			throw new Error('Create a protection setup in Equipment before recording its cost');
+		}
 
 		return {
 			sessionId,
 			repairOcrEnabled: data.repairOcrEnabled === true,
 			steps,
+			protection: protection.overview,
+			requiresLoadoutSelection,
+			recordNow,
 			anchor: await anchorCentreBelow(anchor, OVERLAY_MENU_VERTICAL_GAP)
 		};
 	}
@@ -449,11 +461,12 @@
 		if (failure) facets.facetError = failure;
 	}
 
-	async function showArmourCost(anchor: HTMLElement) {
+	async function showArmourCost(anchor: HTMLElement, recordNow = true): Promise<boolean> {
 		try {
+			armourRecordNow = recordNow;
 			await armourCostWindow.ensure();
-			const state = await buildArmourCostState(anchor);
-			if (!state) return;
+			const state = await buildArmourCostState(anchor, recordNow);
+			if (!state) return false;
 
 			armourCostAnchor = anchor;
 			// The popup measures its panel, sizes+positions itself accurately, then
@@ -463,6 +476,7 @@
 			armourCostError = null;
 			armourCostOpen = true;
 			scheduleArmourCostAnchorSync();
+			return true;
 		} catch (error) {
 			armourCostOpen = false;
 			armourCostAnchor = null;
@@ -470,6 +484,7 @@
 				? error.message
 				: 'Popup window failed to open';
 			console.error('Armour cost popup failed', error);
+			return false;
 		}
 	}
 
@@ -508,16 +523,17 @@
 		if (Date.now() - armourCostClosedAt < 250) return;
 		const anchor = event.currentTarget as HTMLElement | null;
 		if (!anchor) return;
-		await showArmourCost(anchor);
+		await showArmourCost(anchor, true);
 	}
 
 	// The armour-cost popup after a Yes on the armour prompt: the anchor
 	// button only renders once the post-session readout has, hence the tick.
-	async function showPostSessionArmourPopup() {
+	async function showPostSessionArmourPopup(recordNow: boolean): Promise<boolean> {
 		await tick();
 		if (postSessionArmourButton && armourSessionId && !armourCostOpen) {
-			await showArmourCost(postSessionArmourButton);
+			return showArmourCost(postSessionArmourButton, recordNow);
 		}
+		return false;
 	}
 
 	async function handleTrifectaPresetSelection(presetId: string) {
@@ -812,6 +828,7 @@
 			endOfSessionArmourReminderEnabled: snap.endOfSessionArmourReminderEnabled,
 			sessionName: snap.sessionName,
 			sessionDefinitionId: snap.sessionDefinitionId,
+			trackProtectionBySegment: snap.trackProtectionBySegment,
 			skillBoostPercent: snap.skillBoostPercent,
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,

@@ -57,7 +57,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 48] = [
+const SNAPSHOT_FIELDS: [&str; 50] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -65,9 +65,11 @@ const SNAPSHOT_FIELDS: [&str; 48] = [
     "endOfSessionArmourReminderEnabled",
     "sessionName",
     "sessionDefinitionId",
+    "trackProtectionBySegment",
     "skillBoostPercent",
     "currentMob",
     "currentTool",
+    "currentToolKind",
     "currentActivity",
     "activities",
     "lifetime",
@@ -516,6 +518,8 @@ pub struct TrackingSnapshot {
     /// idle. Absent when no definition is in force.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_definition_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_protection_by_segment: Option<bool>,
     /// The skill-boost facet (labelled percent), same idle/active
     /// sourcing as the session name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,6 +528,8 @@ pub struct TrackingSnapshot {
     pub current_mob: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_tool_kind: Option<HeldItemKind>,
     /// What the held tool implies the next action is recorded as.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_activity: Option<ToolActivity>,
@@ -617,6 +623,15 @@ pub struct TrackingSnapshot {
     pub healing: Option<HealingStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Warning>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldItemKind {
+    Weapon,
+    Healing,
+    Consumable,
+    Harvesting,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1451,9 +1466,22 @@ pub(crate) async fn build_snapshot_value(
     };
     // The derived-activity feedback: what the held tool implies the
     // next action is recorded as (absent when no tool is known).
-    let current_activity = match &readout.current_tool {
-        Some(_) if readout.current_tool_is_harvest => Value::String("treecutting".into()),
-        Some(_) => Value::String("hunting".into()),
+    let current_activity = match readout.current_tool_kind {
+        Some(eo_services::bus_events::HotbarItemKind::Harvesting) => {
+            Value::String("treecutting".into())
+        }
+        Some(eo_services::bus_events::HotbarItemKind::Weapon) => Value::String("hunting".into()),
+        _ => Value::Null,
+    };
+    let current_tool_kind = match readout.current_tool_kind {
+        Some(eo_services::bus_events::HotbarItemKind::Weapon) => Value::String("weapon".into()),
+        Some(eo_services::bus_events::HotbarItemKind::Healing) => Value::String("healing".into()),
+        Some(eo_services::bus_events::HotbarItemKind::Consumable) => {
+            Value::String("consumable".into())
+        }
+        Some(eo_services::bus_events::HotbarItemKind::Harvesting) => {
+            Value::String("harvesting".into())
+        }
         None => Value::Null,
     };
     // The facet pair serialises null for "not declared" (the projection
@@ -1486,7 +1514,10 @@ pub(crate) async fn build_snapshot_value(
         eo_services::session_definitions::resolve_selection(db, config.session_definition_id)
             .await
             .map_err(ApiError::internal("snapshot definition selection"))?;
-    let idle_definition_id = idle_selection.as_ref().map(|(id, _)| *id);
+    let idle_definition_id = idle_selection.as_ref().map(|(id, _, _)| *id);
+    let idle_track_protection = idle_selection
+        .as_ref()
+        .is_none_or(|(_, _, track_protection)| *track_protection);
 
     // The Activities control's strip-level readout: whether the control
     // appears at all, how many rows a tap could start, and what is
@@ -1520,14 +1551,16 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentToolKind": current_tool_kind,
                 "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(if config.session_name.trim().is_empty() {
-                    idle_selection.as_ref().map_or("", |(_, name)| name.as_str())
+                    idle_selection.as_ref().map_or("", |(_, name, _)| name.as_str())
                 } else {
                     config.session_name.trim()
                 })),
                 "sessionDefinitionId": definition_value(idle_definition_id),
+                "trackProtectionBySegment": idle_track_protection,
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
                 "activities": activities,
@@ -1614,12 +1647,14 @@ pub(crate) async fn build_snapshot_value(
                 "repairOcrEnabled": config.repair_ocr_enabled,
                 "endOfSessionArmourReminderEnabled": config.end_of_session_armour_reminder_enabled,
                 "currentTool": current_tool,
+                "currentToolKind": current_tool_kind,
                 "currentActivity": current_activity,
                 "activities": activities,
                 "lifetime": lifetime,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "sessionDefinitionId": definition_value(active.definition_id),
+                "trackProtectionBySegment": active.track_protection_by_segment,
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
                 "currentMob": active.current_mob.clone(),
                 "recentEvents": recent_events,

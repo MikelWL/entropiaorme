@@ -293,6 +293,16 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "context offensive evidence",
         sql: include_str!("../../migrations/0051_context_offensive_evidence.sql"),
     },
+    Migration {
+        version: 52,
+        description: "protection hit allocation",
+        sql: include_str!("../../migrations/0052_protection_hit_allocation.sql"),
+    },
+    Migration {
+        version: 53,
+        description: "session protection policy",
+        sql: include_str!("../../migrations/0053_session_protection_policy.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -352,6 +362,8 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "8111C0C5CD587A8D59CFC38068C2E0F0553DFFB8D63C72F51956591CDFF8AA05F0DCD18F12DF9C920B997F4A3A2FA383",
     "57D24D21E6A64E85F9616AA6D359120C1F191B3817886C6AE90D5E2062BD933405F178119AD29DAF474E5CA059DEBBFF",
     "49B3ABDBA79E1310C89EB54C3182BEB332883A97C6229453C11F5867768146A9D65D8EAFBC4501775D4F01D1AF133A71",
+    "3D056CDB492EEC513AE2AB50F1FC3F5A5D4E1060A8E4080E8525ABB2E349EFDAA3D976F3FC3B189342D7B5369B0EBDFC",
+    "44F7DCA5C01DE16671062A14175F318FB4EB7720327303E5F9438DD957130F60CF42D3C47910BCA27816B0F05422202A",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -534,6 +546,89 @@ mod tests {
                 migration.version
             );
         }
+    }
+
+    #[test]
+    fn protection_hit_allocation_upgrade_reweights_history_and_conserves_cost() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(LEDGER_DDL).expect("ledger");
+        for migration in &MIGRATIONS[..49] {
+            let tx = connection.transaction().expect("migration transaction");
+            tx.execute_batch(migration.sql).expect("migration SQL");
+            tx.execute(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?1, ?2, TRUE, ?3, 0)",
+                rusqlite::params![
+                    migration.version,
+                    migration.description,
+                    migration.checksum()
+                ],
+            )
+            .expect("ledger row");
+            tx.commit().expect("migration commit");
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, armour_cost) VALUES \
+                 ('large-damage', 1, 2, 0, 8), ('three-hits', 3, 4, 0, 2); \
+                 INSERT INTO protection_cost_windows \
+                 (id, kind, cost_ped, status, client_token, created_at) \
+                 VALUES (1, 'repair', 10, 'booked', 'historic-window', 5); \
+                 INSERT INTO protection_defence_events \
+                 (id, session_id, damage, deflected) VALUES \
+                 (1, 'large-damage', 80, 0), \
+                 (2, 'three-hits', NULL, 1), \
+                 (3, 'three-hits', 20, 0), \
+                 (4, 'three-hits', 40, 0); \
+                 INSERT INTO protection_cost_evidence \
+                 (window_id, set_id, defence_event_id) VALUES \
+                 (1, NULL, 1), (1, NULL, 2), (1, NULL, 3), (1, NULL, 4); \
+                 INSERT INTO protection_cost_allocations \
+                 (window_id, session_id, damage_weight, deflection_count, allocation_share, cost_ped) \
+                 VALUES (1, 'large-damage', 80, 0, 0.8, 8), \
+                        (1, 'three-hits', 60, 1, 0.2, 2); \
+                 INSERT INTO protection_cost_context_allocations \
+                 (window_id, session_id, context_key, context_id, damage_weight, \
+                  deflection_count, allocation_share, cost_ped) VALUES \
+                 (1, 'large-damage', -1, NULL, 80, 0, 0.8, 8), \
+                 (1, 'three-hits', -1, NULL, 60, 1, 0.2, 2);",
+            )
+            .expect("historic damage-weighted fixture");
+
+        run(&mut connection).expect("hit-allocation upgrade");
+
+        let rows = connection
+            .prepare(
+                "SELECT a.session_id, a.hit_count, a.allocation_share, a.cost_ped, s.armour_cost \
+                 FROM protection_cost_allocations a \
+                 JOIN tracking_sessions s ON s.id = a.session_id \
+                 WHERE a.window_id = 1 ORDER BY a.session_id",
+            )
+            .expect("allocation query")
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
+                ))
+            })
+            .expect("allocation rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect allocations");
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].0.as_str(), rows[0].1), ("large-damage", 1));
+        assert_eq!((rows[1].0.as_str(), rows[1].1), ("three-hits", 3));
+        assert!((rows[0].2 - 0.25).abs() < 1e-12);
+        assert!((rows[0].3 - 2.5).abs() < 1e-12);
+        assert!((rows[0].4 - 2.5).abs() < 1e-12);
+        assert!((rows[1].2 - 0.75).abs() < 1e-12);
+        assert!((rows[1].3 - 7.5).abs() < 1e-12);
+        assert!((rows[1].4 - 7.5).abs() < 1e-12);
+        assert!((rows.iter().map(|row| row.3).sum::<f64>() - 10.0).abs() < 1e-12);
     }
 
     #[test]

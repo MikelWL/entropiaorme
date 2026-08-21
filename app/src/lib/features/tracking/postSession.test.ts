@@ -20,8 +20,8 @@ function makeFlow(overrides: Partial<PostSessionFlowOptions> = {}) {
 		refresh: vi.fn(async () => {}),
 		readStats: vi.fn(() => ({ ...stats })),
 		stopTracking: vi.fn(async () => ({ session_id: 's1' })),
-		isArmourPopupOpen: vi.fn(() => false),
-		showArmourPopup: vi.fn(async () => {}),
+		captureArmourSetupOnLater: vi.fn(() => false),
+		showArmourPopup: vi.fn(async () => true),
 		onPromptShown: vi.fn(),
 	};
 	const flow = createPostSessionFlow({ ...options, ...overrides } satisfies PostSessionFlowOptions);
@@ -147,6 +147,7 @@ describe('decideArmourTrack', () => {
 		expect(flow.awaitingArmourDecision).toBe(false);
 		expect(options.stopTracking).toHaveBeenCalledTimes(1);
 		expect(options.showArmourPopup).toHaveBeenCalledTimes(1);
+		expect(options.showArmourPopup).toHaveBeenCalledWith(true);
 		expect(options.showArmourPopup.mock.invocationCallOrder[0]).toBeGreaterThan(
 			options.stopTracking.mock.invocationCallOrder[0],
 		);
@@ -160,13 +161,23 @@ describe('decideArmourTrack', () => {
 		expect(options.stopTracking).toHaveBeenCalledTimes(1);
 		expect(options.showArmourPopup).not.toHaveBeenCalled();
 	});
+
+	it('Later captures only the whole-session setup when segment protection is disabled', async () => {
+		const { flow, options } = makeFlow({
+			armourReminderEnabled: vi.fn(() => true),
+			captureArmourSetupOnLater: vi.fn(() => true),
+		});
+		await flow.requestStop();
+
+		await flow.decideArmourTrack('no');
+		expect(options.showArmourPopup).toHaveBeenCalledWith(false);
+		expect(flow.lastSessionId).toBe('s1');
+	});
 });
 
 describe('the deferred clear', () => {
 	it('holds the readout while the armour popup is open, until it closes', async () => {
-		const isArmourPopupOpen = vi.fn(() => true);
 		const { flow } = makeFlow({
-			isArmourPopupOpen,
 			armourReminderEnabled: vi.fn(() => true),
 		});
 
@@ -176,7 +187,6 @@ describe('the deferred clear', () => {
 		expect(flow.lastSessionId).toBe('s1');
 		expect(flow.lastSessionStats).toEqual(stats);
 
-		isArmourPopupOpen.mockReturnValue(false);
 		flow.notifyArmourPopupClosed();
 		expect(flow.lastSessionId).toBeNull();
 		expect(flow.lastSessionStats).toBeNull();
@@ -186,5 +196,17 @@ describe('the deferred clear', () => {
 		const { flow } = makeFlow();
 		flow.notifyArmourPopupClosed();
 		expect(flow.lastSessionId).toBeNull();
+	});
+
+	it('retains the stopped-session anchor when the popup fails to open', async () => {
+		const { flow } = makeFlow({
+			armourReminderEnabled: vi.fn(() => true),
+			showArmourPopup: vi.fn(async () => false),
+		});
+		await flow.requestStop();
+		await flow.decideArmourTrack('yes');
+
+		expect(flow.lastSessionId).toBe('s1');
+		expect(flow.lastSessionStats).toEqual(stats);
 	});
 });

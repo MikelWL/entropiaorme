@@ -147,15 +147,6 @@
 				? 'Hunting'
 				: null
 	);
-	const healingLabel = $derived.by(() => {
-		const healing = data.healing;
-		if (!healing) return null;
-		if (healing.state === 'effect') return `${healing.toolName ?? 'Healing'} effect active`;
-		if (healing.state === 'cooldown') return `${healing.toolName ?? 'Healing'} cooldown`;
-		if (healing.state === 'ready') return `${healing.toolName ?? 'Healer'} ready`;
-		if (healing.passiveOutputs > 0) return `${healing.passiveOutputs} passive heal${healing.passiveOutputs === 1 ? '' : 's'}`;
-		return null;
-	});
 	const activeProtection = $derived(
 		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
@@ -458,7 +449,11 @@
 			data-guide-anchor="overlay-equipment-section"
 		>
 			<span class="text-white/40 shrink-0">{@html ICON_EQUIPMENT}</span>
-			{#if isTrifectaAttribution}
+			{#if data.currentToolKind === 'healing'}
+				<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
+					{data.currentTool || NO_DATA}
+				</div>
+			{:else if isTrifectaAttribution}
 				<TrifectaSelector
 					trifecta={data.trifectaAttribution}
 					tone={data.status === 'active' ? 'active' : 'idle'}
@@ -504,17 +499,12 @@
 							{activityLabel}
 						</div>
 					{/if}
-					{#if healingLabel}
-						<div class="text-[10px] leading-tight text-emerald-300/80 whitespace-nowrap" data-testid="healing-state">
-							{healingLabel}
-						</div>
-					{/if}
 				</div>
 			{/if}
 		</div>
 
 		<!-- Active protection identity and live selection. -->
-		{#if protection && protection.loadouts.length > 0}
+		{#if data.trackProtectionBySegment !== false && protection && protection.loadouts.length > 0}
 			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
 				<span class="facet-label">Protection</span>
 				{#if protection.loadouts.length === 1}
