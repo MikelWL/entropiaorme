@@ -243,7 +243,7 @@ impl TrackerActor {
             if let Some((intent, provenance)) = fresh_direct {
                 HealingDecision::Activation {
                     session_id,
-                    write: activation_write(
+                    write: Box::new(activation_write(
                         intent,
                         observed_at,
                         chat_timestamp,
@@ -251,7 +251,7 @@ impl TrackerActor {
                         context_id,
                         provenance,
                         false,
-                    ),
+                    )),
                 }
             } else if let Some((window, reason)) = effect {
                 HealingDecision::Output {
@@ -269,7 +269,7 @@ impl TrackerActor {
             } else if let Some((intent, provenance)) = direct {
                 HealingDecision::Activation {
                     session_id,
-                    write: activation_write(
+                    write: Box::new(activation_write(
                         intent,
                         observed_at,
                         chat_timestamp,
@@ -277,12 +277,12 @@ impl TrackerActor {
                         context_id,
                         provenance,
                         false,
-                    ),
+                    )),
                 }
             } else if let Some(intent) = capped {
                 HealingDecision::Activation {
                     session_id,
-                    write: activation_write(
+                    write: Box::new(activation_write(
                         intent,
                         observed_at,
                         chat_timestamp,
@@ -290,7 +290,7 @@ impl TrackerActor {
                         context_id,
                         "health_capped",
                         false,
-                    ),
+                    )),
                 }
             } else {
                 let passive = active.healing.damage_correlated(observed_at, amount);
@@ -361,7 +361,10 @@ impl TrackerActor {
             )
         };
         let _ = self
-            .persist_healing_decision(HealingDecision::Activation { session_id, write })
+            .persist_healing_decision(HealingDecision::Activation {
+                session_id,
+                write: Box::new(write),
+            })
             .await;
     }
 
@@ -620,7 +623,7 @@ impl TrackerActor {
 enum HealingDecision {
     Activation {
         session_id: String,
-        write: ActivationWrite,
+        write: Box<ActivationWrite>,
     },
     Output {
         session_id: String,

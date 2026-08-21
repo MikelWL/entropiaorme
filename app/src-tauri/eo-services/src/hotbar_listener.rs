@@ -41,6 +41,8 @@ pub type HotbarResolver = Arc<dyn Fn(&str) -> Option<ResolvedHotbarItem> + Send 
 /// (key, kind) for each hotbar-slot press.
 pub type KeyTap = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
+type HotbarResolveRequest = (String, chrono::DateTime<chrono::Utc>);
+
 struct Gate {
     hooks_enabled: AtomicBool,
     session_active: AtomicBool,
@@ -56,7 +58,7 @@ pub struct HotbarListener {
     source: Option<Arc<dyn KeystrokeSource>>,
     gate: Arc<Gate>,
     key_tap: Arc<Mutex<Option<KeyTap>>>,
-    resolve_queue: Mutex<Option<Sender<(String, chrono::DateTime<chrono::Utc>)>>>,
+    resolve_queue: Mutex<Option<Sender<HotbarResolveRequest>>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     session_subscriptions: Mutex<Option<(Registration, Registration)>>,
 }
@@ -82,7 +84,7 @@ impl HotbarListener {
         let (queue, worker) = match resolver {
             None => (None, None),
             Some(resolver) => {
-                let (sender, receiver) = channel::<(String, chrono::DateTime<chrono::Utc>)>();
+                let (sender, receiver) = channel::<HotbarResolveRequest>();
                 let worker_bus = bus.clone();
                 let handle = std::thread::Builder::new()
                     .name("hotbar-resolve".into())
