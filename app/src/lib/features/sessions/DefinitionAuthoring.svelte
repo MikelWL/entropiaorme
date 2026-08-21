@@ -6,6 +6,7 @@
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
+	import { inDevelopment } from '$lib/inDevelopment';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import type {
 		DefinitionsModel,
@@ -166,23 +167,27 @@
 					/>
 				</div>
 
-				<div
-					class="mt-4 ml-4 flex items-start justify-between gap-6 border-l border-border/60 pl-4 pt-4
-						{model.trackProtectionCosts ? '' : 'opacity-45'}"
-				>
-					<div>
-						<p class="text-sm font-medium text-text">Armour costs by segment</p>
-						<p class="mt-1 max-w-lg text-sm leading-6 text-text-secondary">
-							Show armour selectors while tracking and attribute measured cost between activity segments.
-						</p>
+				<!-- Segment attribution needs composed armour setups, which live on the
+					 same channel-gated surface; the choice follows what it drives. -->
+				{#if inDevelopment.visible}
+					<div
+						class="mt-4 ml-4 flex items-start justify-between gap-6 border-l border-border/60 pl-4 pt-4
+							{model.trackProtectionCosts ? '' : 'opacity-45'}"
+					>
+						<div>
+							<p class="text-sm font-medium text-text">Armour costs by segment</p>
+							<p class="mt-1 max-w-lg text-sm leading-6 text-text-secondary">
+								Show armour selectors while tracking and attribute measured cost between activity segments.
+							</p>
+						</div>
+						<Toggle
+							checked={model.trackProtectionBySegment}
+							label="Track armour costs by segment"
+							disabled={model.saving || !model.trackProtectionCosts}
+							onchange={(checked) => (model.trackProtectionBySegment = checked)}
+						/>
 					</div>
-					<Toggle
-						checked={model.trackProtectionBySegment}
-						label="Track armour costs by segment"
-						disabled={model.saving || !model.trackProtectionCosts}
-						onchange={(checked) => (model.trackProtectionBySegment = checked)}
-					/>
-				</div>
+				{/if}
 			</div>
 
 			<!-- Activities: the roster and its on-the-fly option, folded away

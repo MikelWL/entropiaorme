@@ -210,7 +210,7 @@
 				<p class="mt-0.5 text-[11px] text-white/45">{step.name}</p>
 			</div>
 			<div class="flex items-center gap-2">
-				{#if steps.length > 1}<span class="text-[10px] tabular-nums text-white/35">{stepIndex + 1} of {steps.length}</span>{/if}
+				{#if currentSteps.length > 1}<span class="text-[10px] tabular-nums text-white/35">{stepIndex + 1} of {currentSteps.length}</span>{/if}
 				<Button variant="ghost" size="sm" aria-label="Record armour cost later" onclick={onClose}>Later</Button>
 			</div>
 		</div>
