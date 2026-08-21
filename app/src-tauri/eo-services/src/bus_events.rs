@@ -194,6 +194,8 @@ pub enum HotbarItemKind {
 /// compatibility path while those domains complete their own migration.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct HotbarIntentPayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub slot: String,
     pub occurred_at: f64,
     pub equipment_id: i64,

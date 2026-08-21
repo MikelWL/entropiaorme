@@ -206,6 +206,7 @@ fn healer_intent(
     profile: HealingProfile,
 ) -> BusEvent {
     BusEvent::HotbarIntent(HotbarIntentPayload {
+        session_id: None,
         slot: "8".into(),
         occurred_at,
         equipment_id,
@@ -220,6 +221,7 @@ fn healer_intent(
 
 fn weapon_intent(occurred_at: f64, lifesteal_percent: Option<f64>) -> BusEvent {
     BusEvent::HotbarIntent(HotbarIntentPayload {
+        session_id: None,
         slot: "1".into(),
         occurred_at,
         equipment_id: 2,
@@ -1454,6 +1456,7 @@ fn an_unprofiled_healer_press_invalidates_the_previous_activation_candidate() {
     ));
     rig.bus
         .publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+            session_id: None,
             slot: "9".into(),
             occurred_at: now + 0.1,
             equipment_id: 9,
@@ -1765,6 +1768,112 @@ fn delayed_hotbar_resolution_reconciles_an_earlier_uncosted_output() {
         rig.scalar_i64(
             "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
              AND classification = 'direct' AND activation_id IS NOT NULL",
+            &[&session.id],
+        ),
+        1
+    );
+}
+
+#[test]
+fn pure_over_time_healing_costs_on_its_first_tick_and_not_on_later_ticks() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Regeneration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::OverTime,
+            direct_min: None,
+            direct_max: None,
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(9.0),
+            tick_max: Some(11.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.clock.advance(2.0).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:02".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.04));
+        assert_eq!(active.healing.activation_count, 1);
+        assert_eq!(active.healing.effect_output_count, 2);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_activations WHERE session_id = ?",
+            &[&session.id],
+        ),
+        1
+    );
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_effect_windows WHERE session_id = ?",
+            &[&session.id],
+        ),
+        1
+    );
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'effect' AND activation_id IS NOT NULL",
+            &[&session.id],
+        ),
+        2
+    );
+}
+
+#[test]
+fn delayed_pure_over_time_intent_reconciles_its_first_tick_as_one_activation() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.clock.advance(0.5).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Regeneration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::OverTime,
+            direct_min: None,
+            direct_max: None,
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(9.0),
+            tick_max: Some(11.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.04));
+        assert_eq!(active.healing.activation_count, 1);
+        assert_eq!(active.healing.effect_output_count, 1);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'effect' AND activation_id IS NOT NULL",
             &[&session.id],
         ),
         1

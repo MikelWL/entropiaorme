@@ -426,6 +426,60 @@ describe('saveEquipment', () => {
 		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['New']);
 	});
 
+	it('evicts stale weapon detail when the post-save refresh fails', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([summary({ id: '1', name: 'Old' })]);
+		mocked.getEquipmentDetail
+			.mockResolvedValueOnce(detail())
+			.mockRejectedValueOnce(new Error('refresh failed'));
+		mocked.updateLibrary.mockResolvedValue(summary({ id: '1', name: 'New' }));
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('1');
+		await model.saveEquipment();
+
+		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['New']);
+		expect(model.detailCache['1']).toBeUndefined();
+		expect(model.showAddModal).toBe(false);
+		expect(model.error).toBe('refresh failed');
+	});
+
+	it('evicts stale healing detail when the post-save refresh fails', async () => {
+		const healingProfile = {
+			mode: 'direct' as const,
+			directMin: 8,
+			directMax: 10,
+			effectDurationSeconds: null,
+			tickMin: null,
+			tickMax: null,
+			tickSeconds: null,
+		};
+		mocked.getEquipmentLibrary.mockResolvedValue([
+			summary({ id: '5', name: 'Old FAP', type: 'healing', healingProfile }),
+		]);
+		mocked.getEquipmentDetail
+			.mockResolvedValueOnce(
+				detail({
+					id: '5',
+					type: 'healing',
+					healingProfile,
+					weapon: { ...detail().weapon, name: 'Old FAP' },
+				}),
+			)
+			.mockRejectedValueOnce(new Error('refresh failed'));
+		mocked.updateLibrary.mockResolvedValue(
+			summary({ id: '5', name: 'New FAP', type: 'healing', healingProfile }),
+		);
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('5');
+		await model.saveEquipment();
+
+		expect(model.healingTools.map((tool) => tool.name)).toEqual(['New FAP']);
+		expect(model.detailCache['5']).toBeUndefined();
+		expect(model.showAddModal).toBe(false);
+		expect(model.error).toBe('refresh failed');
+	});
+
 	it('does nothing when the selected weapon has no catalogue id', async () => {
 		const model = createLibraryModel();
 		model.openAddModal();

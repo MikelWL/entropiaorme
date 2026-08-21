@@ -436,6 +436,7 @@ export function createLibraryModel() {
 				// that would create a duplicate entry.
 				showAddModal = false;
 				editingEquipmentId = null;
+				delete detailCache[item.id];
 				detailCache[item.id] = await getEquipmentDetail(item.id);
 			} else if (addType === 'healing') {
 				const healer = healerPicker.selected;
@@ -460,6 +461,7 @@ export function createLibraryModel() {
 				replaceEquipment(item);
 				showAddModal = false;
 				editingEquipmentId = null;
+				delete detailCache[item.id];
 				detailCache[item.id] = await getEquipmentDetail(item.id);
 			} else if (addType === 'tool') {
 				const tool = toolPicker.selected;

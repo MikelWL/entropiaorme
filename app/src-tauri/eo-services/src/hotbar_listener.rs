@@ -306,12 +306,12 @@ fn resolve_hotbar_slot(
     let Some(item) = resolved else {
         return;
     };
-    let active_session = gate.active_session_id.lock().expect("active session");
-    if active_session.as_deref() != Some(request.session_id.as_str()) {
+    if !session_matches(gate, &request.session_id) {
         return;
     }
     let slot = request.slot;
     bus.publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+        session_id: Some(request.session_id.clone()),
         slot: slot.clone(),
         occurred_at: request.occurred_at.timestamp_micros() as f64 / 1_000_000.0,
         equipment_id: item.equipment_id,
@@ -322,6 +322,9 @@ fn resolve_hotbar_slot(
         healing_profile: item.healing_profile.clone(),
         lifesteal_percent: item.lifesteal_percent,
     }));
+    if !session_matches(gate, &request.session_id) {
+        return;
+    }
     match item.kind {
         HotbarItemKind::Healing => {
             bus.publish(&BusEvent::ActiveHealToolChanged(
@@ -354,6 +357,14 @@ fn resolve_hotbar_slot(
             }));
         }
     }
+}
+
+fn session_matches(gate: &Gate, session_id: &str) -> bool {
+    gate.active_session_id
+        .lock()
+        .expect("active session")
+        .as_deref()
+        == Some(session_id)
 }
 
 #[cfg(test)]
@@ -726,6 +737,31 @@ mod tests {
                 .count(),
             0
         );
+        rig.listener.stop();
+    }
+
+    #[test]
+    fn hotbar_publication_allows_reentrant_session_lifecycle_events() {
+        let rig = rig(Some(standard_resolver()));
+        let reentrant_bus = rig.bus.clone();
+        let _registration = rig.bus.subscribe(Topic::HotbarIntent, move |_| {
+            reentrant_bus.publish(&BusEvent::SessionStopped(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
+            reentrant_bus.publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s2".into(),
+            }));
+        });
+        rig.listener.set_hotbar_hooks_enabled(true);
+        rig.bus
+            .publish(&BusEvent::SessionStarted(SessionLifecyclePayload {
+                session_id: "s1".into(),
+            }));
+
+        rig.source.inject("1", now(), KeystrokeKind::Press);
+        wait_for_intents(&rig, 1);
+
+        assert!(rig.listener.is_running());
         rig.listener.stop();
     }
 

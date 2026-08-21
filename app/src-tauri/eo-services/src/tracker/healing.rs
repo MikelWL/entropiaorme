@@ -181,6 +181,13 @@ impl TrackerActor {
         let Some(active) = self.session.active_mut() else {
             return;
         };
+        if payload
+            .session_id
+            .as_ref()
+            .is_some_and(|session_id| session_id != &active.session.id)
+        {
+            return;
+        }
         active.healing.prune(payload.occurred_at);
         match payload.item_kind {
             HotbarItemKind::Healing => {
