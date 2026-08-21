@@ -547,7 +547,7 @@ impl Api {
                     .into(),
                 looter_level: expected.as_ref().map(|value| value.looter_level).into(),
                 coverage: expected.as_ref().map(|value| value.coverage).into(),
-                incomplete: expected.as_ref().is_some_and(|value| value.incomplete),
+                incomplete: expected.as_ref().is_none_or(|value| value.incomplete),
                 model_version: expected.map(|value| value.model_version).into(),
             });
         }

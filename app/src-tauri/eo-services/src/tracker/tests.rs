@@ -1338,6 +1338,73 @@ fn unknown_tool_stats_merge_on_identification() {
 }
 
 #[test]
+fn late_tool_identification_does_not_backfill_expected_evidence() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers {
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|_| 0.02)),
+            profile: Some(Arc::new(|name| {
+                (name == "MyGun").then(|| {
+                    json!({
+                        "weapon_catalog_id": "weapon-42",
+                        "weapon_markup": 100.0,
+                        "weapon_entity": {
+                            "name": "MyGun",
+                            "economy": {
+                                "decay": 1.0,
+                                "ammo_burn": 100.0,
+                                "efficiency": 84.5
+                            }
+                        },
+                        "amp_entity": null
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                })
+            })),
+            looters: Some(crate::expected_hunting::HuntingLooterLevels {
+                animal: 60.0,
+                mutant: 60.0,
+                robot: 60.0,
+            }),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    rig.wait(tracker.start_session()).unwrap();
+
+    rig.bus
+        .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+            amount: 9.0,
+            timestamp: "2026-01-01T00:00:01".into(),
+        }));
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "MyGun".into(),
+            source: None,
+        }));
+    rig.bus
+        .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+            amount: 6.0,
+            timestamp: "2026-01-01T00:00:02".into(),
+        }));
+
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert_eq!(active.expected_return_coverage, Some(0.5));
+    rig.probe(&tracker, |actor| {
+        let phases = &actor.session.active().unwrap().accumulator.tool_stats;
+        assert_eq!(phases.len(), 2);
+        assert_eq!(phases[0].1.tool_name, "MyGun");
+        assert_eq!(phases[0].1.shots_fired, 1);
+        assert!(phases[0].1.expected_economics.is_none());
+        assert_eq!(phases[1].1.tool_name, "MyGun");
+        assert_eq!(phases[1].1.shots_fired, 1);
+        assert!(phases[1].1.expected_economics.is_some());
+    });
+}
+
+#[test]
 fn phased_tool_stats_split_on_cost_change() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());

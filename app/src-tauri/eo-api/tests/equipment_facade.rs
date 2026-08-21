@@ -314,6 +314,7 @@ async fn an_existing_weapon_setup_gains_descriptive_lifesteal_without_a_rewrite(
         Some(75.0)
     );
     let expected = detail.expected_return.as_ref().unwrap();
+    assert_eq!(expected.looter_level, 0.0);
     assert_eq!(expected.coverage, 1.0);
     assert!(!expected.incomplete);
     assert_eq!(

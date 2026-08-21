@@ -164,6 +164,7 @@ describe('Hunting economic comparisons', () => {
 		await fireEvent.click(effectiveDisclosure);
 		expect(screen.getByText('Unlimited economic equivalent')).not.toBeNull();
 		expect(screen.getByText(/weighted by raw TT/)).not.toBeNull();
+		expect(screen.getByText('59.3% effective Efficiency')).not.toBeNull();
 		expect(screen.queryByText(/partial historical basis/)).toBeNull();
 	});
 

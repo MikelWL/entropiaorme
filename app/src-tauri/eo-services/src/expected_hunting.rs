@@ -188,13 +188,13 @@ pub fn evaluate(
     let mut modelled_count = 0;
 
     for component in &evidence.components {
-        let Some(efficiency) = component.efficiency_pct else {
-            continue;
-        };
         let raw = component.raw_tt_per_use.max(0.0);
         if raw <= 0.0 {
             continue;
         }
+        let Some(efficiency) = component.efficiency_pct else {
+            continue;
+        };
         let premium = component.consumed_premium_per_use.max(0.0);
         modelled_raw_tt += raw;
         eligible_cost += raw + premium;
@@ -211,7 +211,7 @@ pub fn evaluate(
     } else {
         0.0
     };
-    let incomplete = modelled_count < evidence.components.len() || coverage < 1.0;
+    let incomplete = coverage < 1.0;
     let economic_rate = (eligible_cost > 0.0).then(|| expected_loot / eligible_cost);
     let expected_tt_rate = economic_rate.map(|rate| round_half_even(rate, 6));
     let effective_efficiency = if incomplete {
@@ -542,6 +542,36 @@ mod tests {
         assert_eq!(result.eligible_offensive_cost, 0.03);
         assert_eq!(result.effective_efficiency, None);
         assert!(result.incomplete);
+    }
+
+    #[test]
+    fn zero_tt_components_do_not_create_false_incompleteness() {
+        let evidence = OffensiveLoadoutEvidence {
+            components: vec![
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Weapon,
+                    catalog_id: None,
+                    name: "Known".into(),
+                    efficiency_pct: Some(80.0),
+                    raw_tt_per_use: 0.03,
+                    consumed_premium_per_use: 0.0,
+                },
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Amplifier,
+                    catalog_id: None,
+                    name: "No TT stream".into(),
+                    efficiency_pct: None,
+                    raw_tt_per_use: 0.0,
+                    consumed_premium_per_use: 0.0,
+                },
+            ],
+            looters: looters(50.0),
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        let result = evaluate(&evidence).unwrap();
+        assert_eq!(result.coverage, 1.0);
+        assert!(!result.incomplete);
+        assert!(result.effective_efficiency.is_some());
     }
 
     #[test]

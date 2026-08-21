@@ -360,15 +360,10 @@ impl TrackerActor {
 
             let current_cost =
                 Self::current_cost_for_tool(providers, &mut active.weapons, &tool_name, Ped::ZERO);
-            let expected_economics = Self::expected_evidence_for_tool(
-                providers,
-                &mut active.weapons,
-                &tool_name,
-                active.hunting_looters,
-            );
 
-            // Merge "Unknown" stats into the real tool on first
-            // identification.
+            // Retrospectively identify and price "Unknown" stats, but keep
+            // them in a model-neutral phase. Only shots observed after the
+            // loadout resolves may carry its expected-economics evidence.
             let unknown = {
                 let accumulator = &mut active.accumulator;
                 accumulator
@@ -383,7 +378,7 @@ impl TrackerActor {
                         &mut active.accumulator,
                         &tool_name,
                         current_cost,
-                        expected_economics,
+                        None,
                     )
                 } else {
                     let accumulator = &mut active.accumulator;

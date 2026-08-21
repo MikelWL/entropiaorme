@@ -2429,6 +2429,7 @@ impl ExpectedHuntingAccumulator {
             .sum::<f64>()
             * uses;
         let Ok(result) = crate::expected_hunting::evaluate(evidence) else {
+            self.candidate_raw_tt += candidate;
             self.incomplete = true;
             return;
         };
@@ -4243,49 +4244,83 @@ fn movement_activity_kind(source_kind: &str, tier: Option<&str>, species: Option
 /// species total stays exact while no historical definition claim is invented
 /// for the realised sale itself.
 fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<PositionKey, f64>) {
-    let species: std::collections::BTreeSet<String> = by_source
-        .keys()
-        .filter(|key| !key.species.is_empty())
-        .map(|key| key.species.clone())
-        .collect();
-    for species in species {
-        let unknown_key = PositionKey {
-            source_kind: "hunt".to_string(),
-            tier: String::new(),
-            species: species.clone(),
-            definition_id: None,
-            activity_context_id: None,
-            tool: String::new(),
-            quest: None,
-        };
-        let unknown = by_source.get(&unknown_key).copied().unwrap_or(0.0);
-        if unknown >= -STOCK_EPSILON {
-            continue;
+    fn absorb(
+        by_source: &mut std::collections::BTreeMap<PositionKey, f64>,
+        broad_key: &PositionKey,
+        candidates: Vec<PositionKey>,
+    ) {
+        let broad = by_source.get(broad_key).copied().unwrap_or(0.0);
+        if broad >= -STOCK_EPSILON {
+            return;
         }
-        let definition_keys: Vec<PositionKey> = by_source
-            .iter()
-            .filter(|(key, quantity)| {
-                key.source_kind == "hunt"
-                    && key.species == species
-                    && key.definition_id.is_some()
-                    && **quantity > STOCK_EPSILON
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        let available: f64 = definition_keys
-            .iter()
-            .filter_map(|key| by_source.get(key))
-            .sum();
+        let available: f64 = candidates.iter().filter_map(|key| by_source.get(key)).sum();
         if available <= STOCK_EPSILON {
-            continue;
+            return;
         }
-        let remaining = (available + unknown).max(0.0);
-        for key in definition_keys {
+        let remaining = (available + broad).max(0.0);
+        for key in candidates {
             if let Some(quantity) = by_source.get_mut(&key) {
                 *quantity *= remaining / available;
             }
         }
-        by_source.insert(unknown_key, 0.0);
+        by_source.insert(broad_key.clone(), 0.0);
+    }
+
+    // Rows written before exact activity provenance can already carry a
+    // session definition. Consume any residual at that broader grain across
+    // the context-specific stock in the same definition.
+    let definition_keys: Vec<PositionKey> = by_source
+        .iter()
+        .filter(|(key, quantity)| {
+            key.source_kind == "hunt"
+                && !key.species.is_empty()
+                && key.definition_id.is_some()
+                && key.activity_context_id.is_none()
+                && **quantity < -STOCK_EPSILON
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for broad_key in definition_keys {
+        let candidates = by_source
+            .iter()
+            .filter(|(key, quantity)| {
+                key.source_kind == "hunt"
+                    && key.species == broad_key.species
+                    && key.definition_id == broad_key.definition_id
+                    && key.activity_context_id.is_some()
+                    && **quantity > STOCK_EPSILON
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        absorb(by_source, &broad_key, candidates);
+    }
+
+    // Older rows may have neither definition nor context. Spread only their
+    // residual across the more specific stock of the same species, retaining
+    // the species total without inventing a historical activity claim.
+    let unattributed_keys: Vec<PositionKey> = by_source
+        .iter()
+        .filter(|(key, quantity)| {
+            key.source_kind == "hunt"
+                && !key.species.is_empty()
+                && key.definition_id.is_none()
+                && key.activity_context_id.is_none()
+                && **quantity < -STOCK_EPSILON
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for broad_key in unattributed_keys {
+        let candidates = by_source
+            .iter()
+            .filter(|(key, quantity)| {
+                key.source_kind == "hunt"
+                    && key.species == broad_key.species
+                    && (key.definition_id.is_some() || key.activity_context_id.is_some())
+                    && **quantity > STOCK_EPSILON
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        absorb(by_source, &broad_key, candidates);
     }
 }
 
@@ -10706,6 +10741,64 @@ mod tests {
                 efficiency_pct: 71.2,
             }
         );
+    }
+
+    #[test]
+    fn failed_expected_evaluation_still_narrows_coverage() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
+        };
+
+        let evidence = OffensiveLoadoutEvidence {
+            components: vec![OffensiveComponentEvidence {
+                kind: OffensiveComponentKind::Weapon,
+                catalog_id: None,
+                name: "Invalid evidence".to_string(),
+                efficiency_pct: Some(f64::NAN),
+                raw_tt_per_use: 0.02,
+                consumed_premium_per_use: 0.0,
+            }],
+            looters: HuntingLooterLevels {
+                animal: 50.0,
+                mutant: 50.0,
+                robot: 50.0,
+            },
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        let mut aggregate = ExpectedHuntingAccumulator::default();
+        aggregate.add(&evidence, 5);
+
+        assert_eq!(aggregate.candidate_raw_tt, 0.1);
+        assert_eq!(aggregate.modelled_raw_tt, 0.0);
+        assert!(aggregate.incomplete);
+    }
+
+    #[test]
+    fn legacy_definition_outflows_absorb_context_specific_hunt_stock() {
+        let key = |definition_id, activity_context_id| PositionKey {
+            source_kind: "hunt".to_string(),
+            tier: String::new(),
+            species: "Atrox".to_string(),
+            definition_id,
+            activity_context_id,
+            tool: String::new(),
+            quest: None,
+        };
+        let legacy = key(Some(7), None);
+        let context_a = key(Some(7), Some(70));
+        let context_b = key(Some(7), Some(71));
+        let mut positions = std::collections::BTreeMap::from([
+            (legacy.clone(), -50.0),
+            (context_a.clone(), 40.0),
+            (context_b.clone(), 60.0),
+        ]);
+
+        absorb_legacy_hunt_outflows(&mut positions);
+
+        assert_eq!(positions[&legacy], 0.0);
+        assert!((positions[&context_a] - 20.0).abs() < 1e-9);
+        assert!((positions[&context_b] - 30.0).abs() < 1e-9);
     }
 
     #[tokio::test]

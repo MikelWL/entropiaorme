@@ -46,6 +46,10 @@
 				{effectiveEfficiency.efficiencyPct.toFixed(1)}% effective · {consumedPremiumLabel} PEC
 				premium per use
 			</p>
+		{:else}
+			<p class="mt-2 text-[11px] leading-relaxed text-text-tertiary">
+				{effectiveEfficiency.efficiencyPct.toFixed(1)}% effective Efficiency
+			</p>
 		{/if}
 	{:else if effectiveEfficiency?.status === 'below_model_range'}
 		<p class="mt-2 text-[11px] leading-relaxed text-text-tertiary">

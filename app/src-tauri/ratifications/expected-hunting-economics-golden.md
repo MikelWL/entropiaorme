@@ -1,4 +1,4 @@
-# Ratification: nullable expected hunting economics in demo analytics
+# Ratification: expected hunting economics in demo contracts
 
 Independent adversarial review of the Hunting activity demo golden after Expected
 Hunting Economics became an always-present, nullable response field at the
@@ -16,6 +16,18 @@ overall, session-definition, declared-activity, and species grains.
 Removing those nine leaves produces a JSON tree exactly equal to the previous
 golden. No existing numeric value, count, row, ordering, or nested payload moved.
 
+The live `tracking_snapshot.txt` also gains exactly two fields after correcting
+its typed projection allowlist:
+
+- `expectedReturnCoverage: 0.0`
+- `expectedReturnModel: "community_v1"`
+
+The demo's legacy offensive phases contain positive shots and cost but no
+immutable efficiency evidence. Zero coverage and an explicit model identity
+therefore describe that incomplete basis honestly. `expectedTtRate` remains
+absent because its service value is null and this response uses exclude-none
+projection. No other snapshot field changed.
+
 ## Evidence reviewed
 
 - Every affected API DTO uses `Nullable<ExpectedHuntingEconomics>`, which means
@@ -29,21 +41,25 @@ golden. No existing numeric value, count, row, ordering, or nested payload moved
   demo do not acquire present-day equipment facts retroactively.
 - Backend tests separately prove populated, partially covered, and absent
   aggregates; frontend fixtures cover the required-null input.
-- Each added value is a constant null derived from persisted absence. No clock,
-  randomness, environment value, collection ordering, or floating-point
-  calculation enters the delta.
+- Each of the nine analytics additions is a constant null derived from persisted
+  absence. No clock, randomness, environment value, collection ordering, or
+  floating-point calculation enters that delta.
+- The live snapshot's two values derive from fixed demo evidence and the stable
+  Community Model v1 identifier. They introduce no ambient input or fabricated
+  numeric return.
 
 ## Judgement
 
-The old golden became obsolete when the response contract gained required,
-nullable expected-economics fields. The new pin is minimal, deterministic, and
-semantically correct for a bundled demo whose historical offensive phases do
-not contain immutable efficiency and looter evidence. It exposes missing basis
-honestly and does not absorb a behavioural regression.
+The old goldens became obsolete when the response contract gained required,
+nullable expected-economics fields and the tracking projection omitted fields
+that its typed contract already populated. Both new pins are minimal,
+deterministic, and semantically correct for bundled demo history without
+immutable efficiency and looter evidence. They expose missing basis honestly
+and do not absorb a behavioural regression.
 
 ```text
 ORACLE-RATIFICATION
 range: 37d8275..HEAD
-goldens: analytics_hunting_activity
+goldens: analytics_hunting_activity, tracking_snapshot
 VERDICT: ratification-sound
 ```

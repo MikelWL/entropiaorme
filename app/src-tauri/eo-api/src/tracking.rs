@@ -57,7 +57,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 45] = [
+const SNAPSHOT_FIELDS: [&str; 48] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -85,6 +85,9 @@ const SNAPSHOT_FIELDS: [&str; 45] = [
     "damageDealtTotal",
     "weaponDamageDealt",
     "weaponCost",
+    "expectedTtRate",
+    "expectedReturnCoverage",
+    "expectedReturnModel",
     "shotsFiredTotal",
     "criticalHitsTotal",
     "maxDamage",

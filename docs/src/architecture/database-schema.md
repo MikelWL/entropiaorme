@@ -1274,7 +1274,7 @@ a split inside a joint activity.
 | `session_loot_rollups` | `session_id`, `mob_species`, `is_enhancer_shrapnel`, `item_name` (active rows only) | `quantity`, `value_ped` |
 | `session_context_loot_rollups` | `session_id`, `context_id` (nullable), `item_name` (active non-enhancer-shrapnel rows only) | `quantity`, `value_ped` |
 | `session_pes_rollups` | `session_id`, `context_id` (nullable) | `pes` |
-| `session_offensive_evidence_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `evidence_fingerprint`; nullable `expected_economics_json` retains model-neutral captured evidence | `shots_fired`, legacy-only `missing_candidate_raw_tt`, `missing_basis_phases` |
+| `session_offensive_evidence_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `evidence_fingerprint`; nullable `expected_economics_json` retains model-neutral captured evidence | `shots_fired`; `missing_candidate_raw_tt` and `missing_basis_phases` cover every null-evidence phase, including legacy and unsupported evidence |
 
 #### `session_rollup_meta`
 
