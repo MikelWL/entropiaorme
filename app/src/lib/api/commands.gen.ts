@@ -719,6 +719,17 @@ export interface EquipmentDetail {
 	lifestealPercent: number | null;
 }
 
+export interface EquipmentEffectiveEfficiency {
+	status: EquipmentEffectiveEfficiencyStatus;
+	efficiencyPct: number | null;
+}
+
+/**
+ * Unlimited-item Efficiency equivalent of the setup's premium-adjusted
+ * expected return under the selected community model and looter basis.
+ */
+export type EquipmentEffectiveEfficiencyStatus = 'within_model_range' | 'below_model_range' | 'above_model_range';
+
 /**
  * Community-model economics for the supported offensive slice of one use.
  */
@@ -729,6 +740,7 @@ export interface EquipmentExpectedReturn {
 	weightedEfficiencyPct: number | null;
 	offensiveTtRecovery: number | null;
 	expectedTtRate: number | null;
+	effectiveEfficiency: EquipmentEffectiveEfficiency | null;
 	breakEvenLootMarkup: number | null;
 	modelledRawTtPerUse: number;
 	eligibleOffensiveCostPerUse: number;
@@ -852,6 +864,7 @@ export interface ExpectedHuntingEconomics {
 	eligibleOffensiveCost: number;
 	offensiveTtRecovery: number;
 	expectedTtRate: number;
+	effectiveEfficiency: EquipmentEffectiveEfficiency;
 	breakEvenLootMarkup: number;
 	coverage: number;
 	incomplete: boolean;
@@ -1056,6 +1069,7 @@ export interface HuntingActivityComparison {
 	cycled: number;
 	returns: number;
 	lootRate: number;
+	expected: ExpectedHuntingEconomics | null;
 	confirmedRewardPed: number;
 	realisedRewardMarkup: number;
 	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */

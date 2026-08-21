@@ -39,6 +39,7 @@ const expectedEconomics: ExpectedHuntingEconomics = {
 	eligibleOffensiveCost: 100,
 	offensiveTtRecovery: 0.94,
 	expectedTtRate: 0.94,
+	effectiveEfficiency: { status: 'within_model_range', efficiencyPct: 59.29 },
 	breakEvenLootMarkup: 1 / 0.94,
 	coverage: 1,
 	incomplete: false,
@@ -54,6 +55,7 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		returns: 90,
 		lootRate: 0.9,
 		expected: null,
+		expected: null,
 		lootItems: [],
 		activities: [],
 		key: 'definition:7',
@@ -61,6 +63,9 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		confirmedRewardPed: 0,
 		realisedMarkup: 15,
 		muProjectedReturns: 106,
+		lootMarkupFactor: null,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		muRate: 1.06,
 		lootMarkupFactor: 106 / 90,
 		expectedTtRate: null,
@@ -143,7 +148,9 @@ describe('Hunting economic comparisons', () => {
 		render(HuntingPrimaryView, { props: primaryProps(table, row) });
 
 		const strip = screen.getByTestId('hunting-expected-economics');
-		expect(within(strip).getByText('Long-run planning')).not.toBeNull();
+		expect(within(strip).queryByText('Long-run planning')).toBeNull();
+		expect(within(strip).getByText('Effective Efficiency')).not.toBeNull();
+		expect(within(strip).getByText('59.3%')).not.toBeNull();
 		expect(within(strip).getByText('94.0%')).not.toBeNull();
 		expect(within(strip).getByText('117.8%')).not.toBeNull();
 		expect(within(strip).getByText('110.7%')).not.toBeNull();
@@ -152,6 +159,10 @@ describe('Hunting economic comparisons', () => {
 		await fireEvent.click(disclosures[0]);
 		expect(screen.getAllByText('Offensive spend only')).toHaveLength(2);
 		expect(screen.getAllByText(/Healing, armour, harvesting/)).toHaveLength(2);
+		const effectiveDisclosure = within(strip).getByLabelText('What Effective Efficiency means');
+		await fireEvent.click(effectiveDisclosure);
+		expect(screen.getByText('Unlimited economic equivalent')).not.toBeNull();
+		expect(screen.getByText(/weighted by raw TT/)).not.toBeNull();
 		expect(screen.queryByText(/partial historical basis/)).toBeNull();
 	});
 

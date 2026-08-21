@@ -4,6 +4,7 @@
 	import type { Equipment } from '$lib/types';
 	import { NO_DATA, formatPercent } from '$lib/utils/format';
 	import { enrichmentColor, enrichmentLabel, formatPec } from './display';
+	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
 	import type { LibraryModel } from './libraryModel.svelte';
 
 	let { model, item }: { model: LibraryModel; item: Equipment } = $props();
@@ -42,10 +43,17 @@
 			effectiveCostPec: line.effectiveCostPec,
 		})),
 	);
-	const premiumDrag = $derived.by(() => {
-		const expected = detail?.expectedReturn;
-		if (expected?.offensiveTtRecovery == null || expected.expectedTtRate == null) return null;
-		return Math.max(0, expected.offensiveTtRecovery - expected.expectedTtRate);
+	const effectiveEfficiencyValue = $derived.by(() => {
+		const effective = detail?.expectedReturn?.effectiveEfficiency;
+		if (!effective) return NO_DATA;
+		switch (effective.status) {
+			case 'within_model_range':
+				return `${effective.efficiencyPct.toFixed(1)}%`;
+			case 'below_model_range':
+				return 'Below model range';
+			case 'above_model_range':
+				return 'Above model range';
+		}
 	});
 </script>
 
@@ -55,6 +63,15 @@
 		coverage={detail?.expectedReturn?.coverage}
 		incomplete={detail?.expectedReturn?.incomplete}
 	/>
+{/snippet}
+
+{#snippet effectiveEfficiencyTip()}
+		<EffectiveEfficiencyInfoTip
+			effectiveEfficiency={detail?.expectedReturn?.effectiveEfficiency ?? null}
+			weightedEfficiencyPct={detail?.expectedReturn?.weightedEfficiencyPct ?? null}
+			consumedPremiumLabel={formatPec((detail?.expectedReturn?.consumedPremiumPerUse ?? 0) * 100)}
+			looterLevel={detail?.expectedReturn?.looterLevel ?? 0}
+		/>
 {/snippet}
 
 <!-- Equipment row -->
@@ -186,10 +203,11 @@
 						emphasis="secondary"
 					/>
 					<StatDisplay
-						label="Limited-item drag"
-						value={premiumDrag !== null ? `${(premiumDrag * 100).toFixed(2)} pp` : '0.00 pp'}
-						valueClass="text-text"
+						label="Effective Efficiency"
+						value={effectiveEfficiencyValue}
+						valueClass={expected.effectiveEfficiency !== null ? 'text-text' : 'text-text-tertiary'}
 						emphasis="secondary"
+						labelSuffix={effectiveEfficiencyTip}
 					/>
 				</div>
 				<p class="-mt-2 mb-4 text-[11px] leading-relaxed text-text-tertiary">

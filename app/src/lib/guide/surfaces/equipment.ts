@@ -76,7 +76,7 @@ export const equipmentSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Limited-item markup appears as cost drag. Healing, armour, harvesting, and other unmodelled costs stay outside this estimate; the information button beside the figure explains the boundary.',
+						text: 'Effective Efficiency translates limited-item markup into the Efficiency of an economically equivalent unlimited setup. Healing, armour, harvesting, and other unmodelled costs stay outside this estimate; the information buttons explain both boundaries.',
 					},
 				],
 			},

@@ -48,6 +48,9 @@ export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'>
 	 * or excluded item market data contributes TT at 100%, never a proxy. */
 	rewardMuPed: number | null;
 	muProjectedReturns: number | null;
+	lootMarkupFactor: number | null;
+	expectedTtRate: number | null;
+	expectedMarketRate: number | null;
 	items: TreeCuttingItem[];
 	variants: HuntingActivitySection[];
 };
@@ -203,12 +206,18 @@ export function createHuntingModel() {
 				confidenceMode,
 			);
 			const rewardMuPed = projectRewardItems(row.rewardItems, market, marketByItem, confidenceMode);
+			const projected = projectedEconomics(
+				row.lootItems.reduce((sum, item) => sum + item.valuePed, 0),
+				projection.muProjectedReturns,
+				row.expected?.expectedTtRate ?? null,
+			);
 			return {
 				...row,
 				key,
 				isUnscoped: row.kind === 'ambient',
 				rewardMuPed,
 				muProjectedReturns: projection.muProjectedReturns,
+				...projected,
 				items: projection.items,
 				variants: row.variants.map((variant, variantIndex) =>
 					activitySection(variant, key, variantIndex),

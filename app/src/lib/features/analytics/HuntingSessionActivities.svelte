@@ -1,5 +1,7 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
+	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
@@ -38,6 +40,20 @@
 		activity.muProjectedReturns !== null && activity.cycled > 0
 			? activity.muProjectedReturns / activity.cycled
 			: null;
+	const effectiveEfficiencyValue = (activity: HuntingActivitySection) => {
+		const effective = activity.expected?.effectiveEfficiency;
+		if (!effective) return NO_DATA;
+		switch (effective.status) {
+			case 'within_model_range':
+				return effective.efficiencyPct !== null
+					? `${effective.efficiencyPct.toFixed(1)}%`
+					: NO_DATA;
+			case 'below_model_range':
+				return 'Below model range';
+			case 'above_model_range':
+				return 'Above model range';
+		}
+	};
 	const kindLabel = (activity: HuntingActivitySection) => {
 		switch (activity.kind) {
 			case 'quest_family':
@@ -128,6 +144,24 @@
 	</InfoTip>
 {/snippet}
 
+{#snippet expectedReturnTip()}
+	<ExpectedReturnInfoTip
+		looterLevel={selected?.expected?.looterLevel}
+		coverage={selected?.expected?.coverage}
+		incomplete={selected?.expected?.incomplete}
+	/>
+{/snippet}
+
+{#snippet effectiveEfficiencyTip()}
+	<EffectiveEfficiencyInfoTip
+		effectiveEfficiency={selected?.expected?.effectiveEfficiency ?? null}
+		looterLevel={selected?.expected?.looterLevel}
+		coverage={selected?.expected?.coverage}
+		incomplete={selected?.expected?.incomplete}
+		scope="activity"
+	/>
+{/snippet}
+
 {#if selected}
 	<div>
 		<div class="min-w-0">
@@ -214,6 +248,48 @@
 						emphasis="secondary"
 					/>
 				</div>
+			</div>
+
+			<div
+				class="mt-4 grid grid-cols-2 items-start gap-x-6 gap-y-3 border-t border-border/35 pt-3 md:grid-cols-4"
+				data-testid="activity-expected-economics"
+			>
+				<StatDisplay
+					label="Effective Efficiency"
+					value={effectiveEfficiencyValue(selected)}
+					valueClass={selected.expected?.effectiveEfficiency != null
+						? 'text-text'
+						: 'text-text-tertiary'}
+					emphasis="secondary"
+					labelSuffix={effectiveEfficiencyTip}
+				/>
+				<StatDisplay
+					label="Loot MU"
+					value={selected.lootMarkupFactor !== null
+						? formatPercent(selected.lootMarkupFactor)
+						: NO_DATA}
+					valueClass={selected.lootMarkupFactor !== null ? 'text-text' : 'text-text-tertiary'}
+					emphasis="secondary"
+					labelSuffix={estimateTip}
+				/>
+				<StatDisplay
+					label="Expected Return"
+					value={selected.expectedTtRate !== null
+						? formatPercent(selected.expectedTtRate)
+						: NO_DATA}
+					valueClass={selected.expectedTtRate !== null ? 'text-text' : 'text-text-tertiary'}
+					emphasis="secondary"
+					labelSuffix={expectedReturnTip}
+				/>
+				<StatDisplay
+					label="Expected + MU"
+					value={selected.expectedMarketRate !== null
+						? formatPercent(selected.expectedMarketRate)
+						: NO_DATA}
+					valueClass={selected.expectedMarketRate !== null ? 'text-text' : 'text-text-tertiary'}
+					emphasis="secondary"
+					labelSuffix={expectedReturnTip}
+				/>
 			</div>
 
 			<ActivityLootComposition

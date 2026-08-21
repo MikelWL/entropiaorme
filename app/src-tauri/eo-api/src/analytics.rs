@@ -239,6 +239,7 @@ pub struct ExpectedHuntingEconomics {
     pub eligible_offensive_cost: f64,
     pub offensive_tt_recovery: f64,
     pub expected_tt_rate: f64,
+    pub effective_efficiency: crate::equipment::EquipmentEffectiveEfficiency,
     pub break_even_loot_markup: f64,
     pub coverage: f64,
     pub incomplete: bool,
@@ -320,6 +321,7 @@ pub struct HuntingActivityComparison {
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
+    pub expected: Nullable<ExpectedHuntingEconomics>,
     pub confirmed_reward_ped: f64,
     pub realised_reward_markup: f64,
     /// Actual reward items observed at completion. Their markup stays a
@@ -1654,6 +1656,7 @@ pub(crate) fn hunting_activity_dto(
             eligible_offensive_cost: row.eligible_offensive_cost,
             offensive_tt_recovery: row.offensive_tt_recovery,
             expected_tt_rate: row.expected_tt_rate,
+            effective_efficiency: row.effective_efficiency.into(),
             break_even_loot_markup: row.break_even_loot_markup,
             coverage: row.coverage,
             incomplete: row.incomplete,
@@ -1672,6 +1675,7 @@ pub(crate) fn hunting_activity_dto(
             } else {
                 0.0
             },
+            expected: row.expected.map(expected).into(),
             confirmed_reward_ped: row.confirmed_reward_ped,
             realised_reward_markup: row.realised_reward_markup,
             reward_items: row.reward_items.into_iter().map(loot_item).collect(),

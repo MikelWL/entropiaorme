@@ -90,11 +90,30 @@ pub struct ExpectedHuntingResult {
     pub eligible_offensive_cost: f64,
     pub offensive_tt_recovery: Option<f64>,
     pub expected_tt_rate: Option<f64>,
+    pub effective_efficiency: Option<EffectiveEfficiency>,
     pub break_even_loot_markup: Option<f64>,
     pub coverage: f64,
     pub component_count: usize,
     pub modelled_component_count: usize,
     pub incomplete: bool,
+}
+
+/// Economic Efficiency equivalent under Community Model v1.
+///
+/// This never changes a component's in-game Efficiency. It inverts the
+/// premium-adjusted expected return into the Efficiency an otherwise
+/// identical unlimited offensive setup would require at the same looter
+/// level. Rates outside v1's declared Efficiency domain remain explicit
+/// rather than being clamped into a plausible value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum EffectiveEfficiency {
+    WithinModelRange {
+        #[serde(rename = "efficiencyPct")]
+        efficiency_pct: f64,
+    },
+    BelowModelRange,
+    AboveModelRange,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -115,6 +134,28 @@ pub fn community_model_v1(
     let efficiency = efficiency_pct.clamp(0.0, 100.0);
     let looter = looter_level.clamp(0.0, 100.0);
     Ok(0.86 + 0.07 * efficiency / 100.0 + 0.07 * looter / 100.0)
+}
+
+/// Invert a premium-adjusted return into its unlimited Efficiency equivalent.
+pub fn effective_efficiency_v1(
+    expected_return: f64,
+    looter_level: f64,
+) -> Result<EffectiveEfficiency, ExpectedHuntingError> {
+    if !expected_return.is_finite() || !looter_level.is_finite() {
+        return Err(ExpectedHuntingError::NonFinite);
+    }
+    let lower = community_model_v1(0.0, looter_level)?;
+    let upper = community_model_v1(100.0, looter_level)?;
+    if expected_return < lower {
+        return Ok(EffectiveEfficiency::BelowModelRange);
+    }
+    if expected_return > upper {
+        return Ok(EffectiveEfficiency::AboveModelRange);
+    }
+    let efficiency = (expected_return - lower) * 100.0 / 0.07;
+    Ok(EffectiveEfficiency::WithinModelRange {
+        efficiency_pct: round_half_even(efficiency, 2),
+    })
 }
 
 /// Aggregate component streams by raw TT, preserving premium as denominator
@@ -170,7 +211,16 @@ pub fn evaluate(
     } else {
         0.0
     };
-    let expected_tt_rate = ratio(expected_loot, eligible_cost);
+    let incomplete = modelled_count < evidence.components.len() || coverage < 1.0;
+    let economic_rate = (eligible_cost > 0.0).then(|| expected_loot / eligible_cost);
+    let expected_tt_rate = economic_rate.map(|rate| round_half_even(rate, 6));
+    let effective_efficiency = if incomplete {
+        None
+    } else {
+        economic_rate
+            .map(|rate| effective_efficiency_v1(rate, looter))
+            .transpose()?
+    };
 
     Ok(ExpectedHuntingResult {
         model_version: COMMUNITY_MODEL_V1.to_string(),
@@ -183,13 +233,14 @@ pub fn evaluate(
         eligible_offensive_cost: round_half_even(eligible_cost, 8),
         offensive_tt_recovery: ratio(expected_loot, modelled_raw_tt),
         expected_tt_rate,
+        effective_efficiency,
         break_even_loot_markup: expected_tt_rate
             .filter(|rate| *rate > 0.0)
             .map(|rate| round_half_even(1.0 / rate, 6)),
         coverage: round_half_even(coverage, 4),
         component_count: evidence.components.len(),
         modelled_component_count: modelled_count,
-        incomplete: modelled_count < evidence.components.len() || coverage < 1.0,
+        incomplete,
     })
 }
 
@@ -419,7 +470,47 @@ mod tests {
         assert_eq!(result.modelled_raw_tt, 0.04);
         assert_eq!(result.eligible_offensive_cost, 0.042);
         assert!(result.expected_tt_rate.unwrap() < result.offensive_tt_recovery.unwrap());
+        assert_eq!(
+            result.effective_efficiency,
+            Some(EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 17.69
+            })
+        );
         assert!(!result.incomplete);
+    }
+
+    #[test]
+    fn effective_efficiency_inverts_the_markup_adjusted_return() {
+        let raw_return = community_model_v1(90.0, 50.0).unwrap();
+        let economic_return = raw_return - 0.0035;
+        assert_eq!(
+            effective_efficiency_v1(economic_return, 50.0).unwrap(),
+            EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 85.0
+            }
+        );
+        assert_eq!(
+            effective_efficiency_v1(raw_return - 0.01, 50.0).unwrap(),
+            EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 75.71
+            }
+        );
+    }
+
+    #[test]
+    fn effective_efficiency_keeps_out_of_domain_results_explicit() {
+        assert_eq!(
+            effective_efficiency_v1(0.80, 50.0).unwrap(),
+            EffectiveEfficiency::BelowModelRange
+        );
+        assert_eq!(
+            effective_efficiency_v1(1.01, 50.0).unwrap(),
+            EffectiveEfficiency::AboveModelRange
+        );
+        assert_eq!(
+            effective_efficiency_v1(f64::NAN, 50.0),
+            Err(ExpectedHuntingError::NonFinite)
+        );
     }
 
     #[test]
@@ -449,6 +540,7 @@ mod tests {
         let result = evaluate(&evidence).unwrap();
         assert_eq!(result.coverage, 0.75);
         assert_eq!(result.eligible_offensive_cost, 0.03);
+        assert_eq!(result.effective_efficiency, None);
         assert!(result.incomplete);
     }
 

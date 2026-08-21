@@ -4,7 +4,6 @@
 	import { startTracking, toggleOverlay } from '$lib/api';
 	import type { TrackingSnapshot } from '$lib/api';
 	import { Button, ErrorNotice } from '$lib/components';
-	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import DefinitionPicker from '$lib/features/sessions/DefinitionPicker.svelte';
 	import type { DefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
@@ -298,14 +297,6 @@
 			>
 				<span class="flex min-w-0 items-center gap-1 eyebrow">
 					<span class="truncate">{def?.shortLabel ?? def?.label ?? pref.id}</span>
-					{#if pref.id === 'expected_return'}
-						<span role="presentation" onpointerdown={(event) => event.stopPropagation()}>
-							<ExpectedReturnInfoTip
-								coverage={status?.expectedReturnCoverage}
-								incomplete={status?.expectedReturnCoverage != null && status.expectedReturnCoverage < 1}
-							/>
-						</span>
-					{/if}
 				</span>
 				<span class="truncate text-[17px] font-semibold tabular-nums leading-none tracking-tight
 					{r.value === '\u2014' ? 'text-text-tertiary' : r.color}">

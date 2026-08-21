@@ -30,7 +30,7 @@ struct Projection {
 }
 
 /// The read models, each rebuildable from the raw tracking tables.
-const PROJECTIONS: [Projection; 8] = [
+const PROJECTIONS: [Projection; 9] = [
     Projection {
         table: "session_summaries",
         snapshot_sql: "SELECT session_id, summary_version, started_at, ended_at, \
@@ -76,6 +76,13 @@ const PROJECTIONS: [Projection; 8] = [
         table: "session_pes_rollups",
         snapshot_sql: "SELECT session_id, context_id, pes FROM session_pes_rollups \
              ORDER BY session_id, context_id",
+    },
+    Projection {
+        table: "session_offensive_evidence_rollups",
+        snapshot_sql: "SELECT session_id, context_id, mob_species, evidence_fingerprint, \
+             expected_economics_json, shots_fired, missing_candidate_raw_tt, \
+             missing_basis_phases FROM session_offensive_evidence_rollups \
+             ORDER BY session_id, context_id, mob_species, evidence_fingerprint",
     },
     Projection {
         table: "session_rollup_meta",
@@ -282,7 +289,7 @@ mod tests {
             "every projection is a pure function of the raw tables: {report:?}"
         );
         // Every projection is covered and non-trivial.
-        assert_eq!(report.tables.len(), 8);
+        assert_eq!(report.tables.len(), 9);
         assert!(report
             .tables
             .iter()

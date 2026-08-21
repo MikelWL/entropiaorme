@@ -29,6 +29,7 @@ function expectedEconomics(over: Partial<ExpectedHuntingEconomics> = {}): Expect
 		eligibleOffensiveCost: 1000,
 		offensiveTtRecovery: 0.94,
 		expectedTtRate: 0.94,
+		effectiveEfficiency: { status: 'within_model_range', efficiencyPct: 64.29 },
 		breakEvenLootMarkup: 1 / 0.94,
 		coverage: 1,
 		incomplete: false,
@@ -76,6 +77,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		confirmedRewardPed: 15,
 		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
@@ -183,6 +185,26 @@ describe('createHuntingModel', () => {
 		const overall = required(model.overall, 'modelled overall');
 		expect(overall.lootMarkupFactor).toBeCloseTo(1.3, 6);
 		expect(overall.expectedMarketRate).toBeCloseTo(1.222, 6);
+	});
+
+	it('projects expected economics at activity grain without folding quest rewards into loot MU', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						activities: [sessionActivity({ expected: expectedEconomics() })],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const row = required(model.sessionSections[0].activities[0], 'modelled activity');
+		expect(row.lootMarkupFactor).toBeCloseTo(1.3, 6);
+		expect(row.expectedTtRate).toBe(0.94);
+		expect(row.expectedMarketRate).toBeCloseTo(1.222, 6);
+		expect(row.rewardMuPed).toBeCloseTo(19.5, 6);
 	});
 
 	it('adds confirmed rewards once to activity, session, and Overall realised outcomes', async () => {

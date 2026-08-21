@@ -316,6 +316,13 @@ async fn an_existing_weapon_setup_gains_descriptive_lifesteal_without_a_rewrite(
     let expected = detail.expected_return.as_ref().unwrap();
     assert_eq!(expected.coverage, 1.0);
     assert!(!expected.incomplete);
+    assert_eq!(
+        expected.effective_efficiency.as_ref(),
+        Some(&eo_api::equipment::EquipmentEffectiveEfficiency {
+            status: eo_api::equipment::EquipmentEffectiveEfficiencyStatus::WithinModelRange,
+            efficiency_pct: Some(57.21).into(),
+        })
+    );
 
     let stored = db
         .with_reader(|conn| {

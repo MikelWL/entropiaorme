@@ -1,5 +1,6 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
 	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { ExpectedHuntingEconomics } from '$lib/api';
@@ -38,6 +39,20 @@
 
 	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
 	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
+	const effectiveEfficiencyValue = $derived.by(() => {
+		const effective = expectedEconomics?.effectiveEfficiency;
+		if (!effective) return NO_DATA;
+		switch (effective.status) {
+			case 'within_model_range':
+				return effective.efficiencyPct !== null
+					? `${effective.efficiencyPct.toFixed(1)}%`
+					: NO_DATA;
+			case 'below_model_range':
+				return 'Below model range';
+			case 'above_model_range':
+				return 'Above model range';
+		}
+	});
 </script>
 
 <!-- An estimate sits here at the same weight as a measured figure, so it says
@@ -58,6 +73,16 @@
 		looterLevel={expectedEconomics?.looterLevel}
 		coverage={expectedEconomics?.coverage}
 		incomplete={expectedEconomics?.incomplete}
+	/>
+{/snippet}
+
+{#snippet effectiveEfficiencyTip()}
+	<EffectiveEfficiencyInfoTip
+		effectiveEfficiency={expectedEconomics?.effectiveEfficiency ?? null}
+		looterLevel={expectedEconomics?.looterLevel}
+		coverage={expectedEconomics?.coverage}
+		incomplete={expectedEconomics?.incomplete}
+		scope="activity"
 	/>
 {/snippet}
 
@@ -120,10 +145,15 @@
 			class="mt-4 grid grid-cols-2 items-start gap-x-6 gap-y-3 border-t border-border/35 pt-3 md:grid-cols-4"
 			data-testid="hunting-expected-economics"
 		>
-			<div class="min-w-0">
-				<p class="eyebrow">Long-run planning</p>
-				<p class="mt-1 text-[11px] leading-relaxed text-text-tertiary">Community model v1</p>
-			</div>
+			<StatDisplay
+				label="Effective Efficiency"
+				value={effectiveEfficiencyValue}
+				valueClass={expectedEconomics?.effectiveEfficiency != null
+					? 'text-text'
+					: 'text-text-tertiary'}
+				emphasis="secondary"
+				labelSuffix={effectiveEfficiencyTip}
+			/>
 			<StatDisplay
 				label="Loot MU"
 				value={lootMarkupFactor != null ? formatPercent(lootMarkupFactor) : NO_DATA}

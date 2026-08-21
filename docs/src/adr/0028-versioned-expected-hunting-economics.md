@@ -19,6 +19,14 @@ Only weapon and amplifier streams with a known Efficiency and raw TT basis are e
 
 The tracker snapshots Animal, Mutant, and Robot Looter levels at session start and persists the exact component evidence for each offensive phase. Target-specific looter selection is typed for future use. Until a trustworthy target class is available, v1 uses and labels the arithmetic mean of exactly those three professions. Legacy phases without captured evidence remain explicitly incomplete.
 
+Equipment and historical Hunting analytics may invert premium-adjusted expected return into
+Effective Efficiency: the Efficiency an otherwise identical unlimited offensive setup would
+require at the same looter level. This is an economic comparison, not a change to any component's
+in-game Efficiency. Equipment requires a complete setup basis. Analytics weights every captured
+weapon and amplifier phase by raw TT, retains consumed premium in the combined denominator, and
+may report the modelled subset while separately disclosing partial historical coverage. A result
+outside v1's declared Efficiency domain is labelled as outside the model rather than clamped.
+
 Loot Markup is an independent, 100%-anchored factor over observed loot composition:
 
 ```text
@@ -28,10 +36,15 @@ Expected Market Rate = Expected TT Rate x Loot Markup Factor
 
 Both quantities remain informational estimates. Neither may enter the confirmed ledger or realised profit and loss.
 
+Historical activity breakdowns retain the immutable context stamp on offensive evidence. Exact
+quest, segment, and joint-activity signatures therefore receive only the phases captured under
+their own context; quest-family rows sum their variants. Quest rewards remain separate from
+ordinary loot markup and expected offensive return.
+
 ## Consequences
 
-- Equipment can explain component Efficiency, limited-item premium drag, expected offensive return, and break-even loot markup without presenting a weapon comparator as a separate product.
-- Live and historical hunting surfaces can replay one model over the loadout evidence that actually produced their offensive cost.
+- Equipment can explain component Efficiency, premium-adjusted Effective Efficiency, expected offensive return, and break-even loot markup without presenting a weapon comparator as a separate product.
+- Live and historical hunting surfaces can replay one model over the loadout evidence that actually produced their offensive cost, including one aggregate unlimited-equivalent Efficiency across mixed setups.
 - Missing Efficiency narrows labelled coverage instead of becoming a plausible zero-return input.
 - A future model revision adds a new version and re-evaluates retained evidence. It does not mutate the meaning of historical observations.
 - Target-resolved looter selection remains unavailable until mob classification is trustworthy. The explicit three-looter mean is the honest current fallback.

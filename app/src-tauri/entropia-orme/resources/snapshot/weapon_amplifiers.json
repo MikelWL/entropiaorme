@@ -5,7 +5,9 @@
     "economy": {
       "decay": 0.15,
       "ammo_burn": 1707,
-      "efficiency": 59
+      "efficiency": 59,
+      "max_tt": 55,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -25,7 +27,9 @@
     "economy": {
       "decay": 3.297,
       "ammo_burn": 0,
-      "efficiency": 62.4
+      "efficiency": 62.4,
+      "max_tt": 110,
+      "min_tt": 3.3
     },
     "damage": {
       "impact": 1,
@@ -45,7 +49,9 @@
     "economy": {
       "decay": 6.865,
       "ammo_burn": 0,
-      "efficiency": 61.2
+      "efficiency": 61.2,
+      "max_tt": 143,
+      "min_tt": 4.28
     },
     "damage": {
       "impact": 2,
@@ -65,7 +71,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": null,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": null,
+      "min_tt": null
     },
     "damage": {
       "impact": null,
@@ -85,7 +93,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": 0,
-      "efficiency": 68.2
+      "efficiency": 68.2,
+      "max_tt": 123,
+      "min_tt": 0
     },
     "damage": {
       "impact": 2,
@@ -105,7 +115,9 @@
     "economy": {
       "decay": 0.66,
       "ammo_burn": null,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": 5,
+      "min_tt": 0.15
     },
     "damage": {
       "impact": 4,
@@ -125,7 +137,9 @@
     "economy": {
       "decay": 1.25,
       "ammo_burn": 68,
-      "efficiency": 57.1
+      "efficiency": 57.1,
+      "max_tt": 12,
+      "min_tt": 0.4
     },
     "damage": {
       "impact": 8,
@@ -145,7 +159,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": 110,
-      "efficiency": 56.7
+      "efficiency": 56.7,
+      "max_tt": 18,
+      "min_tt": 0.54
     },
     "damage": {
       "impact": 12,
@@ -165,7 +181,9 @@
     "economy": {
       "decay": 4.522,
       "ammo_burn": 200,
-      "efficiency": 49.3
+      "efficiency": 49.3,
+      "max_tt": 170,
+      "min_tt": 5.1
     },
     "damage": {
       "impact": 2,
@@ -185,7 +203,9 @@
     "economy": {
       "decay": 0.03,
       "ammo_burn": 0,
-      "efficiency": 77
+      "efficiency": 77,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -205,7 +225,9 @@
     "economy": {
       "decay": 0.033,
       "ammo_burn": 0,
-      "efficiency": 80
+      "efficiency": 80,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -225,7 +247,9 @@
     "economy": {
       "decay": 1.063,
       "ammo_burn": 415,
-      "efficiency": 61
+      "efficiency": 61,
+      "max_tt": 94,
+      "min_tt": 2.82
     },
     "damage": {
       "impact": 5,
@@ -245,7 +269,9 @@
     "economy": {
       "decay": 1.255,
       "ammo_burn": 515,
-      "efficiency": 60.8
+      "efficiency": 60.8,
+      "max_tt": 117,
+      "min_tt": 3.51
     },
     "damage": {
       "impact": 6,
@@ -265,7 +291,9 @@
     "economy": {
       "decay": 0.025,
       "ammo_burn": 0,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -286,7 +314,9 @@
     "economy": {
       "decay": 0.477,
       "ammo_burn": 0,
-      "efficiency": 59.6
+      "efficiency": 59.6,
+      "max_tt": 8.5,
+      "min_tt": 0.255
     },
     "damage": {
       "impact": null,
@@ -306,7 +336,9 @@
     "economy": {
       "decay": 1.194,
       "ammo_burn": 0,
-      "efficiency": 59.1
+      "efficiency": 59.1,
+      "max_tt": 19,
+      "min_tt": 0.56
     },
     "damage": {
       "impact": null,
@@ -326,7 +358,9 @@
     "economy": {
       "decay": 0.025,
       "ammo_burn": 0,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -346,7 +380,9 @@
     "economy": {
       "decay": 0.025,
       "ammo_burn": null,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 500,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -366,7 +402,9 @@
     "economy": {
       "decay": 2.2,
       "ammo_burn": 2000,
-      "efficiency": 82
+      "efficiency": 82,
+      "max_tt": 202,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -386,7 +424,9 @@
     "economy": {
       "decay": 0.5,
       "ammo_burn": 900,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 50,
+      "min_tt": 0
     },
     "damage": {
       "impact": 25,
@@ -406,7 +446,9 @@
     "economy": {
       "decay": 0.75,
       "ammo_burn": 1350,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 75,
+      "min_tt": 0
     },
     "damage": {
       "impact": 25,
@@ -426,7 +468,9 @@
     "economy": {
       "decay": 1.25,
       "ammo_burn": 2250,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 125,
+      "min_tt": 0
     },
     "damage": {
       "impact": 50,
@@ -446,7 +490,9 @@
     "economy": {
       "decay": 1,
       "ammo_burn": 1800,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 25,
@@ -466,7 +512,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": 0,
-      "efficiency": 80
+      "efficiency": 80,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -486,7 +534,9 @@
     "economy": {
       "decay": 2,
       "ammo_burn": 3600,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": 75,
@@ -506,7 +556,9 @@
     "economy": {
       "decay": 0.8,
       "ammo_burn": 40,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 8,
+      "min_tt": 0.24
     },
     "damage": {
       "impact": null,
@@ -526,7 +578,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": 110,
-      "efficiency": 56.7
+      "efficiency": 56.7,
+      "max_tt": 15,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -546,7 +600,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": 166,
-      "efficiency": 57.1
+      "efficiency": 57.1,
+      "max_tt": 21,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -566,7 +622,9 @@
     "economy": {
       "decay": 2.47,
       "ammo_burn": 228,
-      "efficiency": 72.1
+      "efficiency": 72.1,
+      "max_tt": 184,
+      "min_tt": 5.52
     },
     "damage": {
       "impact": null,
@@ -586,7 +644,9 @@
     "economy": {
       "decay": 2.47,
       "ammo_burn": 175,
-      "efficiency": 76.9
+      "efficiency": 76.9,
+      "max_tt": 92,
+      "min_tt": 2.76
     },
     "damage": {
       "impact": null,
@@ -606,7 +666,9 @@
     "economy": {
       "decay": 3.315,
       "ammo_burn": 374,
-      "efficiency": 78.9
+      "efficiency": 78.9,
+      "max_tt": 343,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -626,7 +688,9 @@
     "economy": {
       "decay": 3.31,
       "ammo_burn": 242,
-      "efficiency": 79
+      "efficiency": 79,
+      "max_tt": 171,
+      "min_tt": 5.1028
     },
     "damage": {
       "impact": null,
@@ -646,7 +710,9 @@
     "economy": {
       "decay": 25,
       "ammo_burn": 0,
-      "efficiency": 95
+      "efficiency": 95,
+      "max_tt": 3000,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -666,7 +732,9 @@
     "economy": {
       "decay": 8.001,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 324,
+      "min_tt": 9.72
     },
     "damage": {
       "impact": 0,
@@ -686,7 +754,9 @@
     "economy": {
       "decay": null,
       "ammo_burn": 0,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 25,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -706,7 +776,9 @@
     "economy": {
       "decay": 4.445,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 180,
+      "min_tt": 5.4
     },
     "damage": {
       "impact": 0,
@@ -726,7 +798,9 @@
     "economy": {
       "decay": 7.766,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 444,
+      "min_tt": 13.32
     },
     "damage": {
       "impact": 0,
@@ -746,7 +820,9 @@
     "economy": {
       "decay": 0.4,
       "ammo_burn": 3800,
-      "efficiency": 80
+      "efficiency": 80,
+      "max_tt": 900,
+      "min_tt": 0
     },
     "damage": {
       "impact": 200,
@@ -766,7 +842,9 @@
     "economy": {
       "decay": 0.5,
       "ammo_burn": 1000,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 500,
+      "min_tt": 0
     },
     "damage": {
       "impact": 1,
@@ -786,7 +864,9 @@
     "economy": {
       "decay": 0.061,
       "ammo_burn": 1159,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 150,
+      "min_tt": 0
     },
     "damage": {
       "impact": 50,
@@ -806,7 +886,9 @@
     "economy": {
       "decay": 0.031,
       "ammo_burn": 587,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 60,
+      "min_tt": 0
     },
     "damage": {
       "impact": 25,
@@ -826,7 +908,9 @@
     "economy": {
       "decay": 0.0257,
       "ammo_burn": 0,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 200,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -846,7 +930,9 @@
     "economy": {
       "decay": 1.093,
       "ammo_burn": 300,
-      "efficiency": 57.5
+      "efficiency": 57.5,
+      "max_tt": 44,
+      "min_tt": 1.32
     },
     "damage": {
       "impact": 4,
@@ -866,7 +952,9 @@
     "economy": {
       "decay": 1.2,
       "ammo_burn": 0,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 5,
@@ -886,7 +974,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -907,7 +997,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -928,7 +1020,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -949,7 +1043,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": null,
@@ -970,7 +1066,9 @@
     "economy": {
       "decay": 0.05,
       "ammo_burn": 475,
-      "efficiency": 80
+      "efficiency": 80,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 25,
@@ -990,7 +1088,9 @@
     "economy": {
       "decay": 0.19,
       "ammo_burn": 1805,
-      "efficiency": 80
+      "efficiency": 80,
+      "max_tt": 400,
+      "min_tt": 0
     },
     "damage": {
       "impact": 95,
@@ -1010,7 +1110,9 @@
     "economy": {
       "decay": 0.6,
       "ammo_burn": 85,
-      "efficiency": 60
+      "efficiency": 60,
+      "max_tt": 60,
+      "min_tt": 0
     },
     "damage": {
       "impact": 1,
@@ -1030,7 +1132,9 @@
     "economy": {
       "decay": 0.3,
       "ammo_burn": 300,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 160,
+      "min_tt": 0
     },
     "damage": {
       "impact": 1,
@@ -1050,7 +1154,9 @@
     "economy": {
       "decay": 1.063,
       "ammo_burn": 415,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": 94,
+      "min_tt": 0
     },
     "damage": {
       "impact": 5,
@@ -1070,7 +1176,9 @@
     "economy": {
       "decay": 1.5,
       "ammo_burn": 0,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 150,
+      "min_tt": 0
     },
     "damage": {
       "impact": 50,
@@ -1090,7 +1198,9 @@
     "economy": {
       "decay": 0.064,
       "ammo_burn": 84,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 8,
+      "min_tt": 0.24
     },
     "damage": {
       "impact": 0,
@@ -1110,7 +1220,9 @@
     "economy": {
       "decay": 0.096,
       "ammo_burn": 126,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 12,
+      "min_tt": 0.36
     },
     "damage": {
       "impact": 0,
@@ -1130,7 +1242,9 @@
     "economy": {
       "decay": 0.128,
       "ammo_burn": 168,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 16,
+      "min_tt": 0.48
     },
     "damage": {
       "impact": 0,
@@ -1150,7 +1264,9 @@
     "economy": {
       "decay": 0.16,
       "ammo_burn": 210,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 0,
@@ -1170,7 +1286,9 @@
     "economy": {
       "decay": 0.208,
       "ammo_burn": 273,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 26,
+      "min_tt": 0.77
     },
     "damage": {
       "impact": 0,
@@ -1190,7 +1308,9 @@
     "economy": {
       "decay": 0.272,
       "ammo_burn": 357,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 34,
+      "min_tt": 1.02
     },
     "damage": {
       "impact": 0,
@@ -1210,7 +1330,9 @@
     "economy": {
       "decay": 0.32,
       "ammo_burn": 420,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -1230,7 +1352,9 @@
     "economy": {
       "decay": 0.368,
       "ammo_burn": 483,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 46,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -1250,7 +1374,9 @@
     "economy": {
       "decay": 0.4,
       "ammo_burn": 525,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 50,
+      "min_tt": 1.5
     },
     "damage": {
       "impact": 0,
@@ -1270,7 +1396,9 @@
     "economy": {
       "decay": 0.448,
       "ammo_burn": 588,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 56,
+      "min_tt": 1.68
     },
     "damage": {
       "impact": 0,
@@ -1290,7 +1418,9 @@
     "economy": {
       "decay": 0.528,
       "ammo_burn": 693,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 66,
+      "min_tt": 1.98
     },
     "damage": {
       "impact": 0,
@@ -1310,7 +1440,9 @@
     "economy": {
       "decay": 0.592,
       "ammo_burn": 777,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 74,
+      "min_tt": 2.22
     },
     "damage": {
       "impact": 0,
@@ -1330,7 +1462,9 @@
     "economy": {
       "decay": 0.672,
       "ammo_burn": 882,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 84,
+      "min_tt": 2.52
     },
     "damage": {
       "impact": 0,
@@ -1350,7 +1484,9 @@
     "economy": {
       "decay": 0.72,
       "ammo_burn": 945,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 90,
+      "min_tt": 0.0001
     },
     "damage": {
       "impact": 0,
@@ -1370,7 +1506,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -1390,7 +1528,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -1410,7 +1550,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -1430,7 +1572,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -1450,7 +1594,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -1470,7 +1616,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 0.0037
     },
     "damage": {
       "impact": 0,
@@ -1490,7 +1638,9 @@
     "economy": {
       "decay": 0.477,
       "ammo_burn": 0,
-      "efficiency": 59.6
+      "efficiency": 59.6,
+      "max_tt": 8.5,
+      "min_tt": 0.255
     },
     "damage": {
       "impact": 1,
@@ -1510,7 +1660,9 @@
     "economy": {
       "decay": 1.195,
       "ammo_burn": 0,
-      "efficiency": 59.1
+      "efficiency": 59.1,
+      "max_tt": 19,
+      "min_tt": 0.57
     },
     "damage": {
       "impact": 2,
@@ -1530,7 +1682,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": 0,
-      "efficiency": 50
+      "efficiency": 50,
+      "max_tt": 50,
+      "min_tt": 1.5
     },
     "damage": {
       "impact": 0,
@@ -1550,7 +1704,9 @@
     "economy": {
       "decay": 1.139,
       "ammo_burn": 200,
-      "efficiency": 56.9
+      "efficiency": 56.9,
+      "max_tt": 41,
+      "min_tt": 1.23
     },
     "damage": {
       "impact": 4,
@@ -1570,7 +1726,9 @@
     "economy": {
       "decay": 22.105,
       "ammo_burn": 0,
-      "efficiency": 79
+      "efficiency": 79,
+      "max_tt": 1100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -1590,7 +1748,9 @@
     "economy": {
       "decay": 1.311,
       "ammo_burn": 400,
-      "efficiency": 57
+      "efficiency": 57,
+      "max_tt": 57,
+      "min_tt": 1.71
     },
     "damage": {
       "impact": 5,
@@ -1610,7 +1770,9 @@
     "economy": {
       "decay": 1.779,
       "ammo_burn": 400,
-      "efficiency": 57.5
+      "efficiency": 57.5,
+      "max_tt": 61,
+      "min_tt": 1.83
     },
     "damage": {
       "impact": 7,
@@ -1630,7 +1792,9 @@
     "economy": {
       "decay": 0.952,
       "ammo_burn": 0,
-      "efficiency": 60.05
+      "efficiency": 60.05,
+      "max_tt": 50,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -1650,7 +1814,9 @@
     "economy": {
       "decay": 1.428,
       "ammo_burn": 0,
-      "efficiency": 60.05
+      "efficiency": 60.05,
+      "max_tt": 75,
+      "min_tt": 2.25
     },
     "damage": {
       "impact": 0,
@@ -1670,7 +1836,9 @@
     "economy": {
       "decay": 3.207,
       "ammo_burn": 900,
-      "efficiency": 54.6
+      "efficiency": 54.6,
+      "max_tt": 235,
+      "min_tt": null
     },
     "damage": {
       "impact": 10,
@@ -1690,7 +1858,9 @@
     "economy": {
       "decay": 0.22,
       "ammo_burn": 409,
-      "efficiency": 58.7
+      "efficiency": 58.7,
+      "max_tt": 4.55,
+      "min_tt": 0.1365
     },
     "damage": {
       "impact": 8,
@@ -1710,7 +1880,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": 0,
-      "efficiency": 49.91
+      "efficiency": 49.91,
+      "max_tt": 150,
+      "min_tt": 4.5
     },
     "damage": {
       "impact": 0,
@@ -1730,7 +1902,9 @@
     "economy": {
       "decay": 0.99,
       "ammo_burn": 0,
-      "efficiency": 51.9
+      "efficiency": 51.9,
+      "max_tt": 500,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -1750,7 +1924,9 @@
     "economy": {
       "decay": 0.152,
       "ammo_burn": 169,
-      "efficiency": 67.7
+      "efficiency": 67.7,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 8,
@@ -1770,7 +1946,9 @@
     "economy": {
       "decay": 0.36,
       "ammo_burn": 353,
-      "efficiency": 84.5
+      "efficiency": 84.5,
+      "max_tt": 45,
+      "min_tt": 1.35
     },
     "damage": {
       "impact": 18,
@@ -1790,7 +1968,9 @@
     "economy": {
       "decay": 0.533,
       "ammo_burn": 530,
-      "efficiency": 84.6
+      "efficiency": 84.6,
+      "max_tt": 65,
+      "min_tt": 1.95
     },
     "damage": {
       "impact": 27,
@@ -1810,7 +1990,9 @@
     "economy": {
       "decay": 1.6,
       "ammo_burn": 200,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 70,
+      "min_tt": 2.1
     },
     "damage": {
       "impact": 0,
@@ -1830,7 +2012,9 @@
     "economy": {
       "decay": 1.8,
       "ammo_burn": 300,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 80,
+      "min_tt": 2.4
     },
     "damage": {
       "impact": 0,
@@ -1850,7 +2034,9 @@
     "economy": {
       "decay": 1.4,
       "ammo_burn": 100,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 60,
+      "min_tt": 1.8
     },
     "damage": {
       "impact": 0,
@@ -1870,7 +2056,9 @@
     "economy": {
       "decay": 1.2,
       "ammo_burn": 0,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -1890,7 +2078,9 @@
     "economy": {
       "decay": 0.67,
       "ammo_burn": 850,
-      "efficiency": 88
+      "efficiency": 88,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 45,
@@ -1910,7 +2100,9 @@
     "economy": {
       "decay": 2.366,
       "ammo_burn": 200,
-      "efficiency": 68.2
+      "efficiency": 68.2,
+      "max_tt": 123,
+      "min_tt": 3.69
     },
     "damage": {
       "impact": 2,
@@ -1930,7 +2122,9 @@
     "economy": {
       "decay": 2.826,
       "ammo_burn": 200,
-      "efficiency": 68.2
+      "efficiency": 68.2,
+      "max_tt": 123,
+      "min_tt": 3.69
     },
     "damage": {
       "impact": 3,
@@ -1950,7 +2144,9 @@
     "economy": {
       "decay": 4.102,
       "ammo_burn": 245,
-      "efficiency": 55.9
+      "efficiency": 55.9,
+      "max_tt": 200,
+      "min_tt": 6
     },
     "damage": {
       "impact": 3,
@@ -1970,7 +2166,9 @@
     "economy": {
       "decay": 3.88,
       "ammo_burn": 276,
-      "efficiency": 60.9
+      "efficiency": 60.9,
+      "max_tt": 250,
+      "min_tt": 7.5
     },
     "damage": {
       "impact": 4,
@@ -1990,7 +2188,9 @@
     "economy": {
       "decay": 3.83,
       "ammo_burn": 292,
-      "efficiency": 65.1
+      "efficiency": 65.1,
+      "max_tt": 300,
+      "min_tt": 9
     },
     "damage": {
       "impact": 5,
@@ -2010,7 +2210,9 @@
     "economy": {
       "decay": 4,
       "ammo_burn": 300,
-      "efficiency": 72.6
+      "efficiency": 72.6,
+      "max_tt": 199,
+      "min_tt": 0
     },
     "damage": {
       "impact": 3,
@@ -2030,7 +2232,9 @@
     "economy": {
       "decay": 5.95,
       "ammo_burn": 300,
-      "efficiency": 51
+      "efficiency": 51,
+      "max_tt": 211,
+      "min_tt": 6.33
     },
     "damage": {
       "impact": 3,
@@ -2050,7 +2254,9 @@
     "economy": {
       "decay": 5.95,
       "ammo_burn": 320,
-      "efficiency": 63.3
+      "efficiency": 63.3,
+      "max_tt": 444,
+      "min_tt": 13.32
     },
     "damage": {
       "impact": 4,
@@ -2070,7 +2276,9 @@
     "economy": {
       "decay": 5.95,
       "ammo_burn": 354,
-      "efficiency": 66.5
+      "efficiency": 66.5,
+      "max_tt": 555,
+      "min_tt": 16.65
     },
     "damage": {
       "impact": 5,
@@ -2090,7 +2298,9 @@
     "economy": {
       "decay": 5.95,
       "ammo_burn": 386,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 666,
+      "min_tt": 19.98
     },
     "damage": {
       "impact": 6,
@@ -2110,7 +2320,9 @@
     "economy": {
       "decay": 0.6,
       "ammo_burn": 954,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 666,
+      "min_tt": null
     },
     "damage": {
       "impact": 7,
@@ -2130,7 +2342,9 @@
     "economy": {
       "decay": 10.1,
       "ammo_burn": 0,
-      "efficiency": 68.5
+      "efficiency": 68.5,
+      "max_tt": 176,
+      "min_tt": 5.28
     },
     "damage": {
       "impact": 9,
@@ -2150,7 +2364,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2171,7 +2387,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2192,7 +2410,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2213,7 +2433,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2234,7 +2456,9 @@
     "economy": {
       "decay": 0.226,
       "ammo_burn": 70,
-      "efficiency": 66.4
+      "efficiency": 66.4,
+      "max_tt": 17,
+      "min_tt": 0.51
     },
     "damage": {
       "impact": 1,
@@ -2254,7 +2478,9 @@
     "economy": {
       "decay": 0.467,
       "ammo_burn": 165,
-      "efficiency": 62.7
+      "efficiency": 62.7,
+      "max_tt": 37,
+      "min_tt": 1.11
     },
     "damage": {
       "impact": 2,
@@ -2274,7 +2500,9 @@
     "economy": {
       "decay": 0.781,
       "ammo_burn": 300,
-      "efficiency": 61.6
+      "efficiency": 61.6,
+      "max_tt": 65,
+      "min_tt": 1.95
     },
     "damage": {
       "impact": 4,
@@ -2294,7 +2522,9 @@
     "economy": {
       "decay": 1.459,
       "ammo_burn": 590,
-      "efficiency": 60.6
+      "efficiency": 60.6,
+      "max_tt": 143,
+      "min_tt": 4.29
     },
     "damage": {
       "impact": 7,
@@ -2314,7 +2544,9 @@
     "economy": {
       "decay": 1.574,
       "ammo_burn": 650,
-      "efficiency": 60.5
+      "efficiency": 60.5,
+      "max_tt": 170,
+      "min_tt": 5.1
     },
     "damage": {
       "impact": 8,
@@ -2334,7 +2566,9 @@
     "economy": {
       "decay": 1.778,
       "ammo_burn": 725,
-      "efficiency": 60.4
+      "efficiency": 60.4,
+      "max_tt": 210,
+      "min_tt": 6.3
     },
     "damage": {
       "impact": 9,
@@ -2354,7 +2588,9 @@
     "economy": {
       "decay": 2.098,
       "ammo_burn": 860,
-      "efficiency": 60.3
+      "efficiency": 60.3,
+      "max_tt": 290,
+      "min_tt": 8.7
     },
     "damage": {
       "impact": 10,
@@ -2374,7 +2610,9 @@
     "economy": {
       "decay": 2.302,
       "ammo_burn": 935,
-      "efficiency": 60.2
+      "efficiency": 60.2,
+      "max_tt": 360,
+      "min_tt": 10.8
     },
     "damage": {
       "impact": 11,
@@ -2394,7 +2632,9 @@
     "economy": {
       "decay": 0.5,
       "ammo_burn": 788,
-      "efficiency": 78.5
+      "efficiency": 78.5,
+      "max_tt": 343,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -2414,7 +2654,9 @@
     "economy": {
       "decay": 1.437,
       "ammo_burn": 100,
-      "efficiency": 55
+      "efficiency": 55,
+      "max_tt": 38,
+      "min_tt": 1.14
     },
     "damage": {
       "impact": 3,
@@ -2434,7 +2676,9 @@
     "economy": {
       "decay": 1.843,
       "ammo_burn": 300,
-      "efficiency": 56.3
+      "efficiency": 56.3,
+      "max_tt": 46.8,
+      "min_tt": 1.404
     },
     "damage": {
       "impact": 6,
@@ -2454,7 +2698,9 @@
     "economy": {
       "decay": 2.757,
       "ammo_burn": 800,
-      "efficiency": 54.3
+      "efficiency": 54.3,
+      "max_tt": 176,
+      "min_tt": 5.28
     },
     "damage": {
       "impact": 9,
@@ -2474,7 +2720,9 @@
     "economy": {
       "decay": 0.02,
       "ammo_burn": 700,
-      "efficiency": 98.5
+      "efficiency": 98.5,
+      "max_tt": 2,
+      "min_tt": 0.06
     },
     "damage": {
       "impact": 30,
@@ -2494,7 +2742,9 @@
     "economy": {
       "decay": 0.969,
       "ammo_burn": 0,
-      "efficiency": 56.2
+      "efficiency": 56.2,
+      "max_tt": 16.5,
+      "min_tt": 0.495
     },
     "damage": {
       "impact": 1,
@@ -2514,7 +2764,9 @@
     "economy": {
       "decay": 0.064,
       "ammo_burn": 84,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 8,
+      "min_tt": 0.24
     },
     "damage": {
       "impact": 0,
@@ -2534,7 +2786,9 @@
     "economy": {
       "decay": 1.75,
       "ammo_burn": 3150,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 175,
+      "min_tt": 0
     },
     "damage": {
       "impact": 50,
@@ -2554,7 +2808,9 @@
     "economy": {
       "decay": 0.208,
       "ammo_burn": 273,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 26,
+      "min_tt": 0.78
     },
     "damage": {
       "impact": 0,
@@ -2574,7 +2830,9 @@
     "economy": {
       "decay": 0.368,
       "ammo_burn": 483,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 46,
+      "min_tt": 1.38
     },
     "damage": {
       "impact": 0,
@@ -2594,7 +2852,9 @@
     "economy": {
       "decay": 0.4,
       "ammo_burn": 525,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 50,
+      "min_tt": 1.5
     },
     "damage": {
       "impact": 0,
@@ -2614,7 +2874,9 @@
     "economy": {
       "decay": 0.528,
       "ammo_burn": 693,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 66,
+      "min_tt": 1.98
     },
     "damage": {
       "impact": 0,
@@ -2634,7 +2896,9 @@
     "economy": {
       "decay": 0.592,
       "ammo_burn": 777,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 74,
+      "min_tt": 2.22
     },
     "damage": {
       "impact": 0,
@@ -2654,7 +2918,9 @@
     "economy": {
       "decay": 0.672,
       "ammo_burn": 882,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 84,
+      "min_tt": 2.52
     },
     "damage": {
       "impact": 0,
@@ -2674,7 +2940,9 @@
     "economy": {
       "decay": 0.72,
       "ammo_burn": 945,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 90,
+      "min_tt": 2.7
     },
     "damage": {
       "impact": 0,
@@ -2694,7 +2962,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -2714,7 +2984,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -2734,7 +3006,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2754,7 +3028,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -2774,7 +3050,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2794,7 +3072,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1032,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -2814,7 +3094,9 @@
     "economy": {
       "decay": 1.437,
       "ammo_burn": 100,
-      "efficiency": 55
+      "efficiency": 55,
+      "max_tt": 37,
+      "min_tt": 1.11
     },
     "damage": {
       "impact": 0,
@@ -2834,7 +3116,9 @@
     "economy": {
       "decay": 4.751,
       "ammo_burn": 1200,
-      "efficiency": 55.8
+      "efficiency": 55.8,
+      "max_tt": 135,
+      "min_tt": 4.05
     },
     "damage": {
       "impact": 0,
@@ -2854,7 +3138,9 @@
     "economy": {
       "decay": 0.969,
       "ammo_burn": 0,
-      "efficiency": 56.2
+      "efficiency": 56.2,
+      "max_tt": 20.5,
+      "min_tt": 0.615
     },
     "damage": {
       "impact": 0,
@@ -2874,7 +3160,9 @@
     "economy": {
       "decay": 0.26,
       "ammo_burn": 402,
-      "efficiency": 60.3
+      "efficiency": 60.3,
+      "max_tt": 5.5,
+      "min_tt": 0.165
     },
     "damage": {
       "impact": 0,
@@ -2894,7 +3182,9 @@
     "economy": {
       "decay": 7.68,
       "ammo_burn": 400,
-      "efficiency": 89.7
+      "efficiency": 89.7,
+      "max_tt": 0.01,
+      "min_tt": 300
     },
     "damage": {
       "impact": 0,
@@ -2914,7 +3204,9 @@
     "economy": {
       "decay": 5.633,
       "ammo_burn": 100,
-      "efficiency": 27.6
+      "efficiency": 27.6,
+      "max_tt": 129.95,
+      "min_tt": 3.8985
     },
     "damage": {
       "impact": 0,
@@ -2934,7 +3226,9 @@
     "economy": {
       "decay": 0.182,
       "ammo_burn": 75,
-      "efficiency": 64.9
+      "efficiency": 64.9,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 0,
@@ -2954,7 +3248,9 @@
     "economy": {
       "decay": 0.465,
       "ammo_burn": 190,
-      "efficiency": 61.5
+      "efficiency": 61.5,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -2974,7 +3270,9 @@
     "economy": {
       "decay": 0.79,
       "ammo_burn": 325,
-      "efficiency": 60.4
+      "efficiency": 60.4,
+      "max_tt": 70,
+      "min_tt": 2.1
     },
     "damage": {
       "impact": 0,
@@ -2994,7 +3292,9 @@
     "economy": {
       "decay": 1.066,
       "ammo_burn": 465,
-      "efficiency": 59.9
+      "efficiency": 59.9,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -3014,7 +3314,9 @@
     "economy": {
       "decay": 1.261,
       "ammo_burn": 565,
-      "efficiency": 59.8
+      "efficiency": 59.8,
+      "max_tt": 130,
+      "min_tt": 3.9
     },
     "damage": {
       "impact": 0,
@@ -3034,7 +3336,9 @@
     "economy": {
       "decay": 1.589,
       "ammo_burn": 700,
-      "efficiency": 59.5
+      "efficiency": 59.5,
+      "max_tt": 160,
+      "min_tt": 4.8
     },
     "damage": {
       "impact": 0,
@@ -3054,7 +3358,9 @@
     "economy": {
       "decay": 1.826,
       "ammo_burn": 820,
-      "efficiency": 59.4
+      "efficiency": 59.4,
+      "max_tt": 205,
+      "min_tt": 6.15
     },
     "damage": {
       "impact": 0,
@@ -3074,7 +3380,9 @@
     "economy": {
       "decay": 2.077,
       "ammo_burn": 915,
-      "efficiency": 59.2
+      "efficiency": 59.2,
+      "max_tt": 260,
+      "min_tt": 7.8
     },
     "damage": {
       "impact": 0,
@@ -3094,7 +3402,9 @@
     "economy": {
       "decay": 2.351,
       "ammo_burn": 1055,
-      "efficiency": 59.2
+      "efficiency": 59.2,
+      "max_tt": 325,
+      "min_tt": 9.75
     },
     "damage": {
       "impact": 0,
@@ -3114,7 +3424,9 @@
     "economy": {
       "decay": 2.509,
       "ammo_burn": 1135,
-      "efficiency": 59.2
+      "efficiency": 59.2,
+      "max_tt": 395,
+      "min_tt": 11.85
     },
     "damage": {
       "impact": 0,
@@ -3134,7 +3446,9 @@
     "economy": {
       "decay": 2.331,
       "ammo_burn": 0,
-      "efficiency": 64.8
+      "efficiency": 64.8,
+      "max_tt": 26.5,
+      "min_tt": 0.795
     },
     "damage": {
       "impact": 0,
@@ -3154,7 +3468,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0.3
     },
     "damage": {
       "impact": 0,
@@ -3175,7 +3491,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0.03
     },
     "damage": {
       "impact": 0,
@@ -3196,7 +3514,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 998,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3217,7 +3537,9 @@
     "economy": {
       "decay": 0.652,
       "ammo_burn": 0,
-      "efficiency": 82.9
+      "efficiency": 82.9,
+      "max_tt": 18,
+      "min_tt": 0.54
     },
     "damage": {
       "impact": 0,
@@ -3237,7 +3559,9 @@
     "economy": {
       "decay": 0.521,
       "ammo_burn": 100,
-      "efficiency": 83
+      "efficiency": 83,
+      "max_tt": 25,
+      "min_tt": 0.75
     },
     "damage": {
       "impact": 0,
@@ -3257,7 +3581,9 @@
     "economy": {
       "decay": 1.606,
       "ammo_burn": 100,
-      "efficiency": 83.1
+      "efficiency": 83.1,
+      "max_tt": 30,
+      "min_tt": 0.9
     },
     "damage": {
       "impact": 0,
@@ -3277,7 +3603,9 @@
     "economy": {
       "decay": 2.039,
       "ammo_burn": 100,
-      "efficiency": 83.3
+      "efficiency": 83.3,
+      "max_tt": 40,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3297,7 +3625,9 @@
     "economy": {
       "decay": 2.267,
       "ammo_burn": 100,
-      "efficiency": 82.3
+      "efficiency": 82.3,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -3317,7 +3647,9 @@
     "economy": {
       "decay": 2.47,
       "ammo_burn": 100,
-      "efficiency": 83.5
+      "efficiency": 83.5,
+      "max_tt": 45,
+      "min_tt": 1.35
     },
     "damage": {
       "impact": 0,
@@ -3337,7 +3669,9 @@
     "economy": {
       "decay": 2.476,
       "ammo_burn": 121,
-      "efficiency": 83.6
+      "efficiency": 83.6,
+      "max_tt": 92,
+      "min_tt": 2.76
     },
     "damage": {
       "impact": 0,
@@ -3357,7 +3691,9 @@
     "economy": {
       "decay": 2.473,
       "ammo_burn": 143,
-      "efficiency": 83.6
+      "efficiency": 83.6,
+      "max_tt": 184,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3377,7 +3713,9 @@
     "economy": {
       "decay": 2.902,
       "ammo_burn": 100,
-      "efficiency": 83.6
+      "efficiency": 83.6,
+      "max_tt": 60,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3397,7 +3735,9 @@
     "economy": {
       "decay": 0.521,
       "ammo_burn": 100,
-      "efficiency": 83
+      "efficiency": 83,
+      "max_tt": 25,
+      "min_tt": 0.75
     },
     "damage": {
       "impact": 0,
@@ -3417,7 +3757,9 @@
     "economy": {
       "decay": 1.164,
       "ammo_burn": 100,
-      "efficiency": 84.1
+      "efficiency": 84.1,
+      "max_tt": 29,
+      "min_tt": 0.87
     },
     "damage": {
       "impact": 0,
@@ -3437,7 +3779,9 @@
     "economy": {
       "decay": 2.243,
       "ammo_burn": 100,
-      "efficiency": 84.4
+      "efficiency": 84.4,
+      "max_tt": 49,
+      "min_tt": 1.47
     },
     "damage": {
       "impact": 0,
@@ -3457,7 +3801,9 @@
     "economy": {
       "decay": 3.31,
       "ammo_burn": 100,
-      "efficiency": 85.3
+      "efficiency": 85.3,
+      "max_tt": 70,
+      "min_tt": 2.1
     },
     "damage": {
       "impact": 0,
@@ -3477,7 +3823,9 @@
     "economy": {
       "decay": 3.316,
       "ammo_burn": 121,
-      "efficiency": 85.3
+      "efficiency": 85.3,
+      "max_tt": 141,
+      "min_tt": 4.23
     },
     "damage": {
       "impact": 0,
@@ -3497,7 +3845,9 @@
     "economy": {
       "decay": 3.311,
       "ammo_burn": 143,
-      "efficiency": 85.3
+      "efficiency": 85.3,
+      "max_tt": 242,
+      "min_tt": 7.26
     },
     "damage": {
       "impact": 0,
@@ -3517,7 +3867,9 @@
     "economy": {
       "decay": 3.793,
       "ammo_burn": 100,
-      "efficiency": 82.2
+      "efficiency": 82.2,
+      "max_tt": 70,
+      "min_tt": 2.1
     },
     "damage": {
       "impact": 0,
@@ -3537,7 +3889,9 @@
     "economy": {
       "decay": 0.02,
       "ammo_burn": 1100,
-      "efficiency": 70
+      "efficiency": 70,
+      "max_tt": 20,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3557,7 +3911,9 @@
     "economy": {
       "decay": 0.002,
       "ammo_burn": 23,
-      "efficiency": 65.9
+      "efficiency": 65.9,
+      "max_tt": 0.08,
+      "min_tt": 0.0024
     },
     "damage": {
       "impact": 0,
@@ -3577,7 +3933,9 @@
     "economy": {
       "decay": 0.01,
       "ammo_burn": 350,
-      "efficiency": 98.5
+      "efficiency": 98.5,
+      "max_tt": 1,
+      "min_tt": 0.03
     },
     "damage": {
       "impact": 0,
@@ -3597,7 +3955,9 @@
     "economy": {
       "decay": 0.02,
       "ammo_burn": 700,
-      "efficiency": 98.5
+      "efficiency": 98.5,
+      "max_tt": 2,
+      "min_tt": 0.06
     },
     "damage": {
       "impact": 0,
@@ -3617,7 +3977,9 @@
     "economy": {
       "decay": 0.478,
       "ammo_burn": 0,
-      "efficiency": 59.1
+      "efficiency": 59.1,
+      "max_tt": 9.2,
+      "min_tt": 0.276
     },
     "damage": {
       "impact": 0,
@@ -3637,7 +3999,9 @@
     "economy": {
       "decay": 3,
       "ammo_burn": 0,
-      "efficiency": 67.2
+      "efficiency": 67.2,
+      "max_tt": 39,
+      "min_tt": 1.14
     },
     "damage": {
       "impact": 0,
@@ -3657,7 +4021,9 @@
     "economy": {
       "decay": 0.046,
       "ammo_burn": 20,
-      "efficiency": 53.1
+      "efficiency": 53.1,
+      "max_tt": 0.05,
+      "min_tt": 0.0015
     },
     "damage": {
       "impact": 0,
@@ -3677,7 +4043,9 @@
     "economy": {
       "decay": 6.5,
       "ammo_burn": 0,
-      "efficiency": 65.8
+      "efficiency": 65.8,
+      "max_tt": 79,
+      "min_tt": 2.37
     },
     "damage": {
       "impact": 0,
@@ -3697,7 +4065,9 @@
     "economy": {
       "decay": 2.34,
       "ammo_burn": 0,
-      "efficiency": 63.9
+      "efficiency": 63.9,
+      "max_tt": 37,
+      "min_tt": 1.1
     },
     "damage": {
       "impact": 0,
@@ -3717,7 +4087,9 @@
     "economy": {
       "decay": 1.975,
       "ammo_burn": 600,
-      "efficiency": 56.7
+      "efficiency": 56.7,
+      "max_tt": 105,
+      "min_tt": 3.15
     },
     "damage": {
       "impact": 0,
@@ -3737,7 +4109,9 @@
     "economy": {
       "decay": 2.451,
       "ammo_burn": 700,
-      "efficiency": 56.2
+      "efficiency": 56.2,
+      "max_tt": 149,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -3757,7 +4131,9 @@
     "economy": {
       "decay": 0.02,
       "ammo_burn": 1000,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 20,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -3777,7 +4153,9 @@
     "economy": {
       "decay": 3.207,
       "ammo_burn": 900,
-      "efficiency": 54.6
+      "efficiency": 54.6,
+      "max_tt": 242,
+      "min_tt": 7.26
     },
     "damage": {
       "impact": 0,
@@ -3797,7 +4175,9 @@
     "economy": {
       "decay": 0.478,
       "ammo_burn": 0,
-      "efficiency": 59.1
+      "efficiency": 59.1,
+      "max_tt": 9.2,
+      "min_tt": 0.276
     },
     "damage": {
       "impact": 0,
@@ -3817,7 +4197,9 @@
     "economy": {
       "decay": 0.931,
       "ammo_burn": 100,
-      "efficiency": 57
+      "efficiency": 57,
+      "max_tt": 29.5,
+      "min_tt": 0.885
     },
     "damage": {
       "impact": 0,
@@ -3837,7 +4219,9 @@
     "economy": {
       "decay": 1.139,
       "ammo_burn": 200,
-      "efficiency": 56.9
+      "efficiency": 56.9,
+      "max_tt": 39,
+      "min_tt": 1.17
     },
     "damage": {
       "impact": 0,
@@ -3857,7 +4241,9 @@
     "economy": {
       "decay": 1.093,
       "ammo_burn": 300,
-      "efficiency": 57.5
+      "efficiency": 57.5,
+      "max_tt": 43,
+      "min_tt": 1.29
     },
     "damage": {
       "impact": 0,
@@ -3877,7 +4263,9 @@
     "economy": {
       "decay": 1.779,
       "ammo_burn": 400,
-      "efficiency": 57.5
+      "efficiency": 57.5,
+      "max_tt": 61.5,
+      "min_tt": 1.845
     },
     "damage": {
       "impact": 0,
@@ -3897,7 +4285,9 @@
     "economy": {
       "decay": 1.8,
       "ammo_burn": 300,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 80,
+      "min_tt": 2.4
     },
     "damage": {
       "impact": 0,
@@ -3917,7 +4307,9 @@
     "economy": {
       "decay": 1.4,
       "ammo_burn": 100,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 60,
+      "min_tt": 1.8
     },
     "damage": {
       "impact": 0,
@@ -3937,7 +4329,9 @@
     "economy": {
       "decay": 1.6,
       "ammo_burn": 200,
-      "efficiency": 58.2
+      "efficiency": 58.2,
+      "max_tt": 70,
+      "min_tt": 2.1
     },
     "damage": {
       "impact": 0,
@@ -3957,7 +4351,9 @@
     "economy": {
       "decay": 0.889,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 18,
+      "min_tt": 0.54
     },
     "damage": {
       "impact": 0,
@@ -3977,7 +4373,9 @@
     "economy": {
       "decay": 1.975,
       "ammo_burn": 600,
-      "efficiency": 56.7
+      "efficiency": 56.7,
+      "max_tt": 106,
+      "min_tt": 3.18
     },
     "damage": {
       "impact": 7,
@@ -3997,7 +4395,9 @@
     "economy": {
       "decay": 1.18,
       "ammo_burn": 351,
-      "efficiency": 52.4
+      "efficiency": 52.4,
+      "max_tt": 19,
+      "min_tt": 0.57
     },
     "damage": {
       "impact": 5,
@@ -4017,7 +4417,9 @@
     "economy": {
       "decay": 3.1,
       "ammo_burn": 524,
-      "efficiency": 53.7
+      "efficiency": 53.7,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 9,
@@ -4037,7 +4439,9 @@
     "economy": {
       "decay": 1.897,
       "ammo_burn": 200,
-      "efficiency": 42.9
+      "efficiency": 42.9,
+      "max_tt": 120,
+      "min_tt": 3.6
     },
     "damage": {
       "impact": 1,
@@ -4057,7 +4461,9 @@
     "economy": {
       "decay": 1.255,
       "ammo_burn": 515,
-      "efficiency": 60.8
+      "efficiency": 60.8,
+      "max_tt": 117,
+      "min_tt": null
     },
     "damage": {
       "impact": 6,
@@ -4077,7 +4483,9 @@
     "economy": {
       "decay": 1.574,
       "ammo_burn": 650,
-      "efficiency": 60.5
+      "efficiency": 60.5,
+      "max_tt": 170,
+      "min_tt": null
     },
     "damage": {
       "impact": 8,
@@ -4097,7 +4505,9 @@
     "economy": {
       "decay": 0.096,
       "ammo_burn": 126,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 12,
+      "min_tt": 0.36
     },
     "damage": {
       "impact": 0,
@@ -4117,7 +4527,9 @@
     "economy": {
       "decay": 0.128,
       "ammo_burn": 168,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 16,
+      "min_tt": 0.48
     },
     "damage": {
       "impact": 0,
@@ -4137,7 +4549,9 @@
     "economy": {
       "decay": 12,
       "ammo_burn": 0,
-      "efficiency": 77
+      "efficiency": 77,
+      "max_tt": 600,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4157,7 +4571,9 @@
     "economy": {
       "decay": 14,
       "ammo_burn": 0,
-      "efficiency": 77.5
+      "efficiency": 77.5,
+      "max_tt": 700,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4177,7 +4593,9 @@
     "economy": {
       "decay": 16,
       "ammo_burn": 0,
-      "efficiency": 78
+      "efficiency": 78,
+      "max_tt": 800,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4197,7 +4615,9 @@
     "economy": {
       "decay": 18,
       "ammo_burn": 0,
-      "efficiency": 78.5
+      "efficiency": 78.5,
+      "max_tt": 900,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4217,7 +4637,9 @@
     "economy": {
       "decay": 20,
       "ammo_burn": 0,
-      "efficiency": 79
+      "efficiency": 79,
+      "max_tt": 1000,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4237,7 +4659,9 @@
     "economy": {
       "decay": 0.16,
       "ammo_burn": 210,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 0,
@@ -4257,7 +4681,9 @@
     "economy": {
       "decay": 24.21,
       "ammo_burn": 0,
-      "efficiency": 79
+      "efficiency": 79,
+      "max_tt": 1200,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4277,7 +4703,9 @@
     "economy": {
       "decay": 0.272,
       "ammo_burn": 357,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 34,
+      "min_tt": 1.02
     },
     "damage": {
       "impact": 0,
@@ -4297,7 +4725,9 @@
     "economy": {
       "decay": 0.32,
       "ammo_burn": 420,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -4317,7 +4747,9 @@
     "economy": {
       "decay": 0.448,
       "ammo_burn": 588,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 56,
+      "min_tt": 1.68
     },
     "damage": {
       "impact": 0,
@@ -4337,7 +4769,9 @@
     "economy": {
       "decay": 1.02,
       "ammo_burn": 312,
-      "efficiency": 55.1
+      "efficiency": 55.1,
+      "max_tt": 16,
+      "min_tt": 0.48
     },
     "damage": {
       "impact": 0,
@@ -4357,7 +4791,9 @@
     "economy": {
       "decay": 2.7,
       "ammo_burn": 483,
-      "efficiency": 55.7
+      "efficiency": 55.7,
+      "max_tt": 34,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4377,7 +4813,9 @@
     "economy": {
       "decay": 0.711,
       "ammo_burn": 100,
-      "efficiency": 54.4
+      "efficiency": 54.4,
+      "max_tt": 29,
+      "min_tt": 0.87
     },
     "damage": {
       "impact": 0,
@@ -4397,7 +4835,9 @@
     "economy": {
       "decay": 0.032,
       "ammo_burn": 40,
-      "efficiency": 84.7
+      "efficiency": 84.7,
+      "max_tt": 0.5,
+      "min_tt": 0.001
     },
     "damage": {
       "impact": 0,
@@ -4417,7 +4857,9 @@
     "economy": {
       "decay": 4.311,
       "ammo_burn": 100,
-      "efficiency": 39.3
+      "efficiency": 39.3,
+      "max_tt": 85,
+      "min_tt": 2.55
     },
     "damage": {
       "impact": 0,
@@ -4437,7 +4879,9 @@
     "economy": {
       "decay": 0.889,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 36,
+      "min_tt": 1.08
     },
     "damage": {
       "impact": 0,
@@ -4457,7 +4901,9 @@
     "economy": {
       "decay": 0.889,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 18,
+      "min_tt": 0.54
     },
     "damage": {
       "impact": 0,
@@ -4477,7 +4923,9 @@
     "economy": {
       "decay": 1.778,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 72,
+      "min_tt": 2.16
     },
     "damage": {
       "impact": 0,
@@ -4497,7 +4945,9 @@
     "economy": {
       "decay": 3.012,
       "ammo_burn": 0,
-      "efficiency": 85.8
+      "efficiency": 85.8,
+      "max_tt": 40,
+      "min_tt": 1.2
     },
     "damage": {
       "impact": 0,
@@ -4517,7 +4967,9 @@
     "economy": {
       "decay": 1.778,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 36,
+      "min_tt": 1.08
     },
     "damage": {
       "impact": 0,
@@ -4537,7 +4989,9 @@
     "economy": {
       "decay": 2.667,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 108,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -4557,7 +5011,9 @@
     "economy": {
       "decay": 3.556,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 144,
+      "min_tt": 4.32
     },
     "damage": {
       "impact": 0,
@@ -4577,7 +5033,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": 0,
-      "efficiency": 50
+      "efficiency": 50,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -4597,7 +5055,9 @@
     "economy": {
       "decay": 0.476,
       "ammo_burn": null,
-      "efficiency": 60.05
+      "efficiency": 60.05,
+      "max_tt": 25,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -4617,7 +5077,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": null,
-      "efficiency": 49.91
+      "efficiency": 49.91,
+      "max_tt": 50,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -4637,7 +5099,9 @@
     "economy": {
       "decay": 0.25,
       "ammo_burn": 0,
-      "efficiency": 49.91
+      "efficiency": 49.91,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,
@@ -4657,7 +5121,9 @@
     "economy": {
       "decay": 6.108,
       "ammo_burn": 0,
-      "efficiency": 81.9
+      "efficiency": 81.9,
+      "max_tt": 333,
+      "min_tt": 9.99
     },
     "damage": {
       "impact": 0,
@@ -4677,7 +5143,9 @@
     "economy": {
       "decay": 7.112,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 288,
+      "min_tt": 8.64
     },
     "damage": {
       "impact": 0,
@@ -4697,7 +5165,9 @@
     "economy": {
       "decay": 7.112,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 300,
+      "min_tt": 0.02
     },
     "damage": {
       "impact": 0,
@@ -4717,7 +5187,9 @@
     "economy": {
       "decay": 1.778,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 36,
+      "min_tt": 1.08
     },
     "damage": {
       "impact": 0,
@@ -4737,7 +5209,9 @@
     "economy": {
       "decay": 1.768,
       "ammo_burn": 0,
-      "efficiency": 78.26
+      "efficiency": 78.26,
+      "max_tt": 88,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -4757,7 +5231,9 @@
     "economy": {
       "decay": 3.556,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 72,
+      "min_tt": 2.16
     },
     "damage": {
       "impact": 0,
@@ -4777,7 +5253,9 @@
     "economy": {
       "decay": 10.668,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 432,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -4797,7 +5275,9 @@
     "economy": {
       "decay": 1.2,
       "ammo_burn": 1080,
-      "efficiency": 77
+      "efficiency": 77,
+      "max_tt": 60,
+      "min_tt": 0
     },
     "damage": {
       "impact": 55,
@@ -4817,7 +5297,9 @@
     "economy": {
       "decay": 1.4,
       "ammo_burn": 1260,
-      "efficiency": 77.5
+      "efficiency": 77.5,
+      "max_tt": 70,
+      "min_tt": 0
     },
     "damage": {
       "impact": 65,
@@ -4837,7 +5319,9 @@
     "economy": {
       "decay": 1.6,
       "ammo_burn": 1440,
-      "efficiency": 78
+      "efficiency": 78,
+      "max_tt": 80,
+      "min_tt": 0
     },
     "damage": {
       "impact": 75,
@@ -4857,7 +5341,9 @@
     "economy": {
       "decay": 1.8,
       "ammo_burn": 1620,
-      "efficiency": 78.5
+      "efficiency": 78.5,
+      "max_tt": 90,
+      "min_tt": 0
     },
     "damage": {
       "impact": 85,
@@ -4877,7 +5363,9 @@
     "economy": {
       "decay": 2,
       "ammo_burn": 1800,
-      "efficiency": 79
+      "efficiency": 79,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 95,
@@ -4897,7 +5385,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 898,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 42,
@@ -4918,7 +5408,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 898,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 47,
@@ -4939,7 +5431,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 898,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 57,
@@ -4960,7 +5454,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 898,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0
     },
     "damage": {
       "impact": 52,
@@ -4981,7 +5477,9 @@
     "economy": {
       "decay": 0.042,
       "ammo_burn": 42,
-      "efficiency": 66.9
+      "efficiency": 66.9,
+      "max_tt": 5,
+      "min_tt": 0.15
     },
     "damage": {
       "impact": 2,
@@ -5001,7 +5499,9 @@
     "economy": {
       "decay": 0.045,
       "ammo_burn": 39,
-      "efficiency": 82.7
+      "efficiency": 82.7,
+      "max_tt": 5,
+      "min_tt": 0.15
     },
     "damage": {
       "impact": 2,
@@ -5021,7 +5521,9 @@
     "economy": {
       "decay": 0.083,
       "ammo_burn": 84,
-      "efficiency": 67.2
+      "efficiency": 67.2,
+      "max_tt": 10,
+      "min_tt": 0.3
     },
     "damage": {
       "impact": 4,
@@ -5041,7 +5543,9 @@
     "economy": {
       "decay": 0.088,
       "ammo_burn": 78,
-      "efficiency": 83.3
+      "efficiency": 83.3,
+      "max_tt": 10,
+      "min_tt": 0.3
     },
     "damage": {
       "impact": 4,
@@ -5061,7 +5565,9 @@
     "economy": {
       "decay": 0.164,
       "ammo_burn": 157,
-      "efficiency": 83.7
+      "efficiency": 83.7,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 8,
@@ -5081,7 +5587,9 @@
     "economy": {
       "decay": 0.23,
       "ammo_burn": 253,
-      "efficiency": 68
+      "efficiency": 68,
+      "max_tt": 30,
+      "min_tt": 0.9
     },
     "damage": {
       "impact": 12,
@@ -5101,7 +5609,9 @@
     "economy": {
       "decay": 0.245,
       "ammo_burn": 235,
-      "efficiency": 84.3
+      "efficiency": 84.3,
+      "max_tt": 30,
+      "min_tt": 0.9
     },
     "damage": {
       "impact": 12,
@@ -5121,7 +5631,9 @@
     "economy": {
       "decay": 0.333,
       "ammo_burn": 380,
-      "efficiency": 68.4
+      "efficiency": 68.4,
+      "max_tt": 45,
+      "min_tt": 1.35
     },
     "damage": {
       "impact": 18,
@@ -5141,7 +5653,9 @@
     "economy": {
       "decay": 5.334,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 216,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5161,7 +5675,9 @@
     "economy": {
       "decay": 0.5,
       "ammo_burn": 570,
-      "efficiency": 68.4
+      "efficiency": 68.4,
+      "max_tt": 65,
+      "min_tt": 1.89
     },
     "damage": {
       "impact": 27,
@@ -5181,7 +5697,9 @@
     "economy": {
       "decay": 6.223,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 252,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -5201,7 +5719,9 @@
     "economy": {
       "decay": 0.67,
       "ammo_burn": 758,
-      "efficiency": 68.9
+      "efficiency": 68.9,
+      "max_tt": 85,
+      "min_tt": 2.55
     },
     "damage": {
       "impact": 36,
@@ -5221,7 +5741,9 @@
     "economy": {
       "decay": 0.71,
       "ammo_burn": 706,
-      "efficiency": 84.9
+      "efficiency": 84.9,
+      "max_tt": 85,
+      "min_tt": 0
     },
     "damage": {
       "impact": 36,
@@ -5241,7 +5763,9 @@
     "economy": {
       "decay": 0.744,
       "ammo_burn": 842,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 94,
+      "min_tt": 0
     },
     "damage": {
       "impact": 40,
@@ -5261,7 +5785,9 @@
     "economy": {
       "decay": 0.8,
       "ammo_burn": 1142,
-      "efficiency": 89
+      "efficiency": 89,
+      "max_tt": 120,
+      "min_tt": 0
     },
     "damage": {
       "impact": 60,
@@ -5281,7 +5807,9 @@
     "economy": {
       "decay": 0.9,
       "ammo_burn": 1742,
-      "efficiency": 90
+      "efficiency": 90,
+      "max_tt": 140,
+      "min_tt": 0
     },
     "damage": {
       "impact": 90,
@@ -5301,7 +5829,9 @@
     "economy": {
       "decay": 8.89,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 360,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5321,7 +5851,9 @@
     "economy": {
       "decay": 9.779,
       "ammo_burn": 0,
-      "efficiency": 76.7
+      "efficiency": 76.7,
+      "max_tt": 396,
+      "min_tt": 11.88
     },
     "damage": {
       "impact": 0,
@@ -5341,7 +5873,9 @@
     "economy": {
       "decay": 0.99,
       "ammo_burn": null,
-      "efficiency": 51.87
+      "efficiency": 51.87,
+      "max_tt": 1500,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5361,7 +5895,9 @@
     "economy": {
       "decay": 0.99,
       "ammo_burn": null,
-      "efficiency": 51.87
+      "efficiency": 51.87,
+      "max_tt": 3000,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5381,7 +5917,9 @@
     "economy": {
       "decay": 9.34,
       "ammo_burn": 0,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 360,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -5401,7 +5939,9 @@
     "economy": {
       "decay": 0.473,
       "ammo_burn": 362,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 184,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -5421,7 +5961,9 @@
     "economy": {
       "decay": 0.5,
       "ammo_burn": 444,
-      "efficiency": 87
+      "efficiency": 87,
+      "max_tt": 242,
+      "min_tt": 7.26
     },
     "damage": {
       "impact": 0,
@@ -5441,7 +5983,9 @@
     "economy": {
       "decay": 0.929,
       "ammo_burn": 100,
-      "efficiency": 57.2
+      "efficiency": 57.2,
+      "max_tt": 24.2,
+      "min_tt": 0.726
     },
     "damage": {
       "impact": 2,
@@ -5461,7 +6005,9 @@
     "economy": {
       "decay": 2.451,
       "ammo_burn": 700,
-      "efficiency": 56.2
+      "efficiency": 56.2,
+      "max_tt": 149,
+      "min_tt": 4.47
     },
     "damage": {
       "impact": 8,
@@ -5481,7 +6027,9 @@
     "economy": {
       "decay": 0.37,
       "ammo_burn": 632,
-      "efficiency": 59.2
+      "efficiency": 59.2,
+      "max_tt": 7.65,
+      "min_tt": 0.2295
     },
     "damage": {
       "impact": 11,
@@ -5501,7 +6049,9 @@
     "economy": {
       "decay": 0.44,
       "ammo_burn": 810,
-      "efficiency": 60.8
+      "efficiency": 60.8,
+      "max_tt": 9.1,
+      "min_tt": 0.273
     },
     "damage": {
       "impact": 16,
@@ -5521,7 +6071,9 @@
     "economy": {
       "decay": 0.74,
       "ammo_burn": 1400,
-      "efficiency": 60.3
+      "efficiency": 60.3,
+      "max_tt": 15.3,
+      "min_tt": 0.459
     },
     "damage": {
       "impact": 24,
@@ -5541,7 +6093,9 @@
     "economy": {
       "decay": 4.643,
       "ammo_burn": 0,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": 46.8,
+      "min_tt": 1.39
     },
     "damage": {
       "impact": 6,
@@ -5561,7 +6115,9 @@
     "economy": {
       "decay": 0.787,
       "ammo_burn": 1600,
-      "efficiency": 85
+      "efficiency": 85,
+      "max_tt": 100,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -5581,7 +6137,9 @@
     "economy": {
       "decay": 1.831,
       "ammo_burn": 500,
-      "efficiency": 54.8
+      "efficiency": 54.8,
+      "max_tt": 81,
+      "min_tt": 2.43
     },
     "damage": {
       "impact": 6,
@@ -5601,7 +6159,9 @@
     "economy": {
       "decay": 1.831,
       "ammo_burn": 500,
-      "efficiency": 54.8
+      "efficiency": 54.8,
+      "max_tt": 79,
+      "min_tt": 2.37
     },
     "damage": {
       "impact": 0,
@@ -5621,7 +6181,9 @@
     "economy": {
       "decay": 1.847,
       "ammo_burn": 300,
-      "efficiency": 56.1
+      "efficiency": 56.1,
+      "max_tt": 51.5,
+      "min_tt": 0
     },
     "damage": {
       "impact": 0,
@@ -5641,7 +6203,9 @@
     "economy": {
       "decay": 0.35,
       "ammo_burn": 530,
-      "efficiency": 62.5
+      "efficiency": 62.5,
+      "max_tt": 7.3,
+      "min_tt": 0.219
     },
     "damage": {
       "impact": 0,
@@ -5661,7 +6225,9 @@
     "economy": {
       "decay": 0.52,
       "ammo_burn": 880,
-      "efficiency": 64.9
+      "efficiency": 64.9,
+      "max_tt": 11,
+      "min_tt": 0.33
     },
     "damage": {
       "impact": 0,
@@ -5681,7 +6247,9 @@
     "economy": {
       "decay": 0.96,
       "ammo_burn": 1722,
-      "efficiency": 64.8
+      "efficiency": 64.8,
+      "max_tt": 20,
+      "min_tt": 0.6
     },
     "damage": {
       "impact": 0,
@@ -5701,7 +6269,9 @@
     "economy": {
       "decay": 1.555,
       "ammo_burn": 100,
-      "efficiency": 45.9
+      "efficiency": 45.9,
+      "max_tt": 39,
+      "min_tt": 1.17
     },
     "damage": {
       "impact": 0,
@@ -5721,7 +6291,9 @@
     "economy": {
       "decay": 2.943,
       "ammo_burn": 100,
-      "efficiency": 41
+      "efficiency": 41,
+      "max_tt": 61,
+      "min_tt": 1.83
     },
     "damage": {
       "impact": 0,
@@ -5741,7 +6313,9 @@
     "economy": {
       "decay": 3.943,
       "ammo_burn": null,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": 44,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5761,7 +6335,9 @@
     "economy": {
       "decay": 0.019,
       "ammo_burn": 898,
-      "efficiency": 75
+      "efficiency": 75,
+      "max_tt": 10,
+      "min_tt": 0.3
     },
     "damage": {
       "impact": 0,
@@ -5782,7 +6358,9 @@
     "economy": {
       "decay": 3.773,
       "ammo_burn": 1000,
-      "efficiency": null
+      "efficiency": null,
+      "max_tt": 267,
+      "min_tt": null
     },
     "damage": {
       "impact": 0,
@@ -5802,7 +6380,9 @@
     "economy": {
       "decay": 4.847,
       "ammo_burn": 1400,
-      "efficiency": 56.8
+      "efficiency": 56.8,
+      "max_tt": 301,
+      "min_tt": 9.03
     },
     "damage": {
       "impact": 0,
@@ -5822,7 +6402,9 @@
     "economy": {
       "decay": 1.195,
       "ammo_burn": 0,
-      "efficiency": 59.1
+      "efficiency": 59.1,
+      "max_tt": 21,
+      "min_tt": 0.63
     },
     "damage": {
       "impact": 0,
@@ -5842,7 +6424,9 @@
     "economy": {
       "decay": 1.311,
       "ammo_burn": 400,
-      "efficiency": 57
+      "efficiency": 57,
+      "max_tt": 56.5,
+      "min_tt": 1.695
     },
     "damage": {
       "impact": 0,
@@ -5862,7 +6446,9 @@
     "economy": {
       "decay": 0.692,
       "ammo_burn": 0,
-      "efficiency": 67.3
+      "efficiency": 67.3,
+      "max_tt": 18,
+      "min_tt": 0.54
     },
     "damage": {
       "impact": 0,
@@ -5882,7 +6468,9 @@
     "economy": {
       "decay": 1.621,
       "ammo_burn": 0,
-      "efficiency": 66.3
+      "efficiency": 66.3,
+      "max_tt": 25,
+      "min_tt": 0.75
     },
     "damage": {
       "impact": 0,
@@ -5902,7 +6490,9 @@
     "economy": {
       "decay": 0.476,
       "ammo_burn": 0,
-      "efficiency": 60.1
+      "efficiency": 60.1,
+      "max_tt": 25,
+      "min_tt": 0.75
     },
     "damage": {
       "impact": 0,
@@ -5922,7 +6512,9 @@
     "economy": {
       "decay": 0.952,
       "ammo_burn": 0,
-      "efficiency": 60.1
+      "efficiency": 60.1,
+      "max_tt": 50,
+      "min_tt": 1.5
     },
     "damage": {
       "impact": 0,
@@ -5942,7 +6534,9 @@
     "economy": {
       "decay": 1.904,
       "ammo_burn": 0,
-      "efficiency": 60.1
+      "efficiency": 60.1,
+      "max_tt": 100,
+      "min_tt": 3
     },
     "damage": {
       "impact": 0,

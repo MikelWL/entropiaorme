@@ -193,6 +193,44 @@ impl From<LooterSource> for ExpectedLooterSource {
     }
 }
 
+/// Unlimited-item Efficiency equivalent of the setup's premium-adjusted
+/// expected return under the selected community model and looter basis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentEffectiveEfficiencyStatus {
+    WithinModelRange,
+    BelowModelRange,
+    AboveModelRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquipmentEffectiveEfficiency {
+    pub status: EquipmentEffectiveEfficiencyStatus,
+    pub efficiency_pct: Nullable<f64>,
+}
+
+impl From<expected_hunting::EffectiveEfficiency> for EquipmentEffectiveEfficiency {
+    fn from(value: expected_hunting::EffectiveEfficiency) -> Self {
+        match value {
+            expected_hunting::EffectiveEfficiency::WithinModelRange { efficiency_pct } => {
+                Self {
+                    status: EquipmentEffectiveEfficiencyStatus::WithinModelRange,
+                    efficiency_pct: Some(efficiency_pct).into(),
+                }
+            }
+            expected_hunting::EffectiveEfficiency::BelowModelRange => Self {
+                status: EquipmentEffectiveEfficiencyStatus::BelowModelRange,
+                efficiency_pct: None.into(),
+            },
+            expected_hunting::EffectiveEfficiency::AboveModelRange => Self {
+                status: EquipmentEffectiveEfficiencyStatus::AboveModelRange,
+                efficiency_pct: None.into(),
+            },
+        }
+    }
+}
+
 /// Community-model economics for the supported offensive slice of one use.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +241,7 @@ pub struct EquipmentExpectedReturn {
     pub weighted_efficiency_pct: Nullable<f64>,
     pub offensive_tt_recovery: Nullable<f64>,
     pub expected_tt_rate: Nullable<f64>,
+    pub effective_efficiency: Nullable<EquipmentEffectiveEfficiency>,
     pub break_even_loot_markup: Nullable<f64>,
     pub modelled_raw_tt_per_use: f64,
     pub eligible_offensive_cost_per_use: f64,
@@ -821,6 +860,7 @@ fn equipment_expected_return(
         weighted_efficiency_pct: result.weighted_efficiency_pct.into(),
         offensive_tt_recovery: result.offensive_tt_recovery.into(),
         expected_tt_rate: result.expected_tt_rate.into(),
+        effective_efficiency: result.effective_efficiency.map(Into::into).into(),
         break_even_loot_markup: result.break_even_loot_markup.into(),
         modelled_raw_tt_per_use: result.modelled_raw_tt * 100.0,
         eligible_offensive_cost_per_use: result.eligible_offensive_cost * 100.0,

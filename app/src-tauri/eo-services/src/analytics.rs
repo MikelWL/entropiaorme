@@ -439,6 +439,7 @@ pub struct ExpectedHuntingAggregate {
     pub eligible_offensive_cost: f64,
     pub offensive_tt_recovery: f64,
     pub expected_tt_rate: f64,
+    pub effective_efficiency: crate::expected_hunting::EffectiveEfficiency,
     pub break_even_loot_markup: f64,
     pub coverage: f64,
     pub incomplete: bool,
@@ -484,6 +485,10 @@ pub struct HuntingSignatureRow {
     pub returns: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    /// Offensive-only expected economics over the immutable phases stamped
+    /// with this exact activity context. Family rows aggregate their variants;
+    /// joint signatures remain indivisible.
+    pub expected: Option<ExpectedHuntingAggregate>,
     /// Confirmed reward TT recorded separately from ordinary loot.
     pub confirmed_reward_ped: f64,
     /// Net markup realised when reward stock was later sold or converted.
@@ -2149,6 +2154,7 @@ struct SignatureAgg {
     reward_kinds: std::collections::BTreeSet<String>,
     reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
+    expected: ExpectedHuntingAccumulator,
     reward_unverified: bool,
     /// The distinct interval-id tuples seen, i.e. the focused stretches.
     runs: std::collections::BTreeSet<Vec<i64>>,
@@ -2393,7 +2399,7 @@ fn hunting_sessions(
     Ok((sessions, grain, pes_grain))
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ExpectedHuntingAccumulator {
     expected_loot_tt: f64,
     modelled_raw_tt: f64,
@@ -2428,30 +2434,44 @@ impl ExpectedHuntingAccumulator {
         self.incomplete |= result.incomplete;
     }
 
-    fn mark_missing(&mut self, shots: i64, cost_per_shot: f64) {
-        if shots > 0 && cost_per_shot > 0.0 {
-            self.candidate_raw_tt += shots as f64 * cost_per_shot;
-            self.missing_basis_phases += 1;
+    fn mark_missing(&mut self, candidate_raw_tt: f64, missing_basis_phases: i64) {
+        if candidate_raw_tt > 0.0 && missing_basis_phases > 0 {
+            self.candidate_raw_tt += candidate_raw_tt;
+            self.missing_basis_phases += missing_basis_phases;
             self.incomplete = true;
         }
     }
 
-    fn finish(self) -> Option<ExpectedHuntingAggregate> {
+    fn merge(&mut self, other: &Self) {
+        self.expected_loot_tt += other.expected_loot_tt;
+        self.modelled_raw_tt += other.modelled_raw_tt;
+        self.eligible_cost += other.eligible_cost;
+        self.candidate_raw_tt += other.candidate_raw_tt;
+        self.looter_weight += other.looter_weight;
+        self.incomplete |= other.incomplete;
+        self.missing_basis_phases += other.missing_basis_phases;
+    }
+
+    fn finish(&self) -> Option<ExpectedHuntingAggregate> {
         if self.modelled_raw_tt <= 0.0 || self.eligible_cost <= 0.0 {
             return None;
         }
         let round = |value: f64, places| eo_wire::normalizer::round_half_even(value, places);
         let tt_recovery = self.expected_loot_tt / self.modelled_raw_tt;
         let tt_rate = self.expected_loot_tt / self.eligible_cost;
+        let looter_level = self.looter_weight / self.modelled_raw_tt;
+        let effective_efficiency =
+            crate::expected_hunting::effective_efficiency_v1(tt_rate, looter_level).ok()?;
         Some(ExpectedHuntingAggregate {
             model_version: crate::expected_hunting::COMMUNITY_MODEL_V1.to_string(),
             looter_source: "three_looter_mean".to_string(),
-            looter_level: round(self.looter_weight / self.modelled_raw_tt, 2),
+            looter_level: round(looter_level, 2),
             expected_loot_tt: round(self.expected_loot_tt, 4),
             modelled_raw_tt: round(self.modelled_raw_tt, 4),
             eligible_offensive_cost: round(self.eligible_cost, 4),
             offensive_tt_recovery: round(tt_recovery, 6),
             expected_tt_rate: round(tt_rate, 6),
+            effective_efficiency,
             break_even_loot_markup: round(1.0 / tt_rate, 6),
             coverage: round(
                 if self.candidate_raw_tt > 0.0 {
@@ -2477,6 +2497,7 @@ fn hunting_expected_aggregates(
         Option<ExpectedHuntingAggregate>,
         std::collections::HashMap<Option<i64>, ExpectedHuntingAggregate>,
         std::collections::HashMap<String, ExpectedHuntingAggregate>,
+        std::collections::HashMap<(String, Option<i64>), ExpectedHuntingAccumulator>,
     ),
     DbError,
 > {
@@ -2485,40 +2506,45 @@ fn hunting_expected_aggregates(
     let mut overall = ExpectedHuntingAccumulator::default();
     let mut definitions: HashMap<Option<i64>, ExpectedHuntingAccumulator> = HashMap::new();
     let mut species: HashMap<String, ExpectedHuntingAccumulator> = HashMap::new();
-    let mut stmt = conn.prepare(
-        "SELECT k.session_id, COALESCE(k.mob_species, ''), ts.shots_fired, \
-                ts.cost_per_shot, ts.expected_economics_json \
-         FROM kill_tool_stats ts \
-         JOIN kills k ON k.id = ts.kill_id \
-         JOIN tracking_sessions s ON s.id = k.session_id \
-         WHERE (?1 IS NULL OR s.started_at >= ?1)",
-    )?;
-    let mut rows = stmt.query(rusqlite::params![epoch_start])?;
-    while let Some(row) = rows.next()? {
-        let session_id = row.get::<_, String>(0)?;
-        let Some(session) = sessions.get(&session_id) else {
+    let mut contexts: HashMap<(String, Option<i64>), ExpectedHuntingAccumulator> = HashMap::new();
+    let cells = crate::session_rollup::effective_offensive_evidence_cells(conn, epoch_start)?;
+    for cell in cells {
+        let Some(session) = sessions.get(&cell.session_id) else {
             continue;
         };
-        let mob_species = row.get::<_, String>(1)?;
-        let shots = row.get::<_, i64>(2).unwrap_or(0);
-        let cost = row.get::<_, f64>(3).unwrap_or(0.0);
-        let encoded = row.get::<_, Option<String>>(4)?;
         let definition = definitions.entry(session.definition_id).or_default();
-        let target = species.entry(mob_species).or_default();
-        if let Some(encoded) = encoded {
+        let target = species.entry(cell.mob_species).or_default();
+        let context = contexts
+            .entry((cell.session_id.clone(), cell.context_id))
+            .or_default();
+        if let Some(encoded) = cell.expected_economics_json {
             let evidence =
                 serde_json::from_str::<crate::expected_hunting::OffensiveLoadoutEvidence>(&encoded)
                     .map_err(|source| DbError::Decode {
                         context: "kill tool expected economics decode",
                         source,
                     })?;
-            overall.add(&evidence, shots);
-            definition.add(&evidence, shots);
-            target.add(&evidence, shots);
+            overall.add(&evidence, cell.shots_fired);
+            definition.add(&evidence, cell.shots_fired);
+            target.add(&evidence, cell.shots_fired);
+            context.add(&evidence, cell.shots_fired);
         } else {
-            overall.mark_missing(shots, cost);
-            definition.mark_missing(shots, cost);
-            target.mark_missing(shots, cost);
+            overall.mark_missing(
+                cell.missing_candidate_raw_tt,
+                cell.missing_basis_phases,
+            );
+            definition.mark_missing(
+                cell.missing_candidate_raw_tt,
+                cell.missing_basis_phases,
+            );
+            target.mark_missing(
+                cell.missing_candidate_raw_tt,
+                cell.missing_basis_phases,
+            );
+            context.mark_missing(
+                cell.missing_candidate_raw_tt,
+                cell.missing_basis_phases,
+            );
         }
     }
 
@@ -2532,6 +2558,7 @@ fn hunting_expected_aggregates(
             .into_iter()
             .filter_map(|(key, value)| value.finish().map(|value| (key, value)))
             .collect(),
+        contexts,
     ))
 }
 
@@ -2543,8 +2570,12 @@ fn hunting_activity_read(
     use std::collections::{BTreeMap, HashMap};
 
     let (sessions, kill_grain, pes_grain) = hunting_sessions(conn, epoch_start)?;
-    let (overall_expected, mut definition_expected, mut species_expected) =
-        hunting_expected_aggregates(conn, epoch_start, &sessions)?;
+    let (
+        overall_expected,
+        mut definition_expected,
+        mut species_expected,
+        mut context_expected,
+    ) = hunting_expected_aggregates(conn, epoch_start, &sessions)?;
     let round2 = |value: f64| eo_wire::normalizer::round_half_even(value, 2);
     let round4 = |value: f64| eo_wire::normalizer::round_half_even(value, 4);
     let rate = |returns: f64, cycled: f64| {
@@ -3129,6 +3160,11 @@ fn hunting_activity_read(
                 .or_default()
                 .entry(key)
                 .or_default();
+            if let Some(expected) =
+                context_expected.remove(&(session_id.clone(), Some(*context_id)))
+            {
+                agg.expected.merge(&expected);
+            }
             if let Some((kills, cycled, loot)) = context_kills.get(context_id) {
                 agg.kills += kills;
                 agg.cycled += cycled;
@@ -3181,6 +3217,9 @@ fn hunting_activity_read(
             .or_default()
             .entry(Vec::new())
             .or_default();
+        if let Some(expected) = context_expected.remove(&(id.clone(), None)) {
+            ambient.expected.merge(&expected);
+        }
         if let Some((kills, cycled, loot)) = kills {
             ambient.kills += kills;
             ambient.cycled += cycled;
@@ -3398,6 +3437,7 @@ fn assemble_signatures(
             } else {
                 0.0
             },
+            expected: agg.expected.finish(),
             confirmed_reward_ped: round2(agg.confirmed_reward_ped),
             realised_reward_markup: round2(agg.realised_reward_markup),
             reward_items: loot_rows(&agg.reward_items),
@@ -3408,6 +3448,8 @@ fn assemble_signatures(
     };
 
     let mut families: std::collections::BTreeMap<i64, Vec<HuntingSignatureRow>> =
+        std::collections::BTreeMap::new();
+    let mut family_expected: std::collections::BTreeMap<i64, ExpectedHuntingAccumulator> =
         std::collections::BTreeMap::new();
     let mut rows: Vec<HuntingSignatureRow> = Vec::new();
     let mut ambient: Option<HuntingSignatureRow> = None;
@@ -3437,7 +3479,13 @@ fn assemble_signatures(
                 let facts = quest_facts.get(quest_id);
                 let row = base_row("quest", member_label(&key[0]), agg);
                 match facts.and_then(|facts| facts.family_id) {
-                    Some(family_id) => families.entry(family_id).or_default().push(row),
+                    Some(family_id) => {
+                        family_expected
+                            .entry(family_id)
+                            .or_default()
+                            .merge(&agg.expected);
+                        families.entry(family_id).or_default().push(row);
+                    }
                     None => rows.push(row),
                 }
             }
@@ -3514,6 +3562,9 @@ fn assemble_signatures(
             } else {
                 0.0
             },
+            expected: family_expected
+                .remove(&family_id)
+                .and_then(|expected| expected.finish()),
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
             realised_reward_markup: round2(variants.iter().map(|v| v.realised_reward_markup).sum()),
             reward_items: loot_rows(&family_reward_items),
@@ -10527,6 +10578,7 @@ mod tests {
                      VALUES ('k2', 'Legacy Rifle', 4, 0.05)",
                     [],
                 )?;
+                crate::session_rollup::recompute_session(conn, "hunt-a")?;
                 Ok(())
             })
             .await
@@ -10542,6 +10594,12 @@ mod tests {
         assert_eq!(expected.eligible_offensive_cost, 0.42);
         assert_eq!(expected.offensive_tt_recovery, 0.95975);
         assert_eq!(expected.expected_tt_rate, 0.914048);
+        assert_eq!(
+            expected.effective_efficiency,
+            crate::expected_hunting::EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 17.21,
+            }
+        );
         assert_eq!(expected.break_even_loot_markup, 1.094035);
         assert_eq!(expected.coverage, 0.6667);
         assert!(expected.incomplete);
@@ -10557,6 +10615,64 @@ mod tests {
             .expect("species model basis");
         assert_eq!(aris, atrox);
         assert_eq!(aris, &expected);
+
+        let family = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("quest family");
+        assert_eq!(family.expected.as_ref(), Some(&expected));
+        assert_eq!(family.variants[0].expected.as_ref(), Some(&expected));
+        let ambient = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "ambient")
+            .expect("ambient remainder");
+        assert!(ambient.expected.is_none());
+    }
+
+    #[test]
+    fn aggregate_effective_efficiency_weights_mixed_loadouts_by_their_economics() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence,
+            OffensiveComponentKind, OffensiveLoadoutEvidence,
+        };
+
+        let evidence = |name: &str, efficiency_pct: f64, raw_tt: f64, premium: f64| {
+            OffensiveLoadoutEvidence {
+                components: vec![OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Weapon,
+                    catalog_id: None,
+                    name: name.to_string(),
+                    efficiency_pct: Some(efficiency_pct),
+                    raw_tt_per_use: raw_tt,
+                    consumed_premium_per_use: premium,
+                }],
+                looters: HuntingLooterLevels {
+                    animal: 50.0,
+                    mutant: 50.0,
+                    robot: 50.0,
+                },
+                looter_source: LooterSource::ThreeLooterMean,
+            }
+        };
+        let mut aggregate = ExpectedHuntingAccumulator::default();
+        aggregate.add(&evidence("High-efficiency rifle", 90.0, 0.03, 0.0), 10);
+        aggregate.add(
+            &evidence("Limited finisher", 70.0, 0.01, 0.0002),
+            20,
+        );
+
+        let result = aggregate.finish().expect("modelled mixed loadouts");
+        assert_eq!(result.modelled_raw_tt, 0.5);
+        assert_eq!(result.eligible_offensive_cost, 0.504);
+        assert_eq!(result.expected_tt_rate, 0.944841);
+        assert_eq!(
+            result.effective_efficiency,
+            crate::expected_hunting::EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 71.2,
+            }
+        );
     }
 
     #[tokio::test]

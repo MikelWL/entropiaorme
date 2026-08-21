@@ -71,7 +71,7 @@
 		<div class="flex flex-col gap-2" data-customise-surface={surface}>
 			<span class="eyebrow">{title}</span>
 			<div class="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
-				{#each prefs.map((pref, index) => ({ pref, index })).filter(({ pref }) => surface === 'dashboard' || !STAT_DEFS[pref.id]?.dashboardOnly) as { pref, index } (pref.id)}
+				{#each prefs.map((pref, index) => ({ pref, index })) as { pref, index } (pref.id)}
 					{@const def = STAT_DEFS[pref.id]}
 					<button
 						type="button"
