@@ -1043,7 +1043,6 @@
 		onProtectionSelect={protection.select}
 	/>
 </div>
-
 <style>
 	.overlay-frame {
 		overflow: visible;
