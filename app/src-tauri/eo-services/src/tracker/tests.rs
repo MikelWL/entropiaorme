@@ -1481,6 +1481,63 @@ fn an_unprofiled_healer_press_invalidates_the_previous_activation_candidate() {
 }
 
 #[test]
+fn stale_session_hotbar_intents_cannot_mutate_equipment_state() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let stale_session_id = format!("previous-{}", session.id);
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Current rifle".into(),
+            source: None,
+        }));
+    rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+        ActiveHealToolChangedPayload {
+            tool_name: "Current FAP".into(),
+            cost_per_use_ped: 0.02,
+            reload_seconds: 2.5,
+            source: None,
+        },
+    ));
+
+    for (slot, equipment_id, item_name, item_kind) in [
+        ("1", 11, "Stale rifle", HotbarItemKind::Weapon),
+        ("8", 12, "Stale FAP", HotbarItemKind::Healing),
+        ("9", 13, "Stale harvester", HotbarItemKind::Harvesting),
+    ] {
+        rig.bus
+            .publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+                session_id: Some(stale_session_id.clone()),
+                slot: slot.into(),
+                occurred_at: now,
+                equipment_id,
+                item_name: item_name.into(),
+                item_kind,
+                cost_per_use_ped: 0.5,
+                reload_seconds: 3.0,
+                healing_profile: Some(HealingProfile {
+                    direct_min: Some(20.0),
+                    direct_max: Some(30.0),
+                    ..HealingProfile::default()
+                }),
+                lifesteal_percent: Some(5.0),
+            }));
+    }
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.weapons.hotbar_tool.as_deref(), Some("Current rifle"));
+        assert_eq!(active.healing.weapon_lifesteal_percent, None);
+        assert_eq!(actor.heal_tool.name.as_deref(), Some("Current FAP"));
+        assert_eq!(actor.heal_tool.cost_per_use, Ped(0.02));
+        assert!(actor.harvest_tool.is_none());
+        assert!(!actor.hand_is_harvest);
+    });
+}
+
+#[test]
 fn rapid_healer_activation_survives_the_switch_back_to_a_lifesteal_weapon() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());

@@ -1,6 +1,5 @@
-//! Hotbar key listener: observes hotbar slot
-//! keypresses and resolves them into active-tool, heal-tool, and
-//! consumable outcomes on the bus.
+//! Hotbar key listener: observes hotbar slot keypresses and resolves
+//! them into session-scoped equipment intent on the bus.
 //!
 //! The listener gates its keystroke source on the capability toggle
 //! and an active tracking session, observed through the bus's session
@@ -11,10 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::bus_events::{
-    ActiveHarvestToolChangedPayload, ActiveHealToolChangedPayload, ActiveToolChangedPayload,
-    BusEvent, HotbarIntentPayload, HotbarItemKind,
-};
+use crate::bus_events::{BusEvent, HotbarIntentPayload, HotbarItemKind};
 use crate::event_bus::{EventBus, Registration, Topic};
 use crate::healing_profile::HealingProfile;
 use crate::keystroke_source::{KeystrokeEvent, KeystrokeKind, KeystrokeSource};
@@ -311,8 +307,8 @@ fn resolve_hotbar_slot(
     }
     let slot = request.slot;
     bus.publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
-        session_id: Some(request.session_id.clone()),
-        slot: slot.clone(),
+        session_id: Some(request.session_id),
+        slot,
         occurred_at: request.occurred_at.timestamp_micros() as f64 / 1_000_000.0,
         equipment_id: item.equipment_id,
         item_name: item.name.clone(),
@@ -322,41 +318,6 @@ fn resolve_hotbar_slot(
         healing_profile: item.healing_profile.clone(),
         lifesteal_percent: item.lifesteal_percent,
     }));
-    if !session_matches(gate, &request.session_id) {
-        return;
-    }
-    match item.kind {
-        HotbarItemKind::Healing => {
-            bus.publish(&BusEvent::ActiveHealToolChanged(
-                ActiveHealToolChangedPayload {
-                    tool_name: item.name,
-                    cost_per_use_ped: item.cost_per_use_ped,
-                    reload_seconds: item.reload_seconds,
-                    source: Some(format!("hotbar:{slot}")),
-                },
-            ));
-        }
-        // Consumables are one-off actions: never switch the active
-        // weapon in cost tracking.
-        HotbarItemKind::Consumable => {}
-        // A harvesting tool becomes the hand item: subsequent loot
-        // groups are swings, costed at this tool's per-use decay.
-        HotbarItemKind::Harvesting => {
-            bus.publish(&BusEvent::ActiveHarvestToolChanged(
-                ActiveHarvestToolChangedPayload {
-                    tool_name: item.name,
-                    cost_per_use_ped: item.cost_per_use_ped,
-                    source: Some(format!("hotbar:{slot}")),
-                },
-            ));
-        }
-        HotbarItemKind::Weapon => {
-            bus.publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
-                tool_name: item.name,
-                source: Some(format!("hotbar:{slot}")),
-            }));
-        }
-    }
 }
 
 fn session_matches(gate: &Gate, session_id: &str) -> bool {
@@ -572,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn presses_resolve_into_the_three_outcome_branches() {
+    fn presses_resolve_into_session_scoped_intents() {
         let rig = rig(Some(standard_resolver()));
         rig.listener.set_hotbar_hooks_enabled(true);
         rig.bus
@@ -589,35 +550,21 @@ mod tests {
         rig.listener.stop();
 
         let stream = rig.stream.lock().unwrap();
-        let interesting: Vec<&(Topic, Value)> = stream
-            .iter()
-            .filter(|(topic, _)| {
-                matches!(
-                    topic,
-                    Topic::ActiveToolChanged | Topic::ActiveHealToolChanged
-                )
-            })
-            .collect();
-        assert_eq!(
-            interesting.len(),
-            2,
-            "consumable and empty slots stay quiet"
-        );
-        assert_eq!(interesting[0].0, Topic::ActiveToolChanged);
-        assert_eq!(interesting[0].1["tool_name"], "Opalo");
-        assert_eq!(interesting[0].1["source"], "hotbar:1");
-        assert_eq!(interesting[1].0, Topic::ActiveHealToolChanged);
-        assert_eq!(interesting[1].1["cost_per_use_ped"], 0.088);
-        assert_eq!(interesting[1].1["reload_seconds"], 2.5);
         let intents: Vec<&Value> = stream
             .iter()
             .filter(|(topic, _)| *topic == Topic::HotbarIntent)
             .map(|(_, payload)| payload)
             .collect();
         assert_eq!(intents.len(), 3, "every resolved press carries intent");
+        assert_eq!(intents[0]["session_id"], "s1");
+        assert_eq!(intents[0]["item_name"], "Opalo");
+        assert_eq!(intents[0]["item_kind"], "weapon");
         assert_eq!(intents[0]["occurred_at"], 1_779_184_800.0);
         assert_eq!(intents[1]["equipment_id"], 2);
+        assert_eq!(intents[1]["cost_per_use_ped"], 0.088);
+        assert_eq!(intents[1]["reload_seconds"], 2.5);
         assert_eq!(intents[1]["healing_profile"]["direct_min"], 60.0);
+        assert_eq!(intents[2]["item_kind"], "consumable");
     }
 
     #[test]
@@ -664,19 +611,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         rig.listener.stop();
         let stream = rig.stream.lock().unwrap();
-        let tool_events = stream
+        let intents = stream
             .iter()
-            .filter(|(topic, _)| {
-                matches!(
-                    topic,
-                    Topic::ActiveToolChanged | Topic::ActiveHealToolChanged
-                )
-            })
+            .filter(|(topic, _)| *topic == Topic::HotbarIntent)
             .count();
-        assert_eq!(
-            tool_events, 0,
-            "failures are contained, the worker survives"
-        );
+        assert_eq!(intents, 0, "failures are contained, the worker survives");
     }
 
     #[test]

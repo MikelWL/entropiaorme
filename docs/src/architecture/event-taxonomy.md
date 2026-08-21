@@ -77,11 +77,14 @@ used. The inverse delivery order is also safe: an unexplained output is first
 persisted at zero cost and can be reconciled only when a subsequently delivered
 intent proves it occurred first and matches the healing profile.
 
+The tracker derives its active weapon, healing tool, or harvesting tool from
+that same session-scoped `HotbarIntent`, so a session transition cannot split
+intent attribution from the corresponding equipment change.
 `ActiveToolChanged`, `ActiveHealToolChanged`, and
-`ActiveHarvestToolChanged` remain as compatibility topics for weapon and
-harvesting attribution. Healing cost no longer depends on chat-only tool
-inference: a self-heal without compatible hotbar intent is passive or
-unattributed evidence and cannot add PED cost.
+`ActiveHarvestToolChanged` remain supported compatibility topics for direct
+producers. Healing cost no longer depends on chat-only tool inference: a
+self-heal without compatible hotbar intent is passive or unattributed evidence
+and cannot add PED cost.
 
 ### The tick_flushed settling boundary
 

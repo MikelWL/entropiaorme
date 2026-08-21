@@ -8,7 +8,10 @@
 
 use std::collections::HashMap;
 
-use crate::bus_events::{BusEvent, HotbarIntentPayload, HotbarItemKind};
+use crate::bus_events::{
+    ActiveHarvestToolChangedPayload, ActiveHealToolChangedPayload, ActiveToolChangedPayload,
+    BusEvent, HotbarIntentPayload, HotbarItemKind,
+};
 use crate::healing_profile::HealingProfile;
 use crate::ped::Ped;
 
@@ -178,36 +181,76 @@ impl TrackerActor {
         let BusEvent::HotbarIntent(payload) = event else {
             return;
         };
-        let Some(active) = self.session.active_mut() else {
-            return;
-        };
-        if payload
-            .session_id
-            .as_ref()
-            .is_some_and(|session_id| session_id != &active.session.id)
-        {
-            return;
-        }
-        active.healing.prune(payload.occurred_at);
-        match payload.item_kind {
-            HotbarItemKind::Healing => {
-                let Some(profile) = payload.healing_profile.clone() else {
+        let should_reconcile = {
+            let Some(active) = self.session.active_mut() else {
+                return;
+            };
+            if payload
+                .session_id
+                .as_ref()
+                .is_some_and(|session_id| session_id != &active.session.id)
+            {
+                return;
+            }
+            active.healing.prune(payload.occurred_at);
+            match payload.item_kind {
+                HotbarItemKind::Healing => {
+                    if let Some(profile) = payload.healing_profile.clone() {
+                        active.healing.intent = Some(intent_from_payload(payload, profile));
+                        true
+                    } else {
+                        close_healing_intent(&mut active.healing, payload.occurred_at);
+                        active.healing.recent_intent = None;
+                        false
+                    }
+                }
+                HotbarItemKind::Weapon => {
                     close_healing_intent(&mut active.healing, payload.occurred_at);
-                    active.healing.recent_intent = None;
-                    return;
-                };
-                active.healing.intent = Some(intent_from_payload(payload, profile));
+                    active.healing.weapon_lifesteal_percent = payload.lifesteal_percent;
+                    false
+                }
+                HotbarItemKind::Harvesting | HotbarItemKind::Consumable => {
+                    close_healing_intent(&mut active.healing, payload.occurred_at);
+                    false
+                }
             }
+        };
+
+        // Active-equipment state is derived in the actor from the same
+        // session-scoped event. Publishing a second, unscoped event from
+        // the listener would leave a session transition between validation
+        // and dispatch where stale equipment could reach the next session.
+        let source = Some(format!("hotbar:{}", payload.slot));
+        match payload.item_kind {
             HotbarItemKind::Weapon => {
-                close_healing_intent(&mut active.healing, payload.occurred_at);
-                active.healing.weapon_lifesteal_percent = payload.lifesteal_percent;
+                self.on_tool_changed(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                    tool_name: payload.item_name.clone(),
+                    source,
+                }));
             }
-            HotbarItemKind::Harvesting | HotbarItemKind::Consumable => {
-                close_healing_intent(&mut active.healing, payload.occurred_at);
+            HotbarItemKind::Healing => {
+                self.on_heal_tool_changed(&BusEvent::ActiveHealToolChanged(
+                    ActiveHealToolChangedPayload {
+                        tool_name: payload.item_name.clone(),
+                        cost_per_use_ped: payload.cost_per_use_ped,
+                        reload_seconds: payload.reload_seconds,
+                        source,
+                    },
+                ));
             }
+            HotbarItemKind::Harvesting => {
+                self.on_harvest_tool_changed(&BusEvent::ActiveHarvestToolChanged(
+                    ActiveHarvestToolChangedPayload {
+                        tool_name: payload.item_name.clone(),
+                        cost_per_use_ped: payload.cost_per_use_ped,
+                        source,
+                    },
+                ));
+            }
+            HotbarItemKind::Consumable => {}
         }
 
-        if payload.item_kind == HotbarItemKind::Healing {
+        if should_reconcile {
             self.reconcile_pending_heal(payload.occurred_at).await;
         }
     }
