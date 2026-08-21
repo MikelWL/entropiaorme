@@ -77,6 +77,15 @@
     "mobBreakdown": [],
     "effectiveLoot": 557.5,
     "toolStats": [],
-    "skillGains": []
+    "skillGains": [],
+    "healing": {
+      "activations": [],
+      "activationCount": 0,
+      "outputCount": 0,
+      "directOutputs": 0,
+      "effectOutputs": 0,
+      "passiveOutputs": 0,
+      "unattributedOutputs": 0
+    }
   }
 }
