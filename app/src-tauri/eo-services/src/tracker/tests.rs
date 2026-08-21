@@ -5528,7 +5528,7 @@ fn a_whole_session_protection_definition_stamps_and_surfaces_its_policy() {
     assert_eq!(
         rig.wait(tracker.set_protection(ProtectionSelection {
             loadout_id: 1,
-            loadout_name: "Hidden setup".into(),
+            loadout_name: "Segment-disabled setup".into(),
             armour: None,
             plates: None,
         })),
