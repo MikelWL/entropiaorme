@@ -22,7 +22,7 @@ mod common;
 fn write_snapshot(dir: &Path) {
     std::fs::write(
         dir.join("weapons.json"),
-        r#"[{"id": "w1", "name": "Opalo Rifle (L)", "economy": {"decay": 0.5, "ammo_burn": 300}}]"#,
+        r#"[{"id": "w1", "name": "Opalo Rifle (L)", "economy": {"decay": 0.5, "ammo_burn": 300, "efficiency": 56.7}}]"#,
     )
     .unwrap();
     std::fs::write(
@@ -37,7 +37,7 @@ fn write_snapshot(dir: &Path) {
     .unwrap();
     std::fs::write(
         dir.join("weapon_amplifiers.json"),
-        r#"[{"id": "a1", "name": "Mayhem MF-Amplifier Delta (L)", "lifesteal_percent": 2.0, "economy": {"decay": 0.1, "ammo_burn": 0}}]"#,
+        r#"[{"id": "a1", "name": "Mayhem MF-Amplifier Delta (L)", "lifesteal_percent": 2.0, "economy": {"decay": 0.1, "ammo_burn": 0, "efficiency": 75.0}}]"#,
     )
     .unwrap();
     std::fs::write(
@@ -305,6 +305,17 @@ async fn an_existing_weapon_setup_gains_descriptive_lifesteal_without_a_rewrite(
     assert_eq!(listed[0].lifesteal_percent.as_ref(), Some(&2.0));
     let detail = api.equipment_detail(1).await.unwrap();
     assert_eq!(detail.lifesteal_percent.as_ref(), Some(&2.0));
+    assert_eq!(detail.weapon.efficiency_pct.as_ref(), Some(&56.7));
+    assert_eq!(
+        detail
+            .amplifier
+            .as_ref()
+            .and_then(|amplifier| amplifier.efficiency_pct.0),
+        Some(75.0)
+    );
+    let expected = detail.expected_return.as_ref().unwrap();
+    assert_eq!(expected.coverage, 1.0);
+    assert!(!expected.incomplete);
 
     let stored = db
         .with_reader(|conn| {
@@ -317,6 +328,7 @@ async fn an_existing_weapon_setup_gains_descriptive_lifesteal_without_a_rewrite(
         .await
         .unwrap();
     assert!(!stored.contains("lifesteal_percent"));
+    assert!(!stored.contains("efficiency"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

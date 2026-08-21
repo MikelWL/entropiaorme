@@ -80,7 +80,7 @@ use eo_services::equipment_pricing::{
 };
 use eo_services::eu_window;
 use eo_services::event_bus::{EventBus, Topic};
-use eo_services::expected_hunting::HuntingLooterLevels;
+use eo_services::expected_hunting::{with_current_offensive_efficiencies, HuntingLooterLevels};
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::{
     HotbarListener, HotbarResolver, ResolvedHotbarItem, HOTBAR_SLOT_KEYS,
@@ -1547,7 +1547,12 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
                 .flatten()
         })?;
         match serde_json::from_str::<Value>(&json) {
-            Ok(Value::Object(map)) => Some(map),
+            Ok(props @ Value::Object(_)) => {
+                let current = self.game_data.as_ref().map_or(props.clone(), |game_data| {
+                    with_current_offensive_efficiencies(&props, game_data)
+                });
+                current.as_object().cloned()
+            }
             _ => None,
         }
     }
@@ -1572,12 +1577,27 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
             heal_id: p.heal_id,
         });
         let db = self.db.clone();
-        block_on_pool(&self.runtime, async move {
+        let mut resolved = block_on_pool(&self.runtime, async move {
             describe_trifecta(&db, preset.as_ref())
                 .await
                 .ok()
                 .and_then(|(data, _error)| data)
-        })
+        })?;
+        if let Some(game_data) = self.game_data.as_ref() {
+            for key in ["small_weapon", "big_weapon"] {
+                let Some(weapon) = resolved.get_mut(key).and_then(Value::as_object_mut) else {
+                    continue;
+                };
+                let Some(props) = weapon.get("weapon_props").cloned() else {
+                    continue;
+                };
+                weapon.insert(
+                    "weapon_props".into(),
+                    with_current_offensive_efficiencies(&props, game_data),
+                );
+            }
+        }
+        Some(resolved)
     }
 
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {

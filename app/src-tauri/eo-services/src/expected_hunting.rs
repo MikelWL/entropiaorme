@@ -10,6 +10,8 @@ use eo_wire::normalizer::round_half_even;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::game_data_store::GameDataStore;
+
 /// Stable identity of the currently implemented community model.
 pub const COMMUNITY_MODEL_V1: &str = "community_v1";
 
@@ -204,6 +206,53 @@ fn economy_number(entity: &Value, key: &str) -> f64 {
         .and_then(|economy| economy.get(key))
         .and_then(Value::as_f64)
         .unwrap_or(0.0)
+}
+
+/// Overlay current catalogue Efficiency onto a saved equipment profile.
+///
+/// Equipment rows retain the complete catalogue entities that existed when
+/// they were saved, so rows created before Efficiency entered the bundled
+/// snapshot legitimately lack the field. Efficiency is game metadata rather
+/// than a player-entered costing input: current Equipment projections and new
+/// tracking phases should use the bundled catalogue value resolved by stable
+/// identity. The returned clone leaves the saved row untouched, and tracking
+/// still persists the resolved evidence so historical phases never change
+/// after a later snapshot refresh.
+pub fn with_current_offensive_efficiencies(props: &Value, game_data: &GameDataStore) -> Value {
+    let mut enriched = props.clone();
+    for (entity_key, id_key, endpoint) in [
+        ("weapon_entity", "weapon_catalog_id", "weapons"),
+        ("amp_entity", "amp_catalog_id", "weapon_amplifiers"),
+    ] {
+        let Some(entity) = props.get(entity_key).filter(|entity| !entity.is_null()) else {
+            continue;
+        };
+        let Some(catalog_id) = props
+            .get(id_key)
+            .filter(|id| !id.is_null())
+            .or_else(|| entity.get("id").filter(|id| !id.is_null()))
+        else {
+            continue;
+        };
+        let Some(efficiency) = game_data
+            .find_entity(endpoint, catalog_id)
+            .and_then(|current| current.get("economy"))
+            .and_then(|economy| economy.get("efficiency"))
+            .and_then(Value::as_f64)
+        else {
+            continue;
+        };
+        let Some(saved_entity) = enriched.get_mut(entity_key).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let economy = saved_entity
+            .entry("economy")
+            .or_insert_with(|| Value::Object(Default::default()));
+        if let Some(economy) = economy.as_object_mut() {
+            economy.insert("efficiency".into(), Value::from(efficiency));
+        }
+    }
+    enriched
 }
 
 fn component_from_props(
@@ -511,5 +560,44 @@ mod tests {
         let ancillary = evidence_from_equipment_props(&with_ancillary, None, looters(50.0));
         assert_eq!(plain, ancillary);
         assert_eq!(evaluate(&plain).unwrap(), evaluate(&ancillary).unwrap());
+    }
+
+    #[test]
+    fn current_catalogue_efficiency_enriches_legacy_props_without_rewriting_costs() {
+        let snapshot = tempfile::tempdir().unwrap();
+        std::fs::write(
+            snapshot.path().join("weapons.json"),
+            r#"[{"id":"weapon","name":"Legacy weapon","economy":{"decay":9.0,"efficiency":56.7}}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            snapshot.path().join("weapon_amplifiers.json"),
+            r#"[{"id":"amp","name":"Legacy amp","economy":{"decay":8.0,"efficiency":75.0}}]"#,
+        )
+        .unwrap();
+        let game_data = GameDataStore::new(snapshot.path()).unwrap();
+        let props = json!({
+            "weapon_catalog_id": "weapon",
+            "weapon_entity": {
+                "id": "weapon",
+                "name": "Legacy weapon",
+                "economy": {"decay": 1.0, "ammo_burn": 100.0}
+            },
+            "amp_catalog_id": "amp",
+            "amp_entity": {
+                "id": "amp",
+                "name": "Legacy amp",
+                "economy": {"decay": 0.5, "efficiency": 60.0}
+            }
+        });
+
+        let enriched = with_current_offensive_efficiencies(&props, &game_data);
+
+        assert_eq!(enriched["weapon_entity"]["economy"]["efficiency"], 56.7);
+        assert_eq!(enriched["amp_entity"]["economy"]["efficiency"], 75.0);
+        assert_eq!(enriched["weapon_entity"]["economy"]["decay"], 1.0);
+        assert_eq!(enriched["amp_entity"]["economy"]["decay"], 0.5);
+        assert!(props["weapon_entity"]["economy"]["efficiency"].is_null());
+        assert_eq!(props["amp_entity"]["economy"]["efficiency"], 60.0);
     }
 }

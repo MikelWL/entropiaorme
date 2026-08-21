@@ -600,6 +600,9 @@ fn row_to_detail(
     let item_id = id.to_string();
 
     if item_type == "weapon" {
+        let enriched_props =
+            expected_hunting::with_current_offensive_efficiencies(props, game_data);
+        let props = &enriched_props;
         let weapon_e = props
             .get("weapon_entity")
             .filter(|v| !v.is_null())
