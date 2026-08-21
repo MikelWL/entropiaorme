@@ -12,6 +12,8 @@ export type {
 	EquipmentDetail,
 	EquipmentKind,
 	EquipmentSummary as Equipment,
+	HealingMode,
+	HealingProfileDto as HealingProfile,
 } from '$lib/api/commands.gen';
 
 /** The healing-tool view row the equipment page derives from the
@@ -21,4 +23,6 @@ export interface HealingTool {
 	name: string;
 	costPerHeal: Pec;
 	isLimited: boolean;
+	reloadSeconds: number | null;
+	profile: import('$lib/api/commands.gen').HealingProfileDto | null;
 }

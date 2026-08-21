@@ -9,10 +9,13 @@
 
 use serde_json::Value;
 
+use crate::game_data_store::GameDataStore;
+
 use crate::cost_engine::{
     cost_per_shot_from_props, heal_cost_per_use_with_implant, heal_reload_seconds,
 };
 use crate::db::DbError;
+use crate::healing_profile::{HealingMode, HealingProfile};
 
 /// The per-shot cost in PED derived from a weapon's properties:
 /// `totalCostPerUse / 100`, or 0 when the profile carries no figure.
@@ -63,6 +66,90 @@ pub fn heal_cost_from_props(properties_json: &str) -> (f64, f64) {
         heal_cost_per_use_with_implant(tool, markup, implant, implant_markup) / 100.0,
         heal_reload_seconds(tool),
     )
+}
+
+/// The activation/output profile stored with a healing setup. Existing rows
+/// predate explicit effect configuration, so their catalogue direct interval
+/// is the lossless default.
+pub fn healing_profile_from_props(properties_json: &str) -> HealingProfile {
+    let props: Value = serde_json::from_str(properties_json).unwrap_or(Value::Null);
+    let tool = props.get("tool_entity").unwrap_or(&Value::Null);
+    let configured = props.get("healing_profile");
+    let number = |key: &str| {
+        configured
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_f64)
+    };
+    let mode = configured
+        .and_then(|value| value.get("mode"))
+        .and_then(Value::as_str)
+        .and_then(|value| match value {
+            "direct" => Some(HealingMode::Direct),
+            "over_time" => Some(HealingMode::OverTime),
+            "compound" => Some(HealingMode::Compound),
+            _ => None,
+        })
+        .unwrap_or_default();
+    HealingProfile {
+        mode,
+        direct_min: number("direct_min").or_else(|| tool.get("min_heal").and_then(Value::as_f64)),
+        direct_max: number("direct_max").or_else(|| tool.get("max_heal").and_then(Value::as_f64)),
+        effect_duration_seconds: number("effect_duration_seconds"),
+        tick_min: number("tick_min"),
+        tick_max: number("tick_max"),
+        tick_seconds: number("tick_seconds"),
+    }
+}
+
+/// Sum the known passive lifesteal contribution carried by a weapon setup's
+/// base item and amplifier. The bundled catalogue normalises the upstream
+/// effect vocabulary to one percentage field; absent data is deliberately
+/// `None`, because safe billing never depends on knowing the passive rate.
+pub fn lifesteal_percent_from_props(properties_json: &str) -> Option<f64> {
+    let props: Value = serde_json::from_str(properties_json).ok()?;
+    let total: f64 = ["weapon_entity", "amp_entity"]
+        .into_iter()
+        .filter_map(|key| props.get(key))
+        .filter_map(|entity| entity.get("lifesteal_percent").and_then(Value::as_f64))
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .sum();
+    (total > 0.0).then_some(total)
+}
+
+/// Resolve lifesteal from a stored weapon setup, falling back to the current
+/// bundled catalogue for components saved before lifesteal was normalised into
+/// the snapshot. The fallback is read-only: stored costing inputs remain the
+/// immutable setup the user saved, while descriptive effect metadata can gain
+/// fidelity as the bundled catalogue does.
+pub fn lifesteal_percent_from_props_with_catalog(
+    properties_json: &str,
+    game_data: &GameDataStore,
+) -> Option<f64> {
+    let props: Value = serde_json::from_str(properties_json).ok()?;
+    let components = [
+        ("weapon_entity", "weapon_catalog_id", "weapons"),
+        ("amp_entity", "amp_catalog_id", "weapon_amplifiers"),
+    ];
+    let total: f64 = components
+        .into_iter()
+        .filter_map(|(entity_key, id_key, endpoint)| {
+            props
+                .get(entity_key)
+                .and_then(|entity| entity.get("lifesteal_percent"))
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .or_else(|| {
+                    props
+                        .get(id_key)
+                        .filter(|id| !id.is_null())
+                        .and_then(|id| game_data.find_entity(endpoint, id))
+                        .and_then(|entity| entity.get("lifesteal_percent"))
+                        .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite() && *value > 0.0)
+                })
+        })
+        .sum();
+    (total > 0.0).then_some(total)
 }
 
 /// One equipment-library row by id: `(name, item_type, properties JSON)`,
@@ -188,6 +275,59 @@ mod tests {
         );
         // Unparseable JSON degrades to the same fallback.
         assert_eq!(heal_cost_from_props("not json"), (0.0, 2.5));
+    }
+
+    #[test]
+    fn lifesteal_catalogue_fallback_enriches_an_existing_saved_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("weapons.json"),
+            r#"[{"id":"chip-15","name":"Chip","lifesteal_percent":3.0}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("weapon_amplifiers.json"),
+            r#"[{"id":"delta","name":"Delta","lifesteal_percent":2.0}]"#,
+        )
+        .unwrap();
+        let catalogue = GameDataStore::new(dir.path()).unwrap();
+        let legacy_props = json!({
+            "weapon_catalog_id": "chip-15",
+            "weapon_entity": {"id": "chip-15", "name": "Chip"},
+            "amp_catalog_id": "delta",
+            "amp_entity": {"id": "delta", "name": "Delta"}
+        });
+
+        assert_eq!(
+            lifesteal_percent_from_props_with_catalog(&legacy_props.to_string(), &catalogue),
+            Some(5.0)
+        );
+
+        let stored_override = json!({
+            "weapon_catalog_id": "chip-15",
+            "weapon_entity": {"id": "chip-15", "lifesteal_percent": 1.0},
+            "amp_catalog_id": "delta",
+            "amp_entity": {"id": "delta"}
+        });
+        assert_eq!(
+            lifesteal_percent_from_props_with_catalog(&stored_override.to_string(), &catalogue),
+            Some(3.0)
+        );
+
+        let stale_values = json!({
+            "weapon_catalog_id": "chip-15",
+            "weapon_entity": {"id": "chip-15", "lifesteal_percent": 0.0},
+            "amp_catalog_id": "delta",
+            "amp_entity": {"id": "delta", "lifesteal_percent": -2.0}
+        });
+        assert_eq!(
+            lifesteal_percent_from_props_with_catalog(&stale_values.to_string(), &catalogue),
+            Some(5.0)
+        );
+        assert_eq!(
+            lifesteal_percent_from_props(&stale_values.to_string()),
+            None
+        );
     }
 
     #[tokio::test]

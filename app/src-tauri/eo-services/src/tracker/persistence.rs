@@ -13,9 +13,9 @@ use super::actor::TrackerActor;
 use super::time::{epoch_to_instant, local_isoformat};
 
 impl TrackerActor {
-    /// Close sessions left open by a crash: end at the latest kill
-    /// (or the start), write the ledger gains and the summary, and
-    /// clear the active flag.
+    /// Close sessions left open by a crash: end at the latest kill or
+    /// healing output (or the start), write the ledger gains and the
+    /// summary, and clear the active flag.
     pub(super) async fn recover_orphaned_sessions(&self) -> Result<(), DbError> {
         {
             let rows: Vec<(String, f64)> = self
@@ -36,8 +36,13 @@ impl TrackerActor {
                     .db
                     .with_reader(move |conn| {
                         Ok(conn.query_row(
-                            "SELECT MAX(timestamp) FROM kills WHERE session_id = ?",
-                            rusqlite::params![sid_read],
+                            "SELECT MAX(timestamp) FROM (\
+                                 SELECT timestamp FROM kills WHERE session_id = ? \
+                                 UNION ALL \
+                                 SELECT observed_at AS timestamp FROM healing_outputs \
+                                 WHERE session_id = ?\
+                             )",
+                            rusqlite::params![sid_read, sid_read],
                             |row| row.get::<_, Option<f64>>(0),
                         )?)
                     })

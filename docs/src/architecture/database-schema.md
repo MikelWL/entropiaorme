@@ -89,7 +89,9 @@ damage-weighted session/context allocation for deferred protection costs), and
 loot-clump identity, and bounded review evidence), and
 `0046_quest_reward_lifecycle.sql` (Universal Ammo ledger recognition, quest
 stock provenance and effort attribution, append-only reward corrections, and
-the quest-item daily-rollup family). The
+the quest-item daily-rollup family), and
+`0047_healing_attribution.sql` (paid healing activations, restoration-effect
+windows, and classified healing-output evidence). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -601,6 +603,39 @@ facets, and an optional session-definition identity.
 | `skill_boost_percent` | INTEGER | Optional positive boost declaration (migration `0018`). Null means not captured. |
 | `definition_id` | INTEGER | Optional reference to `session_definitions(id)` (migration `0022`; indexed `idx_tracking_sessions_definition`). Null is valid for legacy or deliberately unattached sessions. |
 | `updated_at` | REAL | Back-filled by an `AFTER INSERT` trigger when left null. |
+
+#### Healing attribution evidence
+
+Migration `0047` separates a paid healing activation from the healing outputs
+the game reports. This is the durable boundary that prevents lifesteal and
+restoration ticks from being charged as repeated tool uses.
+
+`healing_activations` records one cost-bearing use after a healing hotbar intent
+is confirmed by a compatible chat output. It retains the equipment identity,
+tool name, operating-system intent time, local observation time, raw chat
+timestamp, immutable healing-profile JSON, attributed session context, charged
+PED, and whether confirmation was direct, health-capped, or reconciled after
+delivery-order inversion. It is indexed by session and observation time.
+
+`healing_effect_windows` records the bounded over-time effect created by a
+confirmed activation. Each row names its parent activation, session, equipment,
+tool, time bounds, optional tick interval and cadence, and attribution context.
+Effect outputs within that window remain evidence but never create another
+cost. It is indexed by session and start time.
+
+`healing_outputs` retains every positive self-heal line observed during a
+session. A row can reference the activation and effect window that explain it,
+and otherwise remains classified as `passive` or `unattributed`. It records the
+local observation time separately from the game's whole-second chat timestamp,
+plus the amount and an explanatory reason. A direct or compound profile's
+confirming output is `direct`; a pure over-time profile's first matching output
+is `effect` and confirms its activation. Subsequent `effect` outputs and every
+`passive` or `unattributed` output are zero-cost evidence. It is indexed by
+session and observation time.
+
+Foreign-key enforcement remains disabled for the application database, so
+session deletion removes these three tables explicitly in output, window,
+activation order before deleting the session.
 
 #### `session_intervals`
 
@@ -1264,7 +1299,15 @@ migrations (`0002_analytical_indexes.sql`,
 `0027_hunting_definition_provenance.sql`,
 `0028_quest_reward_provenance.sql`,
 `0029_session_context_loot_rollups.sql`,
-`0030_quest_reward_items.sql`, `0031_stock_outcomes.sql`); the runner
+`0030_quest_reward_items.sql`, `0031_stock_outcomes.sql`,
+`0032_inventory_hub.sql`, `0033_listing_duration.sql`,
+`0034_listing_instant.sql`, `0035_quest_reward_kinds.sql`,
+`0036_mixed_quest_reward_kinds.sql`, `0037_typed_quest_rewards.sql`,
+`0038_quest_runs.sql`, `0039_market_unit_prices.sql`,
+`0040_quest_reward_reviews.sql`, `0041_ARIS_unresolved_rewards.sql`,
+`0042_quest_run_ownership.sql`, `0043_protection_accounting.sql`,
+`0044_deferred_protection_costs.sql`, `0045_manual_quest_hand_in.sql`,
+`0046_quest_reward_lifecycle.sql`, `0047_healing_attribution.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

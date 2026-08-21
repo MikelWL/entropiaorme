@@ -13,7 +13,16 @@
 				? !model.healerPicker.selected
 				: model.addType === 'tool'
 					? !model.toolPicker.selected
-					: !model.consumablePicker.selected) || model.saving,
+					: !model.consumablePicker.selected) ||
+			(model.addType === 'healing' &&
+				((model.healingMode !== 'over_time' &&
+					(model.healMin === null || model.healMax === null)) ||
+					(model.healingMode !== 'direct' &&
+						(model.effectDurationSeconds === null ||
+							model.effectDurationSeconds <= 0 ||
+							model.tickMin === null ||
+							model.tickMax === null)))) ||
+			model.saving,
 	);
 
 	// The add-custom row appears once the query could have searched (two or
@@ -184,7 +193,7 @@
 					</div>
 				</div>
 			{:else if model.addType === 'healing'}
-				<div class="grid md:grid-cols-2 gap-x-8 gap-y-4 items-start">
+				<div class="grid md:grid-cols-2 gap-x-8 gap-y-5 items-start">
 					<div class="space-y-4">
 						<div>
 							<label for="equipment-healer-search" class="block eyebrow mb-1.5">
@@ -201,24 +210,79 @@
 								</div>
 							{/if}
 						</div>
+						<div>
+							<span class="block eyebrow mb-1.5">Output pattern</span>
+							<SegmentedControl
+								size="sm"
+								options={[
+									{ id: 'direct', label: 'Direct' },
+									{ id: 'over_time', label: 'Over time' },
+									{ id: 'compound', label: 'Direct + over time' }
+								]}
+								active={model.healingMode}
+								onchange={(id) => (model.healingMode = id as 'direct' | 'over_time' | 'compound')}
+							/>
+						</div>
+						{#if model.healingMode !== 'over_time'}
+							<div>
+								<span class="block eyebrow mb-1.5">Direct heal interval</span>
+								<div class="grid grid-cols-2 gap-3">
+									<label class="text-xs text-text-tertiary">
+										Minimum
+										<Input type="number" bind:value={model.healMin} min={0} step="any" class="mt-1 w-full" />
+									</label>
+									<label class="text-xs text-text-tertiary">
+										Maximum
+										<Input type="number" bind:value={model.healMax} min={0} step="any" class="mt-1 w-full" />
+									</label>
+								</div>
+								<p class="mt-1.5 text-xs text-text-tertiary">Catalogue defaults can be corrected for your effective heal range.</p>
+							</div>
+						{/if}
 						{#if model.healerPicker.selected?.isLimited || model.implantPicker.selected?.isLimited}
 							<p class="text-xs text-text-tertiary">
 								Markup is the replacement cost of limited items: 200% means each PEC of decay costs 2 PEC to replace.
 							</p>
 						{/if}
 					</div>
-					<div>
-						<label for="equipment-heal-implant-search" class="block eyebrow mb-1.5">
-							Mindforce implant
-						</label>
-						<PickerInput id="equipment-heal-implant-search" model={model.implantPicker} placeholder="">
-							{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
-							{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
-						</PickerInput>
-						{#if model.implantPicker.selected?.isLimited}
-							<div class="mt-1.5 flex items-center justify-end gap-2">
-								<label for="equipment-heal-implant-markup" class="text-xs text-text-tertiary">Implant markup %</label>
-								<Input id="equipment-heal-implant-markup" type="number" bind:value={model.implantMarkupPercent} min={100} max={10000} class="w-20" />
+					<div class="space-y-4">
+						<div>
+							<label for="equipment-heal-implant-search" class="block eyebrow mb-1.5">
+								Mindforce implant
+							</label>
+							<PickerInput id="equipment-heal-implant-search" model={model.implantPicker} placeholder="">
+								{#snippet result({ item })}{@render resultLine({ item })}{/snippet}
+								{#snippet selection({ item })}{@render selectionLine(item)}{/snippet}
+							</PickerInput>
+							{#if model.implantPicker.selected?.isLimited}
+								<div class="mt-1.5 flex items-center justify-end gap-2">
+									<label for="equipment-heal-implant-markup" class="text-xs text-text-tertiary">Implant markup %</label>
+									<Input id="equipment-heal-implant-markup" type="number" bind:value={model.implantMarkupPercent} min={100} max={10000} class="w-20" />
+								</div>
+							{/if}
+						</div>
+						{#if model.healingMode !== 'direct'}
+							<div>
+								<span class="block eyebrow mb-1.5">Over-time effect</span>
+								<div class="grid grid-cols-2 gap-3">
+									<label class="text-xs text-text-tertiary">
+										Duration (seconds)
+										<Input type="number" bind:value={model.effectDurationSeconds} min={0.1} step="any" class="mt-1 w-full" />
+									</label>
+									<label class="text-xs text-text-tertiary">
+										Tick cadence (optional)
+										<Input type="number" bind:value={model.tickSeconds} min={0.1} step="any" class="mt-1 w-full" />
+									</label>
+									<label class="text-xs text-text-tertiary">
+										Tick minimum
+										<Input type="number" bind:value={model.tickMin} min={0} step="any" class="mt-1 w-full" />
+									</label>
+									<label class="text-xs text-text-tertiary">
+										Tick maximum
+										<Input type="number" bind:value={model.tickMax} min={0} step="any" class="mt-1 w-full" />
+									</label>
+								</div>
+								<p class="mt-1.5 text-xs text-text-tertiary">Later matching ticks stay attached to this activation and never add another use cost.</p>
 							</div>
 						{/if}
 					</div>

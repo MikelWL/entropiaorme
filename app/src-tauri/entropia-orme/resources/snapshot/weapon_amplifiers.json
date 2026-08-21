@@ -277,7 +277,8 @@
       "cold": null,
       "acid": null,
       "electric": null
-    }
+    },
+    "lifesteal_percent": 3
   },
   {
     "id": "edd6f77707d8",
@@ -897,7 +898,8 @@
       "cold": null,
       "acid": null,
       "electric": null
-    }
+    },
+    "lifesteal_percent": 5
   },
   {
     "id": "9fb233ac487a",
@@ -917,7 +919,8 @@
       "cold": null,
       "acid": null,
       "electric": null
-    }
+    },
+    "lifesteal_percent": 6
   },
   {
     "id": "4b07e382158d",
@@ -937,7 +940,8 @@
       "cold": null,
       "acid": null,
       "electric": null
-    }
+    },
+    "lifesteal_percent": 8
   },
   {
     "id": "b0a72aa34900",
@@ -957,7 +961,8 @@
       "cold": null,
       "acid": null,
       "electric": null
-    }
+    },
+    "lifesteal_percent": 7
   },
   {
     "id": "cea7892c39da",
@@ -2157,7 +2162,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "08be957568dc",
@@ -2177,7 +2183,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "2cb2d44bd107",
@@ -2197,7 +2204,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "4a0852f9d404",
@@ -2217,7 +2225,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "336333fd7889",
@@ -3157,7 +3166,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "5c24db5e6c64",
@@ -3177,7 +3187,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "68aac0c27a41",
@@ -3197,7 +3208,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "2be0549fa181",
@@ -4897,7 +4909,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "a5ed30fdead4",
@@ -4917,7 +4930,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "b1d76a665a84",
@@ -4937,7 +4951,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "41125f80a15b",
@@ -4957,7 +4972,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "c85768cca505",
@@ -5757,7 +5773,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 2
   },
   {
     "id": "8cd9384ae813",

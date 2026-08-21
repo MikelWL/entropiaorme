@@ -16,12 +16,14 @@ use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
 use crate::protection::{active_selection, ProtectionSelection};
 use crate::tracking_models::{
-    ActiveSessionView, HarvestGuardrailMismatchView, TrackingReadout, TrackingSession,
+    ActiveSessionView, HarvestGuardrailMismatchView, HealingRuntimeView, TrackingReadout,
+    TrackingSession,
 };
 
 use super::actor::TrackerActor;
 use super::combat::Accumulator;
 use super::harvest::GuardrailMismatch;
+use super::healing::HealingRuntime;
 use super::mob::DeclaredMob;
 use super::time::{instant_to_epoch, local_isoformat, resolve_local};
 use super::weapons::WeaponRuntime;
@@ -79,7 +81,7 @@ pub(super) struct ActiveSession {
     /// every event written right now stamps. Session-scoped by
     /// construction, so no interval can outlive its session.
     pub(super) intervals: IntervalState,
-    pub(super) last_heal_time: Option<DateTime<Utc>>,
+    pub(super) healing: HealingRuntime,
     /// The last recorded loot group's dedup identity and instant,
     /// always stamped together.
     pub(super) last_loot: Option<(LootFingerprint, DateTime<Utc>)>,
@@ -109,7 +111,7 @@ impl ActiveSession {
             declared_mob: None,
             facets,
             intervals: IntervalState::default(),
-            last_heal_time: None,
+            healing: HealingRuntime::default(),
             last_loot: None,
             trifecta_unmatched_warning_emitted: false,
             guardrail_mismatch: None,
@@ -184,6 +186,7 @@ pub(super) struct SessionAggregate {
     pub(super) harvest_cost: Ped,
     pub(super) guardrail_mismatch: Option<GuardrailMismatch>,
     pub(super) warnings: Vec<String>,
+    pub(super) healing: HealingRuntimeView,
 }
 
 impl TrackerActor {
@@ -308,10 +311,39 @@ impl TrackerActor {
             .collect();
 
         let start_ts = instant_to_epoch(active.session.start_time);
+        let now = instant_to_epoch(resolve_local(self.clock.now()));
+        let effect_until = active
+            .healing
+            .effect_windows
+            .iter()
+            .map(|window| window.expires_at)
+            .filter(|expires| *expires >= now)
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let tool_name = active
+            .healing
+            .intent
+            .as_ref()
+            .map(|intent| intent.tool_name.clone());
+        let cooldown_until = active.healing.intent.as_ref().and_then(|intent| {
+            active
+                .healing
+                .last_activation_at(intent.equipment_id)
+                .map(|last| last + intent.reload_seconds)
+                .filter(|until| *until > now)
+        });
+        let healing_state = if effect_until.is_some() {
+            "effect"
+        } else if cooldown_until.is_some() {
+            "cooldown"
+        } else if tool_name.is_some() {
+            "ready"
+        } else {
+            "passive"
+        };
         let aggregate = SessionAggregate {
             session_id: active.session.id.clone(),
             started_at: local_isoformat(active.session.start_time),
-            elapsed: (instant_to_epoch(resolve_local(self.clock.now())) - start_ts) as i64,
+            elapsed: (now - start_ts) as i64,
             kill_count: kills.len() as i64,
             cost,
             returns,
@@ -352,6 +384,17 @@ impl TrackerActor {
             harvest_cost,
             guardrail_mismatch: active.guardrail_mismatch.clone(),
             warnings: active.warnings.clone(),
+            healing: HealingRuntimeView {
+                tool_name,
+                state: healing_state.to_string(),
+                cooldown_until,
+                effect_until,
+                activation_count: active.healing.activation_count,
+                direct_output_count: active.healing.direct_output_count,
+                effect_output_count: active.healing.effect_output_count,
+                passive_output_count: active.healing.passive_output_count,
+                unattributed_output_count: active.healing.unattributed_output_count,
+            },
         };
         (current_tool, self.hand_is_harvest, Some(aggregate))
     }
@@ -1112,6 +1155,7 @@ impl HuntTracker {
             }),
             notable_event_rows: notable_rows,
             warnings: aggregated.warnings,
+            healing: aggregated.healing,
         };
         Ok(TrackingReadout {
             current_tool,

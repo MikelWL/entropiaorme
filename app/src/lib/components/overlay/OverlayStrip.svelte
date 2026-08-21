@@ -147,6 +147,15 @@
 				? 'Hunting'
 				: null
 	);
+	const healingLabel = $derived.by(() => {
+		const healing = data.healing;
+		if (!healing) return null;
+		if (healing.state === 'effect') return `${healing.toolName ?? 'Healing'} effect active`;
+		if (healing.state === 'cooldown') return `${healing.toolName ?? 'Healing'} cooldown`;
+		if (healing.state === 'ready') return `${healing.toolName ?? 'Healer'} ready`;
+		if (healing.passiveOutputs > 0) return `${healing.passiveOutputs} passive heal${healing.passiveOutputs === 1 ? '' : 's'}`;
+		return null;
+	});
 	const activeProtection = $derived(
 		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
@@ -493,6 +502,11 @@
 							data-testid="activity-feedback"
 						>
 							{activityLabel}
+						</div>
+					{/if}
+					{#if healingLabel}
+						<div class="text-[10px] leading-tight text-emerald-300/80 whitespace-nowrap" data-testid="healing-state">
+							{healingLabel}
 						</div>
 					{/if}
 				</div>

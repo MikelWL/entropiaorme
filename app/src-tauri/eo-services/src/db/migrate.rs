@@ -268,6 +268,11 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "quest reward lifecycle",
         sql: include_str!("../../migrations/0046_quest_reward_lifecycle.sql"),
     },
+    Migration {
+        version: 47,
+        description: "healing attribution",
+        sql: include_str!("../../migrations/0047_healing_attribution.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -322,6 +327,7 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "851CB33C6BD3D4F0458B379FB87238C0CE0CF8E2EA3E82E00CDD2594423621CAB00DE0DF63DB16FC8B52AF401BC5CCD0",
     "E8E3894C6919916669DE0DF626D0453C26BDD3119FF5B2D3D3734D61B3735DD756670210259CC529E37B25840F0B3CAD",
     "831DF480850CCB94220B7AF4A55D47507935331BFCBCD73DA0B27ED30181E96064E5D13D08380A5FD349B151B6844D97",
+    "499090EBAE8875A10C6863090B07196C95DDDAB807FDC36CE66B80F8E399C4C9A9F5543150B40D5877A234CCD75F83C5",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as

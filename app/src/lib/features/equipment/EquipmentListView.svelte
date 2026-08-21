@@ -100,7 +100,7 @@
 
 	{#if model.healingTools.length === 0}
 		<p class="text-sm text-text-tertiary py-4">
-			No healing tools configured. They'll appear here when detected during tracking.
+			No healing tools configured.
 		</p>
 	{:else}
 		<div class="space-y-1">
@@ -116,6 +116,18 @@
 						<div class="flex items-center gap-2">
 							<span class="text-sm font-medium text-text">{tool.name}</span>
 						</div>
+						<div class="mt-0.5 text-xs text-text-tertiary">
+							{#if tool.profile?.mode === 'compound'}
+								Direct {tool.profile.directMin}–{tool.profile.directMax}, then {tool.profile.tickMin}–{tool.profile.tickMax} over time
+							{:else if tool.profile?.mode === 'over_time'}
+								{tool.profile.tickMin}–{tool.profile.tickMax} over {tool.profile.effectDurationSeconds}s
+							{:else if tool.profile}
+								Direct {tool.profile.directMin}–{tool.profile.directMax}
+							{/if}
+							{#if tool.reloadSeconds !== null}
+								<span class="ml-2">{tool.reloadSeconds}s reload</span>
+							{/if}
+						</div>
 					</div>
 					<div class="text-right shrink-0">
 						<span class="text-sm font-medium tabular-nums text-text">
@@ -123,6 +135,12 @@
 						</span>
 						<span class="text-xs text-text-tertiary ml-0.5">PEC/heal</span>
 					</div>
+					<button
+						type="button" class="linklet shrink-0"
+						onclick={() => model.openEditModal(tool.id)}
+					>
+						Edit
+					</button>
 					<button
 						type="button" class="linklet linklet-danger shrink-0"
 						aria-label="Remove {tool.name}"

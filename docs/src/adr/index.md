@@ -34,3 +34,4 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0024](0024-market-informational-layer.md) | Estimated market data as a quarantined informational layer; the accounting surfaces can never read it, CI-enforced |
 | [ADR-0025](0025-central-market-data-service.md) | A central market-data service on AWS serverless: token-authenticated ingest, scheduled aggregation, versioned snapshot distribution |
 | [ADR-0026](0026-canonical-quest-reward-accounting.md) | Canonical quest reward accounting and session-owned quest rosters |
+| [ADR-0027](0027-intent-led-healing-attribution.md) | Intent-led healing attribution with durable output evidence |

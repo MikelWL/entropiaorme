@@ -9,6 +9,7 @@
 import type {
 	ActivitySummary,
 	HarvestGuardrailAlert,
+	HealingStatus,
 	NotableEventCategory,
 	NotableEventType,
 	RecentEvent,
@@ -60,6 +61,7 @@ export interface TrackingLive {
 	activities?: ActivitySummary | null;
 	trifectaAttribution?: TrifectaAttribution | null;
 	harvestGuardrail?: HarvestGuardrailAlert | null;
+	healing?: HealingStatus | null;
 	warnings?: Warning[] | null;
 	recentEvents?: {
 		type: NotableEventCategory;

@@ -30,6 +30,8 @@ function summary(overrides: Partial<Equipment> = {}): Equipment {
 		reloadSeconds: 2.5,
 		isLimited: false,
 		enrichmentLevel: 1,
+		healingProfile: null,
+		lifestealPercent: null,
 		...overrides,
 	};
 }
@@ -37,6 +39,7 @@ function summary(overrides: Partial<Equipment> = {}): Equipment {
 function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 	return {
 		id: '1',
+		type: 'weapon',
 		weapon: {
 			catalogId: 'jester-d1',
 			name: 'Jester D-1',
@@ -52,6 +55,8 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 		implant: null,
 		costBreakdown: [],
 		totalCostPerUse: 2.05,
+		healingProfile: null,
+		lifestealPercent: null,
 		...overrides,
 	};
 }
@@ -77,6 +82,10 @@ const weaponHit = {
 	ammoBurn: 1.0,
 	absorptionPercent: null,
 	isLimited: false,
+	healMin: null,
+	healMax: null,
+	reloadSeconds: null,
+	lifestealPercent: null,
 };
 
 beforeEach(() => {
@@ -109,6 +118,8 @@ describe('loadData', () => {
 			name: 'Vivo T1',
 			costPerHeal: 0.18,
 			isLimited: true,
+			reloadSeconds: 2.5,
+			profile: null,
 		});
 		expect(model.consumables.map((c) => c.name)).toEqual(['Oil']);
 		expect(model.hotbarHooksEnabled).toBe(false);
@@ -181,6 +192,10 @@ describe('form open and reset', () => {
 			ammoBurn: 0,
 			absorptionPercent: null,
 			isLimited: false,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 		model.markupPercent = 150;
 		model.damageEnhancers = 3;
@@ -304,6 +319,10 @@ describe('setAddType clearing', () => {
 			ammoBurn: 0,
 			absorptionPercent: null,
 			isLimited: false,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 		return model;
 	}
@@ -407,6 +426,60 @@ describe('saveEquipment', () => {
 		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['New']);
 	});
 
+	it('evicts stale weapon detail when the post-save refresh fails', async () => {
+		mocked.getEquipmentLibrary.mockResolvedValue([summary({ id: '1', name: 'Old' })]);
+		mocked.getEquipmentDetail
+			.mockResolvedValueOnce(detail())
+			.mockRejectedValueOnce(new Error('refresh failed'));
+		mocked.updateLibrary.mockResolvedValue(summary({ id: '1', name: 'New' }));
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('1');
+		await model.saveEquipment();
+
+		expect(model.sortedEquipment.map((e) => e.name)).toEqual(['New']);
+		expect(model.detailCache['1']).toBeUndefined();
+		expect(model.showAddModal).toBe(false);
+		expect(model.error).toBe('refresh failed');
+	});
+
+	it('evicts stale healing detail when the post-save refresh fails', async () => {
+		const healingProfile = {
+			mode: 'direct' as const,
+			directMin: 8,
+			directMax: 10,
+			effectDurationSeconds: null,
+			tickMin: null,
+			tickMax: null,
+			tickSeconds: null,
+		};
+		mocked.getEquipmentLibrary.mockResolvedValue([
+			summary({ id: '5', name: 'Old FAP', type: 'healing', healingProfile }),
+		]);
+		mocked.getEquipmentDetail
+			.mockResolvedValueOnce(
+				detail({
+					id: '5',
+					type: 'healing',
+					healingProfile,
+					weapon: { ...detail().weapon, name: 'Old FAP' },
+				}),
+			)
+			.mockRejectedValueOnce(new Error('refresh failed'));
+		mocked.updateLibrary.mockResolvedValue(
+			summary({ id: '5', name: 'New FAP', type: 'healing', healingProfile }),
+		);
+		const model = createLibraryModel();
+		await model.loadData(false);
+		await model.openEditModal('5');
+		await model.saveEquipment();
+
+		expect(model.healingTools.map((tool) => tool.name)).toEqual(['New FAP']);
+		expect(model.detailCache['5']).toBeUndefined();
+		expect(model.showAddModal).toBe(false);
+		expect(model.error).toBe('refresh failed');
+	});
+
 	it('does nothing when the selected weapon has no catalogue id', async () => {
 		const model = createLibraryModel();
 		model.openAddModal();
@@ -426,6 +499,8 @@ describe('saveEquipment', () => {
 			catalogId: 'vivo-t1',
 			name: 'Vivo',
 			isLimited: true,
+			healMin: 8,
+			healMax: 10,
 		});
 		model.markupPercent = 120;
 		await model.saveEquipment();
@@ -436,6 +511,13 @@ describe('saveEquipment', () => {
 			weapon_markup: 120,
 			implant_catalog_id: null,
 			implant_markup: 100,
+			healing_mode: 'direct',
+			heal_min: 8,
+			heal_max: 10,
+			effect_duration_seconds: null,
+			tick_min: null,
+			tick_max: null,
+			tick_seconds: null,
 		});
 		expect(model.healingTools.map((t) => t.id)).toEqual(['5']);
 	});

@@ -11,11 +11,12 @@ use super::weapons::{value_truthy, DamageEnhancerState};
 use super::*;
 use crate::bus_events::{
     ActiveHealToolChangedPayload, ActiveToolChangedPayload, EnhancerBreakPayload, EnhancerBreakTag,
-    LootGroupPayload, LootItem, LootTag, TickFlushedPayload,
+    HotbarIntentPayload, HotbarItemKind, LootGroupPayload, LootItem, LootTag, TickFlushedPayload,
 };
 use crate::bus_events::{CombatPayload, GlobalPayload};
 use crate::clock::MockClock;
 use crate::cost_engine::cost_per_shot_from_props;
+use crate::healing_profile::{HealingMode, HealingProfile};
 use crate::ped::Ped;
 use crate::time::{epoch_to_parts, naive_isoformat, naive_to_epoch, to_iso_utc};
 use serde_json::json;
@@ -194,6 +195,43 @@ impl Rig {
 
 fn naive(text: &str) -> NaiveDateTime {
     NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").unwrap()
+}
+
+fn healer_intent(
+    equipment_id: i64,
+    name: &str,
+    cost: f64,
+    reload: f64,
+    occurred_at: f64,
+    profile: HealingProfile,
+) -> BusEvent {
+    BusEvent::HotbarIntent(HotbarIntentPayload {
+        session_id: None,
+        slot: "8".into(),
+        occurred_at,
+        equipment_id,
+        item_name: name.into(),
+        item_kind: HotbarItemKind::Healing,
+        cost_per_use_ped: cost,
+        reload_seconds: reload,
+        healing_profile: Some(profile),
+        lifesteal_percent: None,
+    })
+}
+
+fn weapon_intent(occurred_at: f64, lifesteal_percent: Option<f64>) -> BusEvent {
+    BusEvent::HotbarIntent(HotbarIntentPayload {
+        session_id: None,
+        slot: "1".into(),
+        occurred_at,
+        equipment_id: 2,
+        item_name: "Rifle".into(),
+        item_kind: HotbarItemKind::Weapon,
+        cost_per_use_ped: 0.05,
+        reload_seconds: 0.0,
+        healing_profile: None,
+        lifesteal_percent,
+    })
 }
 
 fn updated_events(captured: &StdMutex<Vec<(Topic, Value)>>) -> Vec<Value> {
@@ -467,6 +505,25 @@ fn recovery_closes_crash_orphaned_sessions() {
         "INSERT INTO skill_gains (session_id, timestamp, skill_name, amount, ped_value) \
              VALUES ('orphan', 1100.0, 'Rifle', 1.0, 0.5)",
     );
+    rig.execute(
+        "INSERT INTO healing_activations (\
+             id, session_id, tool_name, intent_at, observed_at, chat_timestamp, cost_ped, \
+             profile_json, provenance\
+         ) VALUES (\
+             'ha1', 'orphan', 'FAP', 1600.0, 1600.0, '2026-01-01 00:10:00', 0.04, \
+             '{}', 'direct'\
+         )",
+    );
+    rig.execute(
+        "INSERT INTO healing_outputs (\
+             id, session_id, activation_id, observed_at, chat_timestamp, amount, \
+             classification, reason\
+         ) VALUES (\
+             'ho1', 'orphan', 'ha1', 1600.0, '2026-01-01 00:10:00', 50.0, \
+             'direct', 'intent_confirmed'\
+         )",
+    );
+    rig.execute("UPDATE tracking_sessions SET heal_cost = 0.04 WHERE id = 'orphan'");
 
     let _tracker = rig.tracker(Providers::default());
 
@@ -482,7 +539,14 @@ fn recovery_closes_crash_orphaned_sessions() {
             "SELECT ended_at FROM tracking_sessions WHERE id = 'orphan'",
             &[],
         ),
-        1500.0
+        1600.0
+    );
+    assert_eq!(
+        rig.scalar_f64(
+            "SELECT heal_cost FROM tracking_sessions WHERE id = 'orphan'",
+            &[],
+        ),
+        0.04
     );
     assert_eq!(
         rig.scalar_i64(
@@ -498,7 +562,7 @@ fn recovery_closes_crash_orphaned_sessions() {
         ),
         30.0
     );
-    let expected_date = naive_isoformat(epoch_to_naive(1500.0));
+    let expected_date = naive_isoformat(epoch_to_naive(1600.0));
     let date: String = rig
         .wait(rig.db.with_reader(|conn| {
             Ok(conn.query_row(
@@ -1056,6 +1120,18 @@ fn snapshot_aggregates_and_rounds_the_readout() {
             source: None,
         },
     ));
+    rig.bus.publish(&healer_intent(
+        7,
+        "FAP",
+        0.02,
+        2.5,
+        naive_to_epoch(naive("2026-01-01T00:00:00")),
+        HealingProfile {
+            direct_min: Some(10.0),
+            direct_max: Some(14.0),
+            ..HealingProfile::default()
+        },
+    ));
     rig.bus
         .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
             amount: 30.0,
@@ -1110,6 +1186,7 @@ fn snapshot_aggregates_and_rounds_the_readout() {
         amount: 12.0,
         timestamp: "2026-01-01T00:00:05".into(),
     }));
+    rig.clock.advance(2.5).unwrap();
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 12.0,
         timestamp: "2026-01-01T00:00:07.500000".into(),
@@ -1135,7 +1212,8 @@ fn snapshot_aggregates_and_rounds_the_readout() {
         .unwrap();
     }
 
-    rig.clock.advance(60.0).unwrap();
+    // The reload exercise above already advanced the session by 2.5 seconds.
+    rig.clock.advance(57.5).unwrap();
     let readout = rig.wait(tracker.snapshot()).unwrap();
     assert_eq!(readout.current_tool.as_deref(), Some("Rifle"));
     let active = readout.active.unwrap();
@@ -1291,12 +1369,12 @@ fn phased_tool_stats_split_on_cost_change() {
 }
 
 #[test]
-fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
+fn healing_cost_requires_compatible_intent_and_respects_cooldown() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
-    rig.wait(tracker.start_session()).unwrap();
+    let session = rig.wait(tracker.start_session()).unwrap();
 
-    // No heal tool equipped: the warning lands once, no cost.
+    // Chat output by itself is evidence, never a paid use.
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:01".into(),
@@ -1307,23 +1385,23 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
     }));
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
-        assert_eq!(
-            active.warnings,
-            vec!["Healing detected: no heal tool equipped via hotbar".to_string()]
-        );
         assert_eq!(active.heal_cost, Ped::ZERO);
+        assert_eq!(active.healing.unattributed_output_count, 2);
     });
 
-    rig.bus.publish(&BusEvent::ActiveHealToolChanged(
-        ActiveHealToolChangedPayload {
-            tool_name: "FAP".into(),
-            cost_per_use_ped: 0.03,
-            reload_seconds: 5.0,
-            source: None,
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        7,
+        "FAP",
+        0.03,
+        5.0,
+        now,
+        HealingProfile {
+            direct_min: Some(8.0),
+            direct_max: Some(12.0),
+            ..HealingProfile::default()
         },
     ));
-    // Counted; then inside the 5s reload window (deduped); then at
-    // the bound (counted: the comparison admits equality).
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:20".into(),
@@ -1332,6 +1410,7 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:24".into(),
     }));
+    rig.clock.advance(5.0).unwrap();
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 10.0,
         timestamp: "2026-01-01T00:00:25".into(),
@@ -1339,8 +1418,523 @@ fn heal_ticks_dedup_by_reload_and_warn_without_tool() {
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(active.heal_cost, Ped(0.06));
-        assert_eq!(active.warnings.len(), 1, "the warning fires once");
+        assert_eq!(active.healing.activation_count, 2);
     });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_activations WHERE session_id = ?",
+            &[&session.id],
+        ),
+        2
+    );
+    assert_eq!(
+        rig.scalar_f64(
+            "SELECT heal_cost FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        0.06
+    );
+}
+
+#[test]
+fn an_unprofiled_healer_press_invalidates_the_previous_activation_candidate() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        7,
+        "FAP",
+        0.03,
+        5.0,
+        now,
+        HealingProfile {
+            direct_min: Some(8.0),
+            direct_max: Some(12.0),
+            ..HealingProfile::default()
+        },
+    ));
+    rig.bus
+        .publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+            session_id: None,
+            slot: "9".into(),
+            occurred_at: now + 0.1,
+            equipment_id: 9,
+            item_name: "Unprofiled healer".into(),
+            item_kind: HotbarItemKind::Healing,
+            cost_per_use_ped: 0.05,
+            reload_seconds: 3.0,
+            healing_profile: None,
+            lifesteal_percent: None,
+        }));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped::ZERO);
+        assert_eq!(active.healing.activation_count, 0);
+        assert_eq!(active.healing.unattributed_output_count, 1);
+    });
+}
+
+#[test]
+fn stale_session_hotbar_intents_cannot_mutate_equipment_state() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let stale_session_id = format!("previous-{}", session.id);
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "Current rifle".into(),
+            source: None,
+        }));
+    rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+        ActiveHealToolChangedPayload {
+            tool_name: "Current FAP".into(),
+            cost_per_use_ped: 0.02,
+            reload_seconds: 2.5,
+            source: None,
+        },
+    ));
+
+    for (slot, equipment_id, item_name, item_kind) in [
+        ("1", 11, "Stale rifle", HotbarItemKind::Weapon),
+        ("8", 12, "Stale FAP", HotbarItemKind::Healing),
+        ("9", 13, "Stale harvester", HotbarItemKind::Harvesting),
+    ] {
+        rig.bus
+            .publish(&BusEvent::HotbarIntent(HotbarIntentPayload {
+                session_id: Some(stale_session_id.clone()),
+                slot: slot.into(),
+                occurred_at: now,
+                equipment_id,
+                item_name: item_name.into(),
+                item_kind,
+                cost_per_use_ped: 0.5,
+                reload_seconds: 3.0,
+                healing_profile: Some(HealingProfile {
+                    direct_min: Some(20.0),
+                    direct_max: Some(30.0),
+                    ..HealingProfile::default()
+                }),
+                lifesteal_percent: Some(5.0),
+            }));
+    }
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.weapons.hotbar_tool.as_deref(), Some("Current rifle"));
+        assert_eq!(active.healing.weapon_lifesteal_percent, None);
+        assert_eq!(actor.heal_tool.name.as_deref(), Some("Current FAP"));
+        assert_eq!(actor.heal_tool.cost_per_use, Ped(0.02));
+        assert!(actor.harvest_tool.is_none());
+        assert!(!actor.hand_is_harvest);
+    });
+}
+
+#[test]
+fn rapid_healer_activation_survives_the_switch_back_to_a_lifesteal_weapon() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    let profile = HealingProfile {
+        direct_min: Some(28.0),
+        direct_max: Some(32.0),
+        ..HealingProfile::default()
+    };
+
+    rig.bus.publish(&healer_intent(
+        8,
+        "Restoration chip",
+        0.04,
+        10.0,
+        now,
+        profile,
+    ));
+    rig.clock.advance(0.5).unwrap();
+    rig.bus.publish(&weapon_intent(now + 0.5, Some(2.0)));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 30.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.04));
+        assert_eq!(active.healing.activation_count, 1);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_activations WHERE session_id = ?",
+            &[&session.id],
+        ),
+        1
+    );
+}
+
+#[test]
+fn damage_correlated_lifesteal_is_persisted_as_passive_and_never_costed() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&weapon_intent(now, Some(2.0)));
+    rig.bus
+        .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+            amount: 100.0,
+            timestamp: "2026-01-01T00:00:00".into(),
+        }));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 2.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped::ZERO);
+        assert_eq!(active.healing.passive_output_count, 1);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'passive' AND activation_id IS NULL",
+            &[&session.id],
+        ),
+        1
+    );
+}
+
+#[test]
+fn compound_healing_costs_once_and_suppresses_ticks_even_with_another_healer_ready() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Restoration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::Compound,
+            direct_min: Some(28.0),
+            direct_max: Some(32.0),
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(9.0),
+            tick_max: Some(11.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 30.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.clock.advance(1.0).unwrap();
+    rig.bus.publish(&healer_intent(
+        9,
+        "FAP",
+        0.03,
+        3.0,
+        now + 1.0,
+        HealingProfile {
+            direct_min: Some(60.0),
+            direct_max: Some(100.0),
+            ..HealingProfile::default()
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 80.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.07));
+        assert_eq!(active.healing.activation_count, 2);
+        assert_eq!(active.healing.effect_output_count, 1);
+    });
+}
+
+#[test]
+fn a_fresh_healer_edge_wins_an_overlap_then_the_effect_wins_after_the_edge_ages() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Restoration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::Compound,
+            direct_min: Some(28.0),
+            direct_max: Some(32.0),
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(60.0),
+            tick_max: Some(100.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 30.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.clock.advance(1.0).unwrap();
+    rig.bus.publish(&healer_intent(
+        9,
+        "FAP",
+        0.03,
+        3.0,
+        now + 1.0,
+        HealingProfile {
+            direct_min: Some(60.0),
+            direct_max: Some(100.0),
+            ..HealingProfile::default()
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 80.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.07));
+        assert_eq!(active.healing.activation_count, 2);
+        assert_eq!(active.healing.effect_output_count, 0);
+    });
+
+    rig.clock.advance(3.0).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 80.0,
+        timestamp: "2026-01-01T00:00:04".into(),
+    }));
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.07));
+        assert_eq!(active.healing.activation_count, 2);
+        assert_eq!(active.healing.effect_output_count, 1);
+    });
+}
+
+#[test]
+fn overlapping_effects_suppress_cost_without_inventing_one_source_window() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    let profile = |direct_min, direct_max| HealingProfile {
+        mode: HealingMode::Compound,
+        direct_min: Some(direct_min),
+        direct_max: Some(direct_max),
+        effect_duration_seconds: Some(20.0),
+        tick_min: Some(9.0),
+        tick_max: Some(11.0),
+        tick_seconds: Some(2.0),
+    };
+
+    rig.bus.publish(&healer_intent(
+        8,
+        "Restoration A",
+        0.04,
+        1.0,
+        now,
+        profile(28.0, 32.0),
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 30.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.clock.advance(1.0).unwrap();
+    rig.bus.publish(&healer_intent(
+        9,
+        "Restoration B",
+        0.05,
+        1.0,
+        now + 1.0,
+        profile(38.0, 42.0),
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 40.0,
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    rig.clock.advance(2.0).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:03".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.09));
+        assert_eq!(active.healing.activation_count, 2);
+        assert_eq!(active.healing.effect_output_count, 1);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'effect' AND activation_id IS NULL \
+             AND effect_window_id IS NULL",
+            &[&session.id],
+        ),
+        1
+    );
+}
+
+#[test]
+fn delayed_hotbar_resolution_reconciles_an_earlier_uncosted_output() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.clock.advance(0.5).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 30.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Restoration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            direct_min: Some(28.0),
+            direct_max: Some(32.0),
+            ..HealingProfile::default()
+        },
+    ));
+
+    rig.probe(&tracker, |actor| {
+        assert_eq!(actor.session.active().unwrap().heal_cost, Ped(0.04));
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'direct' AND activation_id IS NOT NULL",
+            &[&session.id],
+        ),
+        1
+    );
+}
+
+#[test]
+fn pure_over_time_healing_costs_on_its_first_tick_and_not_on_later_ticks() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Regeneration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::OverTime,
+            direct_min: None,
+            direct_max: None,
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(9.0),
+            tick_max: Some(11.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.clock.advance(2.0).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:02".into(),
+    }));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.04));
+        assert_eq!(active.healing.activation_count, 1);
+        assert_eq!(active.healing.effect_output_count, 2);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_activations WHERE session_id = ?",
+            &[&session.id],
+        ),
+        1
+    );
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_effect_windows WHERE session_id = ?",
+            &[&session.id],
+        ),
+        1
+    );
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'effect' AND activation_id IS NOT NULL",
+            &[&session.id],
+        ),
+        2
+    );
+}
+
+#[test]
+fn delayed_pure_over_time_intent_reconciles_its_first_tick_as_one_activation() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let now = naive_to_epoch(naive("2026-01-01T00:00:00"));
+    rig.clock.advance(0.5).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:00".into(),
+    }));
+    rig.bus.publish(&healer_intent(
+        8,
+        "Regeneration chip",
+        0.04,
+        10.0,
+        now,
+        HealingProfile {
+            mode: HealingMode::OverTime,
+            direct_min: None,
+            direct_max: None,
+            effect_duration_seconds: Some(20.0),
+            tick_min: Some(9.0),
+            tick_max: Some(11.0),
+            tick_seconds: Some(2.0),
+        },
+    ));
+
+    rig.probe(&tracker, |actor| {
+        let active = actor.session.active().unwrap();
+        assert_eq!(active.heal_cost, Ped(0.04));
+        assert_eq!(active.healing.activation_count, 1);
+        assert_eq!(active.healing.effect_output_count, 1);
+    });
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_outputs WHERE session_id = ? \
+             AND classification = 'effect' AND activation_id IS NOT NULL",
+            &[&session.id],
+        ),
+        1
+    );
 }
 
 #[test]
@@ -1674,8 +2268,8 @@ fn trifecta_attribution_and_heal_filtering() {
         );
     });
 
-    // The trifecta heal band filters mismatched heal amounts
-    // entirely (no dedup stamp, no cost).
+    // Healing no longer bills from trifecta inference: chat outputs stay
+    // zero-cost without a hotbar activation intent.
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 50.0,
         timestamp: "2026-01-01T00:00:03".into(),
@@ -1683,14 +2277,14 @@ fn trifecta_attribution_and_heal_filtering() {
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().unwrap();
         assert_eq!(active.heal_cost, Ped::ZERO);
-        assert_eq!(active.last_heal_time, None);
+        assert_eq!(active.healing.activation_count, 0);
     });
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
         amount: 15.0,
         timestamp: "2026-01-01T00:00:04".into(),
     }));
     rig.probe(&tracker, |actor| {
-        assert_eq!(actor.session.active().unwrap().heal_cost, Ped(0.02));
+        assert_eq!(actor.session.active().unwrap().heal_cost, Ped::ZERO);
     });
 }
 

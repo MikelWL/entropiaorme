@@ -677,6 +677,50 @@ pub fn get_session_read(
 
     let skill_gains = session_skill_gains(conn, session_id)?;
 
+    let healing_activations: Vec<Value> = {
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.tool_name, a.observed_at, a.cost_ped, a.provenance, \
+                    (SELECT MAX(w.expires_at) FROM healing_effect_windows w \
+                     WHERE w.activation_id = a.id), \
+                    (SELECT COUNT(*) FROM healing_outputs o \
+                     WHERE o.activation_id = a.id) \
+             FROM healing_activations a WHERE a.session_id = ? \
+             ORDER BY a.observed_at, a.id",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "toolName": row.get::<_, String>(1)?,
+                "observedAt": row.get::<_, f64>(2)?,
+                "cost": row.get::<_, f64>(3)?,
+                "provenance": row.get::<_, String>(4)?,
+                "effectUntil": row.get::<_, Option<f64>>(5)?,
+                "outputCount": row.get::<_, i64>(6)?,
+            }))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let (healing_outputs, direct_outputs, effect_outputs, passive_outputs, unattributed_outputs) =
+        conn.query_row(
+            "SELECT COUNT(*), \
+                    COALESCE(SUM(classification = 'direct'), 0), \
+                    COALESCE(SUM(classification = 'effect'), 0), \
+                    COALESCE(SUM(classification = 'passive'), 0), \
+                    COALESCE(SUM(classification = 'unattributed'), 0) \
+             FROM healing_outputs WHERE session_id = ?",
+            rusqlite::params![session_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+    let healing_activation_count = healing_activations.len();
+
     Ok(Some(json!({
         "sessionId": session_id,
         "summary": {
@@ -710,6 +754,15 @@ pub fn get_session_read(
         "effectiveLoot": round(total_returns, 2),
         "toolStats": tool_stats,
         "skillGains": skill_gains,
+        "healing": {
+            "activations": healing_activations,
+            "activationCount": healing_activation_count,
+            "outputCount": healing_outputs,
+            "directOutputs": direct_outputs,
+            "effectOutputs": effect_outputs,
+            "passiveOutputs": passive_outputs,
+            "unattributedOutputs": unattributed_outputs,
+        },
     })))
 }
 
@@ -1460,6 +1513,20 @@ pub async fn delete_session_impl(db: &Db, session_id: &str) -> Result<(), EditEr
             )?;
             tx.execute(
                 "DELETE FROM session_summaries WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            // SQLite foreign keys are deliberately disabled for this schema,
+            // so healing evidence must participate in the explicit cascade.
+            tx.execute(
+                "DELETE FROM healing_outputs WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM healing_effect_windows WHERE session_id = ?",
+                rusqlite::params![sid],
+            )?;
+            tx.execute(
+                "DELETE FROM healing_activations WHERE session_id = ?",
                 rusqlite::params![sid],
             )?;
             tx.execute(
@@ -2279,6 +2346,39 @@ mod tests {
             seed_skill_gain(conn, "s1", "Laser Weaponry Technology", 1.0, 0.5, 1000.0)?;
             seed_skill_gain(conn, "s1", "Agility", 2.0, 1.0, 1000.0)?;
             seed_calibration(conn, "Laser Weaponry Technology", 42.5)?;
+            conn.execute_batch(
+                "INSERT INTO healing_activations (
+                    id, session_id, tool_name, intent_at, observed_at,
+                    chat_timestamp, cost_ped, profile_json, provenance
+                 ) VALUES (
+                    'ha1', 's1', 'Restoration Chip', 1000, 1000,
+                    '2026-01-01 00:00:00', 0.04, '{}', 'direct'
+                 );
+                 INSERT INTO healing_effect_windows (
+                    id, activation_id, session_id, tool_name, started_at, expires_at
+                 ) VALUES ('hw1', 'ha1', 's1', 'Restoration Chip', 1000, 1030);
+                 INSERT INTO healing_outputs (
+                    id, session_id, activation_id, observed_at, chat_timestamp,
+                    amount, classification, reason
+                 ) VALUES (
+                    'ho1', 's1', 'ha1', 1000, '2026-01-01 00:00:00',
+                    30, 'direct', 'intent_confirmed'
+                 );
+                 INSERT INTO healing_outputs (
+                    id, session_id, activation_id, effect_window_id, observed_at,
+                    chat_timestamp, amount, classification, reason
+                 ) VALUES (
+                    'ho2', 's1', 'ha1', 'hw1', 1010,
+                    '2026-01-01 00:00:10', 10, 'effect', 'effect_window'
+                 );
+                 INSERT INTO healing_outputs (
+                    id, session_id, observed_at, chat_timestamp, amount,
+                    classification, reason
+                 ) VALUES (
+                    'ho3', 's1', 1020, '2026-01-01 00:00:20', 2,
+                    'passive', 'damage_correlated'
+                 );",
+            )?;
             Ok(())
         })
         .await
@@ -2330,6 +2430,23 @@ mod tests {
                 "effectiveLoot": 30.0,
                 "toolStats": [{"weaponName": "Gun", "shotsFired": 20, "damageDealt": 200.0, "crits": 1, "costAttributed": 10.0}],
                 "skillGains": [{"skillName": "Laser Weaponry Technology", "level": 42.5, "ttValueGained": 0.5}],
+                "healing": {
+                    "activations": [{
+                        "id": "ha1",
+                        "toolName": "Restoration Chip",
+                        "observedAt": 1000.0,
+                        "cost": 0.04,
+                        "provenance": "direct",
+                        "effectUntil": 1030.0,
+                        "outputCount": 2,
+                    }],
+                    "activationCount": 1,
+                    "outputCount": 3,
+                    "directOutputs": 1,
+                    "effectOutputs": 1,
+                    "passiveOutputs": 1,
+                    "unattributedOutputs": 0,
+                },
             })
         );
     }
@@ -2440,6 +2557,15 @@ mod tests {
                 "effectiveLoot": 28.0,
                 "toolStats": [{"weaponName": "Gun", "shotsFired": 10, "damageDealt": 100.0, "crits": 0, "costAttributed": 5.0}],
                 "skillGains": [],
+                "healing": {
+                    "activations": [],
+                    "activationCount": 0,
+                    "outputCount": 0,
+                    "directOutputs": 0,
+                    "effectOutputs": 0,
+                    "passiveOutputs": 0,
+                    "unattributedOutputs": 0,
+                },
             })
         );
     }
@@ -3026,6 +3152,25 @@ mod tests {
             seed_loot(conn, "k1", "Oil", 1, 20.0, false, None)?;
             seed_notable(conn, "s1", "global_kill", "Argonaut", 50.0, 1000.0)?;
             seed_skill_gain(conn, "s1", "Laser Weaponry Technology", 1.0, 0.5, 1000.0)?;
+            conn.execute_batch(
+                "INSERT INTO healing_activations (
+                    id, session_id, tool_name, intent_at, observed_at,
+                    chat_timestamp, cost_ped, profile_json, provenance
+                 ) VALUES (
+                    'ha1', 's1', 'Restoration Chip', 1000, 1000,
+                    '2026-01-01 00:00:00', 0.01, '{}', 'direct'
+                 );
+                 INSERT INTO healing_effect_windows (
+                    id, activation_id, session_id, tool_name, started_at, expires_at
+                 ) VALUES ('hw1', 'ha1', 's1', 'Restoration Chip', 1000, 1030);
+                 INSERT INTO healing_outputs (
+                    id, session_id, activation_id, effect_window_id, observed_at,
+                    chat_timestamp, amount, classification, reason
+                 ) VALUES (
+                    'ho1', 's1', 'ha1', 'hw1', 1000,
+                    '2026-01-01 00:00:00', 30, 'direct', 'intent_confirmed'
+                 );",
+            )?;
             seed_session(conn, "active", 1000.0, None, true, "mob", 0.0, 0.0, 0.0)?;
             Ok(())
         })
@@ -3055,6 +3200,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(kill_count, 0);
+        let healing_count = db
+            .with_reader(|conn| {
+                Ok::<i64, DbError>(conn.query_row(
+                    "SELECT
+                         (SELECT COUNT(*) FROM healing_activations WHERE session_id = 's1') +
+                         (SELECT COUNT(*) FROM healing_effect_windows WHERE session_id = 's1') +
+                         (SELECT COUNT(*) FROM healing_outputs WHERE session_id = 's1')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(healing_count, 0);
     }
 
     // ── Producer helpers ────────────────────────────────────────────

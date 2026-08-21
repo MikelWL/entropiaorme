@@ -31,6 +31,16 @@ fn write_snapshot(dir: &Path) {
     )
     .unwrap();
     std::fs::write(
+        dir.join("medical_tools.json"),
+        r#"[{"id": "h1", "name": "Restoration Chip", "uses_per_minute": 60, "mindforce": {"cooldown": 3.75}, "min_heal": 25, "max_heal": 30, "economy": {"decay": 1}}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("weapon_amplifiers.json"),
+        r#"[{"id": "a1", "name": "Mayhem MF-Amplifier Delta (L)", "lifesteal_percent": 2.0, "economy": {"decay": 0.1, "ammo_burn": 0}}]"#,
+    )
+    .unwrap();
+    std::fs::write(
         dir.join("mindforce_implants.json"),
         r#"[{"id": "i1", "name": "NeoPsion 85-B Mindforce Implant (L)", "economy": {"decay": null, "absorption": 0.2, "max_tt": 188}}]"#,
     )
@@ -96,6 +106,13 @@ fn consumable(name: &str) -> EquipmentRequest {
         damage_enhancers: 0,
         implant_catalog_id: None,
         implant_markup: 100,
+        healing_mode: Default::default(),
+        heal_min: None,
+        heal_max: None,
+        effect_duration_seconds: None,
+        tick_min: None,
+        tick_max: None,
+        tick_seconds: None,
     }
 }
 
@@ -127,6 +144,13 @@ async fn search_gates_and_hits_match_the_route_behaviour() {
         .await
         .unwrap();
     assert!(hits.is_empty());
+
+    let hits = api
+        .equipment_search("restoration", SearchKind::Healer)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].reload_seconds, Some(3.75));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -183,7 +207,8 @@ async fn the_custom_consumable_cycle_matches_the_http_era_bytes() {
         serde_json::to_string(&added).unwrap(),
         "{\"id\":\"1\",\"name\":\"Nutrio Bar\",\"type\":\"consumable\",\"amplifierName\":null,\
          \"costPerUse\":0.0,\"damageMin\":null,\"damageMax\":null,\"reloadSeconds\":null,\
-         \"isLimited\":false,\"enrichmentLevel\":1}"
+         \"isLimited\":false,\"enrichmentLevel\":1,\"healingProfile\":null,\
+         \"lifestealPercent\":null}"
     );
 
     // Storage invariance: the stored props bytes are the reference
@@ -259,6 +284,39 @@ async fn a_weapon_setup_stores_and_lists_with_its_catalogue_economy() {
     assert!(detail.amplifier.is_none());
     assert!(detail.scope.is_none());
     assert!(detail.absorber.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_existing_weapon_setup_gains_descriptive_lifesteal_without_a_rewrite() {
+    let dir = tempfile::tempdir().unwrap();
+    let (api, db) = api_over(dir.path()).await;
+    db.with_writer(|conn| {
+        conn.execute(
+            "INSERT INTO equipment_library (name, item_type, catalog_id, properties_json) \
+             VALUES ('Chip + Delta', 'weapon', 'w1', ?)",
+            [r#"{"weapon_entity":{"id":"w1","name":"Opalo Rifle (L)","economy":{"decay":0.5,"ammo_burn":300}},"weapon_catalog_id":"w1","amp_entity":{"id":"a1","name":"Mayhem MF-Amplifier Delta (L)","economy":{"decay":0.1,"ammo_burn":0}},"amp_catalog_id":"a1"}"#],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let listed = api.equipment_library().await.unwrap();
+    assert_eq!(listed[0].lifesteal_percent.as_ref(), Some(&2.0));
+    let detail = api.equipment_detail(1).await.unwrap();
+    assert_eq!(detail.lifesteal_percent.as_ref(), Some(&2.0));
+
+    let stored = db
+        .with_reader(|conn| {
+            Ok::<String, eo_services::db::DbError>(conn.query_row(
+                "SELECT properties_json FROM equipment_library WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert!(!stored.contains("lifesteal_percent"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

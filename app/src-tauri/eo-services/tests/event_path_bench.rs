@@ -213,6 +213,7 @@ fn label(event: &BusEvent) -> &'static str {
         BusEvent::ActiveToolChanged(_) => "active_tool",
         BusEvent::ActiveHealToolChanged(_) => "active_heal_tool",
         BusEvent::ActiveHarvestToolChanged(_) => "active_harvest_tool",
+        BusEvent::HotbarIntent(_) => "hotbar_intent",
         BusEvent::SessionStarted(_) => "session_started",
         BusEvent::SessionStopped(_) => "session_stopped",
         BusEvent::MissionReceived(_) => "mission_received",

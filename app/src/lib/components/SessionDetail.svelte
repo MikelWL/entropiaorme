@@ -53,6 +53,10 @@
 		return 'warning';
 	}
 
+	function activationTime(epoch: number): string {
+		return new Date(epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+	}
+
 	// ── Loot breakdown (aggregate-by-item with wholesale archive) ────
 	// The canonical user-facing view is the item-name aggregate. The
 	// wholesale archive affordance operates on the aggregate row:
@@ -333,6 +337,36 @@
 			{/if}
 			{#if detail.summary.costBreakdown.harvestCost > 0}
 				<span>Harvesting: <span class="text-text tabular-nums">{formatPed(detail.summary.costBreakdown.harvestCost)}</span></span>
+			{/if}
+		</div>
+	{/if}
+
+	{#if detail.healing && detail.healing.outputCount > 0}
+		<Divider />
+		<div>
+			<div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+				<h3 class="eyebrow">Healing evidence</h3>
+				<div class="text-xs text-text-tertiary">
+					{detail.healing.activationCount} paid activation{detail.healing.activationCount === 1 ? '' : 's'} ·
+					{detail.healing.directOutputs} direct · {detail.healing.passiveOutputs} passive ·
+					{detail.healing.effectOutputs} effect ·
+					{detail.healing.unattributedOutputs} unresolved
+				</div>
+			</div>
+			{#if detail.healing.activations.length > 0}
+				<div class="divide-y divide-border/40">
+					{#each detail.healing.activations as activation (activation.id)}
+						<div class="flex items-center gap-4 py-2 text-sm">
+							<span class="w-20 shrink-0 text-xs text-text-tertiary tabular-nums">{activationTime(activation.observedAt)}</span>
+							<span class="min-w-0 flex-1 truncate text-text">{activation.toolName}</span>
+							{#if activation.effectUntil !== null}
+								<span class="text-xs text-positive">Effect window</span>
+							{/if}
+							<span class="text-xs text-text-tertiary">{activation.outputCount} output{activation.outputCount === 1 ? '' : 's'}</span>
+							<span class="tabular-nums text-text">{formatPed(activation.cost)} PED</span>
+						</div>
+					{/each}
+				</div>
 			{/if}
 		</div>
 	{/if}
