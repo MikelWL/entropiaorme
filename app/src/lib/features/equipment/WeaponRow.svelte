@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { Badge, Button, DataTable } from '$lib/components';
+	import { Badge, Button, DataTable, StatDisplay } from '$lib/components';
+	import InfoTip from '$lib/components/InfoTip.svelte';
 	import type { Equipment } from '$lib/types';
+	import { NO_DATA, formatPercent } from '$lib/utils/format';
 	import { enrichmentColor, enrichmentLabel, formatPec } from './display';
 	import type { LibraryModel } from './libraryModel.svelte';
 
@@ -40,7 +42,23 @@
 			effectiveCostPec: line.effectiveCostPec,
 		})),
 	);
+	const premiumDrag = $derived.by(() => {
+		const expected = detail?.expectedReturn;
+		if (expected?.offensiveTtRecovery == null || expected.expectedTtRate == null) return null;
+		return Math.max(0, expected.offensiveTtRecovery - expected.expectedTtRate);
+	});
 </script>
+
+{#snippet expectedReturnTip()}
+	<InfoTip label="What Expected Return includes" width="w-96">
+		<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting,
+			and other unmodelled costs are excluded because their return mechanics are not yet known.
+			This is not a whole-activity forecast.
+		</p>
+	</InfoTip>
+{/snippet}
 
 <!-- Equipment row -->
 <button
@@ -151,6 +169,40 @@
 				</div>
 			</div>
 
+			{#if detail.expectedReturn}
+				{@const expected = detail.expectedReturn}
+				<div
+					class="grid grid-cols-3 gap-5 border-y border-border/35 py-3 mb-4"
+					data-guide-anchor="expected-return-{item.id}"
+				>
+					<StatDisplay
+						label="Expected Return"
+						value={expected.expectedTtRate !== null ? formatPercent(expected.expectedTtRate) : NO_DATA}
+						valueClass={expected.expectedTtRate !== null ? 'text-text' : 'text-text-tertiary'}
+						emphasis="secondary"
+						labelSuffix={expectedReturnTip}
+					/>
+					<StatDisplay
+						label="Break-even loot MU"
+						value={expected.breakEvenLootMarkup !== null ? formatPercent(expected.breakEvenLootMarkup) : NO_DATA}
+						valueClass="text-text"
+						emphasis="secondary"
+					/>
+					<StatDisplay
+						label="Limited-item drag"
+						value={premiumDrag !== null ? `${(premiumDrag * 100).toFixed(2)} pp` : '0.00 pp'}
+						valueClass="text-text"
+						emphasis="secondary"
+					/>
+				</div>
+				<p class="-mt-2 mb-4 text-[11px] leading-relaxed text-text-tertiary">
+					Community model v1 · three-looter mean {expected.looterLevel.toFixed(1)}
+					{#if expected.incomplete}
+						· partial Efficiency coverage ({formatPercent(expected.coverage)})
+					{/if}
+				</p>
+			{/if}
+
 			<!-- Component list -->
 			<h3 class="eyebrow mb-2">
 				Components
@@ -161,6 +213,7 @@
 						{detail.weapon.name}
 					</span>
 					<span class="text-text-secondary text-xs tabular-nums">
+						{detail.weapon.efficiencyPct !== null ? `Efficiency ${detail.weapon.efficiencyPct.toFixed(1)}% · ` : 'Efficiency unknown · '}
 						Decay {formatPec(detail.weapon.decay)} · Ammo {formatPec(detail.weapon.ammoBurn)} PEC
 					</span>
 				</div>
@@ -178,6 +231,7 @@
 							{detail.amplifier.name}
 						</span>
 						<span class="text-text-secondary text-xs tabular-nums">
+							{detail.amplifier.efficiencyPct !== null ? `Efficiency ${detail.amplifier.efficiencyPct.toFixed(1)}% · ` : 'Efficiency unknown · '}
 							Decay {formatPec(detail.amplifier.decay)} · Ammo
 							{formatPec(detail.amplifier.ammoBurn)} PEC
 						</span>

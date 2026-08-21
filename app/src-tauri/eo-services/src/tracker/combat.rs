@@ -5,6 +5,7 @@
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 
 use crate::bus_events::{BusEvent, CombatPayload};
+use crate::expected_hunting::OffensiveLoadoutEvidence;
 use crate::ped::Ped;
 use crate::tracking_models::ToolStats;
 
@@ -61,10 +62,12 @@ impl TrackerActor {
         accumulator: &'a mut Accumulator,
         tool_name: &str,
         cost_per_shot: Ped,
+        expected_economics: Option<OffensiveLoadoutEvidence>,
     ) -> &'a mut ToolStats {
         if let Some(index) = accumulator.tool_stats.iter().position(|(_, stats)| {
             stats.tool_name == tool_name
                 && (stats.cost_per_shot.value() - cost_per_shot.value()).abs() < 1e-9
+                && stats.expected_economics == expected_economics
         }) {
             return &mut accumulator.tool_stats[index].1;
         }
@@ -78,9 +81,10 @@ impl TrackerActor {
         } else {
             format!("{tool_name}#{}", phase_count + 1)
         };
-        accumulator
-            .tool_stats
-            .push((key, ToolStats::new(tool_name, cost_per_shot)));
+        accumulator.tool_stats.push((
+            key,
+            ToolStats::new(tool_name, cost_per_shot, expected_economics),
+        ));
         &mut accumulator.tool_stats.last_mut().expect("just pushed").1
     }
 
@@ -139,10 +143,23 @@ impl TrackerActor {
             current_cost =
                 Self::current_cost_for_tool(providers, &mut active.weapons, tool, inferred_cost);
         }
+        let expected_economics = tool.as_ref().and_then(|tool| {
+            Self::expected_evidence_for_tool(
+                providers,
+                &mut active.weapons,
+                tool,
+                active.hunting_looters,
+            )
+        });
 
         let stats: &mut ToolStats = if let (Some(tool), true) = (&tool, current_cost.is_positive())
         {
-            Self::tool_stats_for_phase(&mut active.accumulator, tool, current_cost)
+            Self::tool_stats_for_phase(
+                &mut active.accumulator,
+                tool,
+                current_cost,
+                expected_economics,
+            )
         } else {
             let accumulator = &mut active.accumulator;
             if !accumulator
@@ -152,7 +169,7 @@ impl TrackerActor {
             {
                 accumulator
                     .tool_stats
-                    .push((tool_key.clone(), ToolStats::new(&tool_key, Ped::ZERO)));
+                    .push((tool_key.clone(), ToolStats::new(&tool_key, Ped::ZERO, None)));
             }
             let index = accumulator
                 .tool_stats
@@ -343,6 +360,12 @@ impl TrackerActor {
 
             let current_cost =
                 Self::current_cost_for_tool(providers, &mut active.weapons, &tool_name, Ped::ZERO);
+            let expected_economics = Self::expected_evidence_for_tool(
+                providers,
+                &mut active.weapons,
+                &tool_name,
+                active.hunting_looters,
+            );
 
             // Merge "Unknown" stats into the real tool on first
             // identification.
@@ -356,7 +379,12 @@ impl TrackerActor {
             };
             if let Some(unknown) = unknown {
                 let real: &mut ToolStats = if current_cost.is_positive() {
-                    Self::tool_stats_for_phase(&mut active.accumulator, &tool_name, current_cost)
+                    Self::tool_stats_for_phase(
+                        &mut active.accumulator,
+                        &tool_name,
+                        current_cost,
+                        expected_economics,
+                    )
                 } else {
                     let accumulator = &mut active.accumulator;
                     if !accumulator
@@ -364,9 +392,10 @@ impl TrackerActor {
                         .iter()
                         .any(|(key, _)| key == &tool_name)
                     {
-                        accumulator
-                            .tool_stats
-                            .push((tool_name.clone(), ToolStats::new(&tool_name, Ped::ZERO)));
+                        accumulator.tool_stats.push((
+                            tool_name.clone(),
+                            ToolStats::new(&tool_name, Ped::ZERO, None),
+                        ));
                     }
                     let index = accumulator
                         .tool_stats

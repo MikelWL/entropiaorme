@@ -1,9 +1,9 @@
 <script lang="ts">
-	import Card from '$lib/components/Card.svelte';
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
-	import type { MarketWeaponBreakEven } from '$lib/api';
+	import InfoTip from '$lib/components/InfoTip.svelte';
 	import { createBreakEvenModel } from '$lib/features/market/breakEvenModel.svelte';
+	import { NO_DATA } from '$lib/utils/format';
 
 	const model = createBreakEvenModel();
 
@@ -12,68 +12,70 @@
 	});
 
 	const columns = $derived([
-		{ key: 'name', label: 'Weapon' },
-		{ key: 'efficiencyPct', label: 'Efficiency', align: 'right' as const },
-		...model.looters.map((looter) => ({
-			key: `looter:${looter.name}`,
-			label: `${looter.name} ${looter.level.toFixed(0)}`,
-			align: 'right' as const
-		}))
+		{ key: 'name', label: 'Loadout' },
+		{ key: 'weightedEfficiencyPct', label: 'TT-weighted Efficiency', align: 'right' as const },
+		{ key: 'expectedTtReturnPct', label: 'Model TT', align: 'right' as const },
+		{ key: 'breakEvenLootMarkupPct', label: 'Break-even loot MU', align: 'right' as const },
 	]);
-
-	function cellFor(row: MarketWeaponBreakEven, key: string) {
-		return row.cells.find((cell) => `looter:${cell.looterName}` === key) ?? null;
-	}
 </script>
+
+{#snippet expectedReturnTip()}
+	<InfoTip label="What Expected Return includes" width="w-96">
+		<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting,
+			and other unmodelled costs are excluded because their return mechanics are not yet known.
+			This is not a whole-activity forecast.
+		</p>
+	</InfoTip>
+{/snippet}
 
 {#if model.error}
 	<ErrorNotice message={model.error} />
 {:else if !model.loading && model.weapons.length === 0}
-	<Card>
 		<div class="py-10 text-center space-y-2">
 			<p class="text-sm text-text-secondary">No weapons in your equipment library yet.</p>
 			<p class="text-sm text-text-tertiary">
 				Add the weapons you hunt with on the Equipment page to see their break-even markup.
 			</p>
 		</div>
-	</Card>
 {:else}
-	<Card>
-		<p class="text-sm text-text-secondary mb-4">
-			The overall loot markup each weapon needs to break even, per looter profession. Modelled
-			from weapon efficiency and looter level (roughly a one percentage point error bar); an
-			estimate to steer by, never a measured rate.
-		</p>
+	<section>
+		<div class="mb-5 max-w-3xl">
+			<div class="flex items-center gap-1.5">
+				<h2 class="text-base font-semibold text-text">Expected Return</h2>
+				{@render expectedReturnTip()}
+			</div>
+			<p class="mt-1 text-sm leading-relaxed text-text-secondary">
+				Long-run loadout economics under Community Model v1. Weapon and amplifier efficiencies
+				are weighted by their own TT streams; limited-item premium raises cost without raising loot.
+			</p>
+			{#if model.looters.length > 0}
+				<p class="mt-2 text-xs text-text-tertiary">
+					Using the three-looter mean:
+					{model.looters.map((looter) => `${looter.name.replace(' Looter', '')} ${looter.level.toFixed(1)}`).join(' · ')}
+				</p>
+			{/if}
+		</div>
 		<DataTable
 			{columns}
 			rows={model.weapons}
 			emptyMessage={model.loading ? 'Loading break-even data' : 'No weapons'}
 		>
-			{#snippet cell({ row, column }: { row: MarketWeaponBreakEven; column: { key: string } })}
+			{#snippet cell({ row, column })}
 				{#if column.key === 'name'}
-					<span class="text-text">{row.name}</span>
-				{:else if column.key === 'efficiencyPct'}
-					{#if row.efficiencyPct === null}
-						<span class="text-text-tertiary" title="Not in the bundled item catalogue">
-							unknown
-						</span>
-					{:else}
-						<span class="tabular-nums text-text-secondary">{row.efficiencyPct.toFixed(1)}%</span>
-					{/if}
-				{:else}
-					{@const c = cellFor(row, column.key)}
-					{#if c === null}
-						<span class="text-text-tertiary">-</span>
-					{:else}
-						<span
-							class="tabular-nums"
-							title={`Modelled TT return ${c.ttReturnPct.toFixed(1)}%`}
-						>
-							{c.breakEvenMarkupPct.toFixed(1)}%
-						</span>
-					{/if}
+					<div class="min-w-0">
+						<p class="truncate text-text">{row.name}</p>
+						{#if row.amplifierName}<p class="truncate text-xs text-text-tertiary">+ {row.amplifierName}</p>{/if}
+					</div>
+				{:else if column.key === 'weightedEfficiencyPct'}
+					<span class="tabular-nums text-text-secondary">{row.weightedEfficiencyPct !== null ? `${row.weightedEfficiencyPct.toFixed(1)}%` : NO_DATA}</span>
+				{:else if column.key === 'expectedTtReturnPct'}
+					<span class="tabular-nums text-text">{row.expectedTtReturnPct !== null ? `${row.expectedTtReturnPct.toFixed(1)}%` : NO_DATA}</span>
+				{:else if column.key === 'breakEvenLootMarkupPct'}
+					<span class="tabular-nums text-text">{row.breakEvenLootMarkupPct !== null ? `${row.breakEvenLootMarkupPct.toFixed(1)}%` : NO_DATA}</span>
 				{/if}
 			{/snippet}
 		</DataTable>
-	</Card>
+	</section>
 {/if}

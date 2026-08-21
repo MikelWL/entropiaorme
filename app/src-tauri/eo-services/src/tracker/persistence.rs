@@ -119,11 +119,21 @@ impl TrackerActor {
                 )?;
 
                 for (_, stats) in &kill.tool_stats {
+                    let expected_economics_json = stats
+                        .expected_economics
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()
+                        .map_err(|source| DbError::Decode {
+                            context: "kill tool expected economics encode",
+                            source,
+                        })?;
                     tx.execute(
                         "INSERT OR REPLACE INTO kill_tool_stats \
                          (kill_id, tool_name, shots_fired, damage_dealt, \
-                          critical_hits, cost_per_shot) \
-                         VALUES (?, ?, ?, ?, ?, ?)",
+                          critical_hits, cost_per_shot, expected_economics_json, \
+                          evidence_fingerprint) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         rusqlite::params![
                             kill.id,
                             stats.tool_name,
@@ -131,6 +141,8 @@ impl TrackerActor {
                             stats.damage_dealt,
                             stats.critical_hits,
                             stats.cost_per_shot.value(),
+                            expected_economics_json,
+                            expected_economics_json.as_deref().unwrap_or(""),
                         ],
                     )?;
                 }

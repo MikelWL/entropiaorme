@@ -598,7 +598,7 @@
 						<span class="text-sm font-semibold leading-none text-amber-300/90">Lifetime</span>
 					</div>
 				{/if}
-				{#each enabledPills as pref (pref.id)}
+				{#each enabledPills.filter((pref) => !getStatDef(pref.id)?.dashboardOnly) as pref (pref.id)}
 					{@const def = getStatDef(pref.id)}
 					{#if def}
 						{@const r = showingLifetime && def.renderLifetime && lifetime

@@ -570,6 +570,12 @@ pub struct TrackingSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weapon_cost: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_tt_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_return_coverage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_return_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shots_fired_total: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub critical_hits_total: Option<i64>,
@@ -1571,6 +1577,9 @@ pub(crate) async fn build_snapshot_value(
                 "damageDealtTotal": active.damage_dealt_total,
                 "weaponDamageDealt": active.weapon_damage_dealt,
                 "weaponCost": active.weapon_cost,
+                "expectedTtRate": active.expected_tt_rate,
+                "expectedReturnCoverage": active.expected_return_coverage,
+                "expectedReturnModel": active.expected_return_model.clone(),
                 "shotsFiredTotal": active.shots_fired_total,
                 "criticalHitsTotal": active.critical_hits_total,
                 "maxDamage": active.max_damage,

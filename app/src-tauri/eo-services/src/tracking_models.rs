@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::expected_hunting::OffensiveLoadoutEvidence;
 use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 use crate::ped::Ped;
 use crate::tracker::ActiveActivity;
@@ -31,16 +32,23 @@ pub struct ToolStats {
     pub critical_hits: i64,
     /// From the equipment library.
     pub cost_per_shot: Ped,
+    /// Immutable, model-neutral offensive evidence captured for this phase.
+    pub expected_economics: Option<OffensiveLoadoutEvidence>,
 }
 
 impl ToolStats {
-    pub fn new(tool_name: &str, cost_per_shot: Ped) -> Self {
+    pub fn new(
+        tool_name: &str,
+        cost_per_shot: Ped,
+        expected_economics: Option<OffensiveLoadoutEvidence>,
+    ) -> Self {
         Self {
             tool_name: tool_name.to_string(),
             shots_fired: 0,
             damage_dealt: 0.0,
             critical_hits: 0,
             cost_per_shot,
+            expected_economics,
         }
     }
 }
@@ -154,6 +162,11 @@ pub struct ActiveSessionView {
     pub damage_dealt_total: f64,
     pub weapon_damage_dealt: f64,
     pub weapon_cost: f64,
+    /// Community-model offensive-only expected TT return over captured
+    /// weapon and amplifier evidence. Null until a modelled shot exists.
+    pub expected_tt_rate: Option<f64>,
+    pub expected_return_coverage: Option<f64>,
+    pub expected_return_model: Option<String>,
     pub shots_fired_total: i64,
     pub critical_hits_total: i64,
     pub max_damage: f64,

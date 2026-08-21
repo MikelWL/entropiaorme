@@ -91,7 +91,10 @@ loot-clump identity, and bounded review evidence), and
 stock provenance and effort attribution, append-only reward corrections, and
 the quest-item daily-rollup family), and
 `0047_healing_attribution.sql` (paid healing activations, restoration-effect
-windows, and classified healing-output evidence). The
+windows, and classified healing-output evidence),
+`0048_expected_hunting_evidence.sql` (model-neutral offensive evidence on each
+kill tool phase), and `0049_expected_hunting_phase_identity.sql` (distinct
+same-name, same-cost phases when their captured loadout evidence differs). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -795,7 +798,7 @@ analytics queries can read the total directly.
 #### `kill_tool_stats`
 
 Per-tool combat statistics within a single kill. The
-`(kill_id, tool_name, cost_per_shot)` triple is unique.
+`(kill_id, tool_name, cost_per_shot, evidence_fingerprint)` tuple is unique.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -806,9 +809,11 @@ Per-tool combat statistics within a single kill. The
 | `damage_dealt` | REAL | Defaults to 0. |
 | `critical_hits` | INTEGER | Defaults to 0. |
 | `cost_per_shot` | REAL | Defaults to 0. |
+| `expected_economics_json` | TEXT | Optional model-neutral weapon/amplifier evidence captured for this offensive phase (migration `0048`): catalogue identity, raw TT per use, consumed limited-item premium, component Efficiency, the three session-start hunting-looter levels, and their selected source. Null marks legacy or unsupported evidence rather than zero Efficiency. |
+| `evidence_fingerprint` | TEXT | Not null; defaults to `''` (migration `0049`). The serialised evidence for current rows, used only as phase identity so economically distinct loadouts cannot collapse when name and cost happen to match. |
 
-A `UNIQUE(kill_id, tool_name, cost_per_shot)` constraint keeps one row per
-tool-and-cost combination per kill. A covering index
+A `UNIQUE(kill_id, tool_name, cost_per_shot, evidence_fingerprint)` constraint
+keeps one row per distinct tool, cost, and evidence combination per kill. A covering index
 `idx_kill_tool_stats_covering(kill_id, cost_per_shot, shots_fired, tool_name)`
 (migration `0002`) carries `shots_fired` and `tool_name` alongside the join key,
 so the weapon-cost aggregate resolves from the index without a per-row table
@@ -1389,4 +1394,7 @@ The bundled snapshot files are:
 
 This JSON snapshot is the read-only, in-memory source of truth for game facts.
 It is a maintained static asset that ships with the build and holds no
-user-authored data.
+user-authored data. In particular, `weapons.json` and
+`weapon_amplifiers.json` carry each catalogue entity's `economy.efficiency`;
+Equipment and expected-hunting reads resolve that field from the stored
+catalogue entity without a runtime Nexus request.

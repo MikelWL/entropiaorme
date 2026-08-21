@@ -34,6 +34,7 @@ struct ScriptedEquipment {
     profile: Option<ProfileScript>,
     trifecta: Option<TrifectaScript>,
     harvest_guardrail: Option<HarvestGuardrailTools>,
+    looters: Option<crate::expected_hunting::HuntingLooterLevels>,
 }
 
 impl EquipmentLibrary for ScriptedEquipment {
@@ -54,6 +55,15 @@ impl EquipmentLibrary for ScriptedEquipment {
 
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {
         self.harvest_guardrail.clone()
+    }
+
+    fn hunting_looter_levels(&self) -> crate::expected_hunting::HuntingLooterLevels {
+        self.looters
+            .unwrap_or(crate::expected_hunting::HuntingLooterLevels {
+                animal: 0.0,
+                mutant: 0.0,
+                robot: 0.0,
+            })
     }
 }
 
@@ -1335,19 +1345,19 @@ fn phased_tool_stats_split_on_cost_change() {
 
     rig.probe(&tracker, |actor| {
         let accumulator = &mut actor.session.active_mut().unwrap().accumulator;
-        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05), None).shots_fired += 1;
         // Within the tolerance: the same phase.
-        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05 + 1e-12)).shots_fired +=
-            1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.05 + 1e-12), None)
+            .shots_fired += 1;
         // A real cost change: a second phase keyed `Rifle#2`.
-        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.04)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.04), None).shots_fired += 1;
         // A third: `Rifle#3`; a different tool keeps its bare key.
-        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.03)).shots_fired += 1;
-        TrackerActor::tool_stats_for_phase(accumulator, "Pistol", Ped(0.02)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Rifle", Ped(0.03), None).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Pistol", Ped(0.02), None).shots_fired += 1;
         // A cost difference of exactly the tolerance opens a phase:
         // the comparison is strict (2e-9 - 1e-9 is exactly 1e-9).
-        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(1e-9)).shots_fired += 1;
-        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(2e-9)).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(1e-9), None).shots_fired += 1;
+        TrackerActor::tool_stats_for_phase(accumulator, "Laser", Ped(2e-9), None).shots_fired += 1;
 
         let keys: Vec<(String, String, i64)> = accumulator
             .tool_stats
@@ -3634,6 +3644,145 @@ fn the_unknown_entry_backfills_its_cost_once() {
 }
 
 #[test]
+fn a_kill_persists_immutable_efficiency_and_session_looter_evidence() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers {
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|_| 0.02)),
+            profile: Some(Arc::new(|name| {
+                (name == "MyGun").then(|| {
+                    json!({
+                        "weapon_catalog_id": "weapon-42",
+                        "weapon_markup": 100.0,
+                        "weapon_entity": {
+                            "name": "MyGun",
+                            "economy": {
+                                "decay": 1.0,
+                                "ammo_burn": 100.0,
+                                "efficiency": 84.5
+                            }
+                        },
+                        "amp_entity": null
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                })
+            })),
+            looters: Some(crate::expected_hunting::HuntingLooterLevels {
+                animal: 30.0,
+                mutant: 60.0,
+                robot: 90.0,
+            }),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    rig.wait(tracker.start_session()).unwrap();
+    rig.bus
+        .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+            tool_name: "MyGun".into(),
+            source: None,
+        }));
+    rig.bus
+        .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+            amount: 9.0,
+            timestamp: "2026-01-01T00:00:01".into(),
+        }));
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        source_id: None,
+        timestamp: Some("2026-01-01T00:00:02".into()),
+        items: vec![],
+        total_ped: 0.0,
+    }));
+
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert_eq!(active.expected_tt_rate, Some(0.96115));
+    assert_eq!(active.expected_return_coverage, Some(1.0));
+    assert_eq!(
+        active.expected_return_model.as_deref(),
+        Some("community_v1")
+    );
+
+    let encoded: String = rig
+        .wait(rig.db.with_reader(|conn| {
+            Ok(conn.query_row(
+                "SELECT expected_economics_json FROM kill_tool_stats",
+                [],
+                |row| row.get(0),
+            )?)
+        }))
+        .unwrap();
+    let evidence: crate::expected_hunting::OffensiveLoadoutEvidence =
+        serde_json::from_str(&encoded).unwrap();
+    assert_eq!(evidence.looters.three_looter_mean(), 60.0);
+    assert_eq!(evidence.components.len(), 1);
+    assert_eq!(
+        evidence.components[0].catalog_id.as_deref(),
+        Some("weapon-42")
+    );
+    assert_eq!(evidence.components[0].efficiency_pct, Some(84.5));
+    assert_eq!(evidence.components[0].raw_tt_per_use, 0.02);
+}
+
+#[test]
+fn an_unresolved_offensive_phase_narrows_live_expected_return_coverage() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers {
+        equipment: Arc::new(ScriptedEquipment {
+            cost: Some(Arc::new(|_| 0.02)),
+            profile: Some(Arc::new(|name| {
+                (name == "KnownGun").then(|| {
+                    json!({
+                        "weapon_catalog_id": "known",
+                        "weapon_entity": {
+                            "name": "KnownGun",
+                            "economy": {
+                                "decay": 1.0,
+                                "ammo_burn": 100.0,
+                                "efficiency": 80.0
+                            }
+                        },
+                        "amp_entity": null
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                })
+            })),
+            looters: Some(crate::expected_hunting::HuntingLooterLevels {
+                animal: 50.0,
+                mutant: 50.0,
+                robot: 50.0,
+            }),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+    rig.wait(tracker.start_session()).unwrap();
+    for (tool, timestamp) in [
+        ("KnownGun", "2026-01-01T00:00:01"),
+        ("UnresolvedGun", "2026-01-01T00:00:02"),
+    ] {
+        rig.bus
+            .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
+                tool_name: tool.into(),
+                source: None,
+            }));
+        rig.bus
+            .publish(&BusEvent::Combat(CombatPayload::DamageDealt {
+                amount: 9.0,
+                timestamp: timestamp.into(),
+            }));
+    }
+
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert_eq!(active.expected_tt_rate, Some(0.951));
+    assert_eq!(active.expected_return_coverage, Some(0.5));
+}
+
+#[test]
 fn a_costless_tool_merges_unknown_into_its_bare_entry() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
@@ -4108,11 +4257,12 @@ fn on_tool_changed_ensures_a_bucket_before_merging_the_unknown_stats() {
                         damage_dealt: 12.0,
                         critical_hits: 1,
                         cost_per_shot: Ped::ZERO,
+                        expected_economics: None,
                     },
                 ),
                 (
                     "Other".to_string(),
-                    crate::tracking_models::ToolStats::new("Other", Ped::ZERO),
+                    crate::tracking_models::ToolStats::new("Other", Ped::ZERO, None),
                 ),
             ];
         }

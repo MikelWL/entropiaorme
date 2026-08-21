@@ -44,6 +44,10 @@
 			lootRate={line.lootRate}
 			muProjectedReturns={line.muProjectedReturns}
 			muRate={line.muRate}
+			lootMarkupFactor={line.lootMarkupFactor}
+			expectedTtRate={line.expectedTtRate}
+			expectedMarketRate={line.expectedMarketRate}
+			expectedEconomics={line.expected}
 			realisedReturns={line.realisedReturns}
 			realisedRate={line.realisedRate}
 			headingControl={scopeControl}

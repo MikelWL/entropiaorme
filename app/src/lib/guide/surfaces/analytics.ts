@@ -151,7 +151,7 @@ export const analyticsSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Each row answers the same economic questions. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
+						text: 'Each row answers the same economic questions. Loot MU isolates the 100%-anchored value of the observed loot composition; Expected Return then shows the community model over captured weapon and amplifier spend, independently of session variance. Its information button discloses the offensive-only boundary. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
 					},
 					{
 						kind: 'p',

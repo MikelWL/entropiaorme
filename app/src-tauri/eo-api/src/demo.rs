@@ -550,6 +550,7 @@ impl DemoState {
                                 damage_dealt: tool.damage_dealt,
                                 critical_hits: tool.critical_hits,
                                 cost_per_shot: Ped(tool.cost_per_shot),
+                                expected_economics: None,
                             },
                         )
                     })

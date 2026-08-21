@@ -1,6 +1,7 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
+	import type { ExpectedHuntingEconomics } from '$lib/api';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 	import type { Snippet } from 'svelte';
 
@@ -11,6 +12,10 @@
 		lootRate,
 		muProjectedReturns,
 		muRate,
+		lootMarkupFactor,
+		expectedTtRate,
+		expectedMarketRate,
+		expectedEconomics,
 		realisedReturns,
 		realisedRate,
 		headingControl,
@@ -21,6 +26,10 @@
 		lootRate: number;
 		muProjectedReturns: number | null;
 		muRate: number | null;
+		lootMarkupFactor?: number | null;
+		expectedTtRate?: number | null;
+		expectedMarketRate?: number | null;
+		expectedEconomics?: ExpectedHuntingEconomics | null;
 		realisedReturns: number;
 		realisedRate: number;
 		headingControl?: Snippet;
@@ -40,6 +49,25 @@
 			What current market markup would add if this loot sold at it. Nothing here is money
 			until a sale is confirmed.
 		</p>
+	</InfoTip>
+{/snippet}
+
+{#snippet expectedReturnTip()}
+	<InfoTip label="What Expected Return includes" width="w-96">
+		<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
+		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+			Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting,
+			and other unmodelled costs are excluded because their return mechanics are not yet known.
+			This is not a whole-activity forecast.
+		</p>
+		{#if expectedEconomics}
+			<p class="mt-2 text-[11px] leading-relaxed text-text-tertiary">
+				Community model v1 · three-looter mean {expectedEconomics.looterLevel.toFixed(1)}
+				{#if expectedEconomics.incomplete}
+					· partial historical basis
+				{/if}
+			</p>
+		{/if}
 	</InfoTip>
 {/snippet}
 
@@ -97,6 +125,38 @@
 			/>
 		</div>
 	</div>
+	{#if lootMarkupFactor !== undefined || expectedTtRate !== undefined}
+		<div
+			class="mt-4 grid grid-cols-2 items-start gap-x-6 gap-y-3 border-t border-border/35 pt-3 md:grid-cols-4"
+			data-testid="hunting-expected-economics"
+		>
+			<div class="min-w-0">
+				<p class="eyebrow">Long-run planning</p>
+				<p class="mt-1 text-[11px] leading-relaxed text-text-tertiary">Community model v1</p>
+			</div>
+			<StatDisplay
+				label="Loot MU"
+				value={lootMarkupFactor != null ? formatPercent(lootMarkupFactor) : NO_DATA}
+				valueClass={lootMarkupFactor != null ? 'text-text' : 'text-text-tertiary'}
+				emphasis="secondary"
+				labelSuffix={estimateTip}
+			/>
+			<StatDisplay
+				label="Expected Return"
+				value={expectedTtRate != null ? formatPercent(expectedTtRate) : NO_DATA}
+				valueClass={expectedTtRate != null ? 'text-text' : 'text-text-tertiary'}
+				emphasis="secondary"
+				labelSuffix={expectedReturnTip}
+			/>
+			<StatDisplay
+				label="Expected + MU"
+				value={expectedMarketRate != null ? formatPercent(expectedMarketRate) : NO_DATA}
+				valueClass={expectedMarketRate != null ? 'text-text' : 'text-text-tertiary'}
+				emphasis="secondary"
+				labelSuffix={expectedReturnTip}
+			/>
+		</div>
+	{/if}
 {:else if heading}
 	<div class="grid grid-cols-[auto_auto] content-start items-end gap-x-10 gap-y-4">
 		<h2 class="text-3xl font-bold tracking-tight leading-none text-text">{heading}</h2>

@@ -41,3 +41,4 @@
   - [ADR-0025: A central market-data service on AWS serverless](adr/0025-central-market-data-service.md)
   - [ADR-0026: Canonical quest reward accounting and session-owned quest rosters](adr/0026-canonical-quest-reward-accounting.md)
   - [ADR-0027: Intent-led healing attribution with durable output evidence](adr/0027-intent-led-healing-attribution.md)
+  - [ADR-0028: Versioned expected-hunting economics over immutable evidence](adr/0028-versioned-expected-hunting-economics.md)

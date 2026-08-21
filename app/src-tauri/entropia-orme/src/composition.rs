@@ -67,6 +67,7 @@ use std::sync::{Arc, Mutex};
 
 use eo_services::bus_events::BusEvent;
 use eo_services::bus_events::HotbarItemKind;
+use eo_services::character_calc::all_profession_levels;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
@@ -79,6 +80,7 @@ use eo_services::equipment_pricing::{
 };
 use eo_services::eu_window;
 use eo_services::event_bus::{EventBus, Topic};
+use eo_services::expected_hunting::HuntingLooterLevels;
 use eo_services::game_data_store::GameDataStore;
 use eo_services::hotbar_listener::{
     HotbarListener, HotbarResolver, ResolvedHotbarItem, HOTBAR_SLOT_KEYS,
@@ -90,7 +92,9 @@ use eo_services::paths::{resolve_data_dir, DB_FILE_NAME};
 use eo_services::quests::QuestService;
 use eo_services::repair_ocr::{RepairOcrService, RepairProviders};
 use eo_services::sale_window_ocr::{SaleWindowOcrService, SaleWindowProviders};
-use eo_services::scan_completion::{complete_skill_scan, hydrate_skill_scan_state};
+use eo_services::scan_completion::{
+    complete_skill_scan, hydrate_skill_scan_state, latest_skill_levels,
+};
 use eo_services::scan_presets::ScanPresets;
 use eo_services::screen_capture::{capture_region_bgr, capture_region_png};
 use eo_services::skill_panel::{read_skill_panel, BgrImage};
@@ -1275,7 +1279,11 @@ fn compose_producers(
     let hotbar = HotbarListener::new(
         bus.clone(),
         Some(keystroke_source.clone()),
-        Some(build_hotbar_resolver(db.clone(), data_dir, game_data)),
+        Some(build_hotbar_resolver(
+            db.clone(),
+            data_dir,
+            game_data.clone(),
+        )),
     );
     // Apply the stored toggle; the source still only attaches while a session
     // is active (the listener reconciles on the session bus events).
@@ -1291,7 +1299,7 @@ fn compose_producers(
             bus.clone(),
             db.clone(),
             clock.clone(),
-            build_providers(db, config_reader, &config, runtime.clone()),
+            build_providers(db, config_reader, &config, runtime.clone(), game_data),
         ),
     )?;
 
@@ -1525,6 +1533,7 @@ struct LiveEquipmentLibrary {
     db: Db,
     reader: ConfigReader,
     runtime: tokio::runtime::Handle,
+    game_data: Option<Arc<GameDataStore>>,
 }
 
 impl EquipmentLibrary for LiveEquipmentLibrary {
@@ -1622,6 +1631,29 @@ impl EquipmentLibrary for LiveEquipmentLibrary {
         };
         (tools != HarvestGuardrailTools::default()).then_some(tools)
     }
+
+    fn hunting_looter_levels(&self) -> HuntingLooterLevels {
+        let Some(game_data) = self.game_data.as_ref() else {
+            return HuntingLooterLevels {
+                animal: 0.0,
+                mutant: 0.0,
+                robot: 0.0,
+            };
+        };
+        let db = self.db.clone();
+        let levels: Map<String, Value> = block_on_pool(&self.runtime, latest_skill_levels(&db))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, level)| (name, Value::from(level)))
+            .collect();
+        let professions = all_profession_levels(&levels, game_data.get_entities("professions"));
+        let level = |name: &str| professions.get(name).and_then(Value::as_f64).unwrap_or(0.0);
+        HuntingLooterLevels {
+            animal: level("Animal Looter"),
+            mutant: level("Mutant Looter"),
+            robot: level("Robot Looter"),
+        }
+    }
 }
 
 /// The live session-capture configuration behind the tracker's config
@@ -1674,12 +1706,14 @@ fn build_providers(
     reader: ConfigReader,
     initial_config: &AppConfig,
     runtime: tokio::runtime::Handle,
+    game_data: Option<Arc<GameDataStore>>,
 ) -> Providers {
     Providers {
         equipment: Arc::new(LiveEquipmentLibrary {
             db,
             reader: reader.clone(),
             runtime,
+            game_data,
         }),
         config: Arc::new(LiveTrackingConfig { reader }),
         player_name: initial_config.player_name.clone(),
@@ -2438,6 +2472,7 @@ mod tests {
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
+            None,
         );
 
         // The equipment seam: the parsed property object, by fragment.
@@ -2525,6 +2560,7 @@ mod tests {
             config_service.reader(),
             &config,
             tokio::runtime::Handle::current(),
+            None,
         );
 
         // Invoke the lookup AND the derived cost from a plain OS thread

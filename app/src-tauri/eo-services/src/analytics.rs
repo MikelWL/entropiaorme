@@ -423,6 +423,26 @@ pub struct HuntingOverall {
     pub loot_rate: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    pub expected: Option<ExpectedHuntingAggregate>,
+}
+
+/// Offensive-only community-model aggregate over immutable tool phases.
+/// Every value remains informational and separate from realised accounting.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedHuntingAggregate {
+    pub model_version: String,
+    pub looter_source: String,
+    pub looter_level: f64,
+    pub expected_loot_tt: f64,
+    pub modelled_raw_tt: f64,
+    pub eligible_offensive_cost: f64,
+    pub offensive_tt_recovery: f64,
+    pub expected_tt_rate: f64,
+    pub break_even_loot_markup: f64,
+    pub coverage: f64,
+    pub incomplete: bool,
+    pub missing_basis_phases: i64,
 }
 
 /// One session definition's aggregate over its hunted instances.
@@ -444,6 +464,7 @@ pub struct HuntingDefinitionRow {
     pub loot_rate: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    pub expected: Option<ExpectedHuntingAggregate>,
     pub activities: Vec<HuntingSignatureRow>,
     pub mobs: Vec<HuntingMobShareRow>,
     pub instance_rows: Vec<HuntingInstanceRow>,
@@ -511,6 +532,7 @@ pub struct HuntingSpeciesRow {
     pub pes: Option<f64>,
     pub pes_per100_ped: Option<f64>,
     pub pes_sessions: i64,
+    pub expected: Option<ExpectedHuntingAggregate>,
     pub maturities: Vec<HuntingMaturityRow>,
     /// Item composition of the species' loot, largest TT first. Enhancer
     /// shrapnel returns are enhancer accounting, not mob loot, and are
@@ -2371,6 +2393,148 @@ fn hunting_sessions(
     Ok((sessions, grain, pes_grain))
 }
 
+#[derive(Default)]
+struct ExpectedHuntingAccumulator {
+    expected_loot_tt: f64,
+    modelled_raw_tt: f64,
+    eligible_cost: f64,
+    candidate_raw_tt: f64,
+    looter_weight: f64,
+    incomplete: bool,
+    missing_basis_phases: i64,
+}
+
+impl ExpectedHuntingAccumulator {
+    fn add(&mut self, evidence: &crate::expected_hunting::OffensiveLoadoutEvidence, shots: i64) {
+        if shots <= 0 {
+            return;
+        }
+        let uses = shots as f64;
+        let candidate: f64 = evidence
+            .components
+            .iter()
+            .map(|component| component.raw_tt_per_use.max(0.0))
+            .sum::<f64>()
+            * uses;
+        let Ok(result) = crate::expected_hunting::evaluate(evidence) else {
+            self.incomplete = true;
+            return;
+        };
+        self.expected_loot_tt += result.expected_loot_tt * uses;
+        self.modelled_raw_tt += result.modelled_raw_tt * uses;
+        self.eligible_cost += result.eligible_offensive_cost * uses;
+        self.candidate_raw_tt += candidate;
+        self.looter_weight += result.looter_level * result.modelled_raw_tt * uses;
+        self.incomplete |= result.incomplete;
+    }
+
+    fn mark_missing(&mut self, shots: i64, cost_per_shot: f64) {
+        if shots > 0 && cost_per_shot > 0.0 {
+            self.candidate_raw_tt += shots as f64 * cost_per_shot;
+            self.missing_basis_phases += 1;
+            self.incomplete = true;
+        }
+    }
+
+    fn finish(self) -> Option<ExpectedHuntingAggregate> {
+        if self.modelled_raw_tt <= 0.0 || self.eligible_cost <= 0.0 {
+            return None;
+        }
+        let round = |value: f64, places| eo_wire::normalizer::round_half_even(value, places);
+        let tt_recovery = self.expected_loot_tt / self.modelled_raw_tt;
+        let tt_rate = self.expected_loot_tt / self.eligible_cost;
+        Some(ExpectedHuntingAggregate {
+            model_version: crate::expected_hunting::COMMUNITY_MODEL_V1.to_string(),
+            looter_source: "three_looter_mean".to_string(),
+            looter_level: round(self.looter_weight / self.modelled_raw_tt, 2),
+            expected_loot_tt: round(self.expected_loot_tt, 4),
+            modelled_raw_tt: round(self.modelled_raw_tt, 4),
+            eligible_offensive_cost: round(self.eligible_cost, 4),
+            offensive_tt_recovery: round(tt_recovery, 6),
+            expected_tt_rate: round(tt_rate, 6),
+            break_even_loot_markup: round(1.0 / tt_rate, 6),
+            coverage: round(
+                if self.candidate_raw_tt > 0.0 {
+                    self.modelled_raw_tt / self.candidate_raw_tt
+                } else {
+                    0.0
+                },
+                4,
+            ),
+            incomplete: self.incomplete,
+            missing_basis_phases: self.missing_basis_phases,
+        })
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn hunting_expected_aggregates(
+    conn: &rusqlite::Connection,
+    epoch_start: Option<f64>,
+    sessions: &std::collections::HashMap<String, HuntingSessionAgg>,
+) -> Result<
+    (
+        Option<ExpectedHuntingAggregate>,
+        std::collections::HashMap<Option<i64>, ExpectedHuntingAggregate>,
+        std::collections::HashMap<String, ExpectedHuntingAggregate>,
+    ),
+    DbError,
+> {
+    use std::collections::HashMap;
+
+    let mut overall = ExpectedHuntingAccumulator::default();
+    let mut definitions: HashMap<Option<i64>, ExpectedHuntingAccumulator> = HashMap::new();
+    let mut species: HashMap<String, ExpectedHuntingAccumulator> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT k.session_id, COALESCE(k.mob_species, ''), ts.shots_fired, \
+                ts.cost_per_shot, ts.expected_economics_json \
+         FROM kill_tool_stats ts \
+         JOIN kills k ON k.id = ts.kill_id \
+         JOIN tracking_sessions s ON s.id = k.session_id \
+         WHERE (?1 IS NULL OR s.started_at >= ?1)",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![epoch_start])?;
+    while let Some(row) = rows.next()? {
+        let session_id = row.get::<_, String>(0)?;
+        let Some(session) = sessions.get(&session_id) else {
+            continue;
+        };
+        let mob_species = row.get::<_, String>(1)?;
+        let shots = row.get::<_, i64>(2).unwrap_or(0);
+        let cost = row.get::<_, f64>(3).unwrap_or(0.0);
+        let encoded = row.get::<_, Option<String>>(4)?;
+        let definition = definitions.entry(session.definition_id).or_default();
+        let target = species.entry(mob_species).or_default();
+        if let Some(encoded) = encoded {
+            let evidence =
+                serde_json::from_str::<crate::expected_hunting::OffensiveLoadoutEvidence>(&encoded)
+                    .map_err(|source| DbError::Decode {
+                        context: "kill tool expected economics decode",
+                        source,
+                    })?;
+            overall.add(&evidence, shots);
+            definition.add(&evidence, shots);
+            target.add(&evidence, shots);
+        } else {
+            overall.mark_missing(shots, cost);
+            definition.mark_missing(shots, cost);
+            target.mark_missing(shots, cost);
+        }
+    }
+
+    Ok((
+        overall.finish(),
+        definitions
+            .into_iter()
+            .filter_map(|(key, value)| value.finish().map(|value| (key, value)))
+            .collect(),
+        species
+            .into_iter()
+            .filter_map(|(key, value)| value.finish().map(|value| (key, value)))
+            .collect(),
+    ))
+}
+
 #[allow(clippy::too_many_lines)]
 fn hunting_activity_read(
     conn: &rusqlite::Connection,
@@ -2379,6 +2543,8 @@ fn hunting_activity_read(
     use std::collections::{BTreeMap, HashMap};
 
     let (sessions, kill_grain, pes_grain) = hunting_sessions(conn, epoch_start)?;
+    let (overall_expected, mut definition_expected, mut species_expected) =
+        hunting_expected_aggregates(conn, epoch_start, &sessions)?;
     let round2 = |value: f64| eo_wire::normalizer::round_half_even(value, 2);
     let round4 = |value: f64| eo_wire::normalizer::round_half_even(value, 4);
     let rate = |returns: f64, cycled: f64| {
@@ -2412,6 +2578,7 @@ fn hunting_activity_read(
             loot_rate: rate(loot_tt, cycled),
             pes: round4(pes),
             pes_per100_ped: pes_per100(pes, cycled),
+            expected: overall_expected,
         }
     };
 
@@ -2576,6 +2743,7 @@ fn hunting_activity_read(
                 pes: dominated.map(|(pes, _, _)| round4(*pes)),
                 pes_per100_ped: dominated.map(|(pes, cycled, _)| pes_per100(*pes, *cycled)),
                 pes_sessions: dominated.map(|(_, _, count)| *count).unwrap_or(0),
+                expected: species_expected.remove(&species),
                 mob_species: species,
                 kills,
                 cycled: round2(cycled),
@@ -3127,6 +3295,7 @@ fn hunting_activity_read(
                 loot_rate: rate(loot_tt, cycled),
                 pes: round4(pes),
                 pes_per100_ped: pes_per100(pes, cycled),
+                expected: definition_expected.remove(&definition_id),
                 activities,
                 mobs,
                 instance_rows,
@@ -10304,6 +10473,90 @@ mod tests {
         assert_eq!(unclassified.mob_species, "");
         assert_eq!(unclassified.kills, 1);
         assert!(unclassified.pes.is_none(), "a tag row claims no skill");
+    }
+
+    #[tokio::test]
+    async fn hunting_expected_return_replays_captured_evidence_and_discloses_legacy_gaps() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
+        };
+
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+        let evidence = OffensiveLoadoutEvidence {
+            components: vec![
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Weapon,
+                    catalog_id: Some("weapon-1".into()),
+                    name: "Test Rifle".into(),
+                    efficiency_pct: Some(90.0),
+                    raw_tt_per_use: 0.03,
+                    consumed_premium_per_use: 0.0,
+                },
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Amplifier,
+                    catalog_id: Some("amp-1".into()),
+                    name: "Test Amplifier".into(),
+                    efficiency_pct: Some(60.0),
+                    raw_tt_per_use: 0.01,
+                    consumed_premium_per_use: 0.002,
+                },
+            ],
+            looters: HuntingLooterLevels {
+                animal: 30.0,
+                mutant: 60.0,
+                robot: 90.0,
+            },
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        let encoded = serde_json::to_string(&evidence).unwrap();
+        service
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO kill_tool_stats \
+                     (kill_id, tool_name, shots_fired, cost_per_shot, \
+                      expected_economics_json, evidence_fingerprint) \
+                     VALUES ('k1', 'Test Rifle', 10, 0.042, ?1, ?1)",
+                    rusqlite::params![encoded],
+                )?;
+                conn.execute(
+                    "INSERT INTO kill_tool_stats \
+                     (kill_id, tool_name, shots_fired, cost_per_shot) \
+                     VALUES ('k2', 'Legacy Rifle', 4, 0.05)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let data = service.hunting_activity("all").await.unwrap();
+        let expected = data.overall.expected.expect("captured model basis");
+        assert_eq!(expected.model_version, "community_v1");
+        assert_eq!(expected.looter_source, "three_looter_mean");
+        assert_eq!(expected.looter_level, 60.0);
+        assert_eq!(expected.expected_loot_tt, 0.3839);
+        assert_eq!(expected.modelled_raw_tt, 0.4);
+        assert_eq!(expected.eligible_offensive_cost, 0.42);
+        assert_eq!(expected.offensive_tt_recovery, 0.95975);
+        assert_eq!(expected.expected_tt_rate, 0.914048);
+        assert_eq!(expected.break_even_loot_markup, 1.094035);
+        assert_eq!(expected.coverage, 0.6667);
+        assert!(expected.incomplete);
+        assert_eq!(expected.missing_basis_phases, 1);
+
+        let aris = data.definitions[0]
+            .expected
+            .as_ref()
+            .expect("definition model basis");
+        let atrox = data.species[0]
+            .expected
+            .as_ref()
+            .expect("species model basis");
+        assert_eq!(aris, atrox);
+        assert_eq!(aris, &expected);
     }
 
     #[tokio::test]

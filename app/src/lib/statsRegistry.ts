@@ -6,6 +6,7 @@ export type StatId =
 	| 'loot_tt'
 	| 'net'
 	| 'rate'
+	| 'expected_return'
 	| 'pes'
 	| 'pes_per_100'
 	| 'latest_kill_loot'
@@ -41,6 +42,10 @@ export type StatDef = {
 	shortLabel?: string;
 	defaultEnabled: boolean;
 	defaultOverlayEnabled?: boolean;
+	/** This stat relies on adjacent disclosure too rich for the compact overlay. */
+	dashboardOnly?: boolean;
+	/** Keyboard-accessible explanation rendered beside the dashboard title. */
+	info?: string;
 	render: (status: TrackingStatus | null) => StatRender;
 	/**
 	 * Render the stat over a session family's lifetime aggregate rather
@@ -136,6 +141,17 @@ export const STAT_DEFS: Record<StatId, StatDef> = {
 		// never the mean of the per-instance rates.
 		renderLifetime: (lifetime) =>
 			overSpan(lifetime, (l) => ({ value: formatPercent(l.returnRate), color: PLAIN })),
+	},
+	expected_return: {
+		id: 'expected_return',
+		label: 'Expected Return',
+		defaultEnabled: false,
+		dashboardOnly: true,
+		info: 'Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting, and other unmodelled costs are excluded because their return mechanics are not yet known. This is not a whole-activity forecast.',
+		render: (status) =>
+			isActive(status) && status.expectedTtRate != null
+				? { value: formatPercent(status.expectedTtRate), color: PLAIN }
+				: EMPTY,
 	},
 	pes: {
 		id: 'pes',
@@ -313,6 +329,7 @@ export const ALL_STAT_IDS: StatId[] = [
 	'loot_tt',
 	'net',
 	'rate',
+	'expected_return',
 	'pes',
 	'pes_per_100',
 	'latest_kill_loot',

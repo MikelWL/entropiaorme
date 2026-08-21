@@ -68,6 +68,17 @@ describe('cycled / loot_tt / rate / pes / kills / globals / hofs', () => {
 		expect(render('rate', active())).toEqual({ value: '0.0%', color: 'text-text' });
 	});
 
+	it('expected return is a neutral dashboard-only modelled percentage', () => {
+		expect(render('expected_return', active({ expectedTtRate: 0.947 }))).toEqual({
+			value: '94.7%',
+			color: 'text-text',
+		});
+		expect(render('expected_return', active())).toEqual(EMPTY);
+		expect(STAT_DEFS.expected_return.dashboardOnly).toBe(true);
+		expect(STAT_DEFS.expected_return.defaultEnabled).toBe(false);
+		expect(STAT_DEFS.expected_return.info).toContain('Healing, armour, harvesting');
+	});
+
 	it('pes renders formatPed(pes) with fallback 0', () => {
 		expect(render('pes', active({ pes: 3.456 }))).toEqual({
 			value: '3.46',
@@ -359,8 +370,8 @@ describe('drift guard', () => {
 		expect(ALL_STAT_IDS).toEqual(Object.keys(STAT_DEFS));
 	});
 
-	it('ALL_STAT_IDS has length 20', () => {
-		expect(ALL_STAT_IDS).toHaveLength(20);
+	it('ALL_STAT_IDS has length 21', () => {
+		expect(ALL_STAT_IDS).toHaveLength(21);
 	});
 });
 

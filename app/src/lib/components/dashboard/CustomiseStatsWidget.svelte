@@ -71,7 +71,7 @@
 		<div class="flex flex-col gap-2" data-customise-surface={surface}>
 			<span class="eyebrow">{title}</span>
 			<div class="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
-				{#each prefs as pref, i (pref.id)}
+				{#each prefs.map((pref, index) => ({ pref, index })).filter(({ pref }) => surface === 'dashboard' || !STAT_DEFS[pref.id]?.dashboardOnly) as { pref, index } (pref.id)}
 					{@const def = STAT_DEFS[pref.id]}
 					<button
 						type="button"
@@ -85,7 +85,7 @@
 								? 'bg-accent-muted/30 border-accent/40 text-accent hover:bg-accent-muted/40'
 								: 'bg-transparent border-border/55 text-text-tertiary hover:text-text-secondary hover:border-border-bright/70'}"
 						aria-pressed={pref.enabled}
-						onclick={() => handlePillClick(surface, i, prefs)}
+						onclick={() => handlePillClick(surface, index, prefs)}
 					>
 						{def?.label ?? pref.id}
 					</button>

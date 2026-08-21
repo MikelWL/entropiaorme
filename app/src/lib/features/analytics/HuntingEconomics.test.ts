@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
+import type { ExpectedHuntingEconomics } from '$lib/api';
 import { createTableModel, type TableModel } from '$lib/view/tableModel.svelte';
 import HuntingPrimaryView from './HuntingPrimaryView.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
@@ -29,6 +30,21 @@ const item = {
 	recommendedPacketTt: 32.67,
 };
 
+const expectedEconomics: ExpectedHuntingEconomics = {
+	modelVersion: 'community_v1',
+	looterSource: 'three_looter_mean',
+	looterLevel: 55,
+	expectedLootTt: 94,
+	modelledRawTt: 100,
+	eligibleOffensiveCost: 100,
+	offensiveTtRecovery: 0.94,
+	expectedTtRate: 0.94,
+	breakEvenLootMarkup: 1 / 0.94,
+	coverage: 1,
+	incomplete: false,
+	missingBasisPhases: 0,
+};
+
 function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSessionSection {
 	return {
 		definitionId: 7,
@@ -37,6 +53,7 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		lootItems: [],
 		activities: [],
 		key: 'definition:7',
@@ -45,6 +62,9 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		realisedMarkup: 15,
 		muProjectedReturns: 106,
 		muRate: 1.06,
+		lootMarkupFactor: 106 / 90,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		realisedReturns: 105,
 		realisedRate: 1.05,
 		items: [item],
@@ -59,6 +79,10 @@ function overall(overrides: Partial<HuntingOverallLine> = {}): HuntingOverallLin
 		lootRate: 0.9,
 		muProjectedReturns: 190.8,
 		muRate: 1.06,
+		lootMarkupFactor: 190.8 / 162,
+		expectedTtRate: null,
+		expectedMarketRate: null,
+		expected: null,
 		realisedMarkup: 27,
 		realisedReturns: 189,
 		realisedRate: 1.05,
@@ -106,6 +130,31 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 }
 
 describe('Hunting economic comparisons', () => {
+	it('presents quiet long-run rates with the offensive-only disclosure at point of use', async () => {
+		const row = session({
+			expected: expectedEconomics,
+			expectedTtRate: 0.94,
+			expectedMarketRate: 0.94 * (106 / 90),
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [row],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingPrimaryView, { props: primaryProps(table, row) });
+
+		const strip = screen.getByTestId('hunting-expected-economics');
+		expect(within(strip).getByText('Long-run planning')).not.toBeNull();
+		expect(within(strip).getByText('94.0%')).not.toBeNull();
+		expect(within(strip).getByText('117.8%')).not.toBeNull();
+		expect(within(strip).getByText('110.7%')).not.toBeNull();
+		const disclosures = within(strip).getAllByLabelText('What Expected Return includes');
+		expect(disclosures).toHaveLength(2);
+		await fireEvent.click(disclosures[0]);
+		expect(screen.getAllByText('Offensive spend only')).toHaveLength(2);
+		expect(screen.getAllByText(/Healing, armour, harvesting/)).toHaveLength(2);
+		expect(screen.queryByText(/partial historical basis/)).toBeNull();
+	});
+
 	it('keeps the long-stock search compact and visually discloses overflow', async () => {
 		const stock = Array.from({ length: 9 }, (_, index) => ({
 			itemName: `Hunting loot ${index + 1}`,

@@ -4,12 +4,14 @@
 	import { startTracking, toggleOverlay } from '$lib/api';
 	import type { TrackingSnapshot } from '$lib/api';
 	import { Button, ErrorNotice } from '$lib/components';
+	import InfoTip from '$lib/components/InfoTip.svelte';
 	import DefinitionPicker from '$lib/features/sessions/DefinitionPicker.svelte';
 	import type { DefinitionsModel } from '$lib/features/sessions/definitionsModel.svelte';
 	import { shouldSettleInstantly } from '$lib/motion/testMotion';
 	import { useVisiblePoll } from '$lib/realtime/useVisiblePoll';
 	import { hydrate } from '$lib/stores/trackingStore.svelte';
 	import { getStatDef } from '$lib/statsRegistry';
+	import { formatPercent } from '$lib/utils/format';
 	import { setStatsScope } from '$lib/statsScope.svelte';
 	import { describeError } from '$lib/view/errorState';
 	import type { StatsGridModel } from './statsGridModel.svelte';
@@ -295,7 +297,24 @@
 				onpointerup={statsGrid.handlePointerUp}
 				onpointercancel={statsGrid.handlePointerCancel}
 			>
-				<span class="eyebrow truncate">{def?.shortLabel ?? def?.label ?? pref.id}</span>
+				<span class="flex min-w-0 items-center gap-1 eyebrow">
+					<span class="truncate">{def?.shortLabel ?? def?.label ?? pref.id}</span>
+					{#if def?.info}
+						<span role="presentation" onpointerdown={(event) => event.stopPropagation()}>
+							<InfoTip label={`About ${def.label}`} width="w-96">
+								<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
+								<p class="mt-1 text-xs normal-case leading-relaxed tracking-normal text-text-secondary">
+									{def.info}
+								</p>
+								{#if pref.id === 'expected_return' && status?.expectedReturnCoverage != null}
+									<p class="mt-2 text-[11px] normal-case leading-relaxed tracking-normal text-text-tertiary">
+										Community model v1 · {formatPercent(status.expectedReturnCoverage)} offensive basis coverage
+									</p>
+								{/if}
+							</InfoTip>
+						</span>
+					{/if}
+				</span>
 				<span class="truncate text-[17px] font-semibold tabular-nums leading-none tracking-tight
 					{r.value === '\u2014' ? 'text-text-tertiary' : r.color}">
 					{r.value}
