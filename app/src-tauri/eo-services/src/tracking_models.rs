@@ -186,10 +186,24 @@ pub struct ActiveSessionView {
     /// The standing harvest-guardrail disagreement, when the loot
     /// evidence last contradicted the hotbar-equipped tool.
     pub harvest_guardrail_mismatch: Option<HarvestGuardrailMismatchView>,
+    pub healing: HealingRuntimeView,
     /// Raw rows (event_type, mob_or_item, value_ped, timestamp): the
     /// presentation mapping lives in the HTTP layer.
     pub notable_event_rows: Vec<(String, String, f64, Option<f64>)>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HealingRuntimeView {
+    pub tool_name: Option<String>,
+    pub state: String,
+    pub cooldown_until: Option<f64>,
+    pub effect_until: Option<f64>,
+    pub activation_count: i64,
+    pub direct_output_count: i64,
+    pub effect_output_count: i64,
+    pub passive_output_count: i64,
+    pub unattributed_output_count: i64,
 }
 
 /// A harvest-guardrail disagreement as the read surfaces consume it:

@@ -61083,7 +61083,7 @@
     "id": "30ab58b78f7b",
     "name": "Genesis Power Claw Mk. 6, FEN Edition",
     "economy": {
-      "decay": 12.831,
+      "decay": 12.832,
       "ammo_burn": 0,
       "efficiency": 85.4
     },
@@ -61617,7 +61617,8 @@
       "cold": 0,
       "acid": 0,
       "electric": 0
-    }
+    },
+    "lifesteal_percent": 10
   },
   {
     "id": "f462bb37b8b0",

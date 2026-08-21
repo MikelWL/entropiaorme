@@ -57,7 +57,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 44] = [
+const SNAPSHOT_FIELDS: [&str; 45] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -101,6 +101,7 @@ const SNAPSHOT_FIELDS: [&str; 44] = [
     "harvestLoot",
     "harvestCost",
     "harvestGuardrail",
+    "healing",
     "warnings",
 ];
 
@@ -308,6 +309,30 @@ pub struct HarvestSummary {
     pub cost: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HealingActivationRow {
+    pub id: String,
+    pub tool_name: String,
+    pub observed_at: f64,
+    pub cost: f64,
+    pub provenance: String,
+    pub effect_until: Nullable<f64>,
+    pub output_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HealingSessionSummary {
+    pub activations: Vec<HealingActivationRow>,
+    pub activation_count: i64,
+    pub output_count: i64,
+    pub direct_outputs: i64,
+    pub effect_outputs: i64,
+    pub passive_outputs: i64,
+    pub unattributed_outputs: i64,
+}
+
 /// The full session detail.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -327,6 +352,7 @@ pub struct SessionDetail {
     pub effective_loot: f64,
     pub tool_stats: Vec<ToolStat>,
     pub skill_gains: Vec<SkillGain>,
+    pub healing: HealingSessionSummary,
 }
 
 /// One manual-mob autocomplete suggestion.
@@ -579,7 +605,32 @@ pub struct TrackingSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub harvest_guardrail: Option<HarvestGuardrailAlert>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub healing: Option<HealingStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<Warning>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HealingStatus {
+    pub tool_name: Nullable<String>,
+    pub state: HealingState,
+    pub cooldown_until: Nullable<f64>,
+    pub effect_until: Nullable<f64>,
+    pub activations: i64,
+    pub direct_outputs: i64,
+    pub effect_outputs: i64,
+    pub passive_outputs: i64,
+    pub unattributed_outputs: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HealingState {
+    Passive,
+    Ready,
+    Cooldown,
+    Effect,
 }
 
 /// A harvest-guardrail disagreement on the snapshot: the tool the loot
@@ -1535,6 +1586,17 @@ pub(crate) async fn build_snapshot_value(
                 "harvestSuccesses": active.harvest_successes,
                 "harvestLoot": active.harvest_loot,
                 "harvestCost": active.harvest_cost,
+                "healing": {
+                    "toolName": active.healing.tool_name.clone(),
+                    "state": active.healing.state.clone(),
+                    "cooldownUntil": active.healing.cooldown_until,
+                    "effectUntil": active.healing.effect_until,
+                    "activations": active.healing.activation_count,
+                    "directOutputs": active.healing.direct_output_count,
+                    "effectOutputs": active.healing.effect_output_count,
+                    "passiveOutputs": active.healing.passive_output_count,
+                    "unattributedOutputs": active.healing.unattributed_output_count,
+                },
                 "hotbarListenerActive": hotbar_active,
                 "weaponAttribution": weapon_attribution,
                 "repairOcrEnabled": config.repair_ocr_enabled,

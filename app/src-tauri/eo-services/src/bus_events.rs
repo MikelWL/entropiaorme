@@ -17,6 +17,7 @@ use serde::{Serialize, Serializer};
 use serde_json::Value;
 
 use crate::event_bus::Topic;
+use crate::healing_profile::HealingProfile;
 use eo_wire::domain_events::{ScanStatusChanged, TrackingSessionUpdated};
 
 /// A field that serialises to exactly one event-type literal: the
@@ -177,6 +178,33 @@ pub struct ActiveHealToolChangedPayload {
     pub source: Option<String>,
 }
 
+/// The semantic item class behind one resolved hotbar press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HotbarItemKind {
+    Weapon,
+    Healing,
+    Consumable,
+    Harvesting,
+}
+
+/// A hotbar press with its OS-observed occurrence instant and the equipment
+/// snapshot resolved for that slot. The tracker uses this as the intent
+/// boundary; the older tool-change events remain the weapon and harvesting
+/// compatibility path while those domains complete their own migration.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HotbarIntentPayload {
+    pub slot: String,
+    pub occurred_at: f64,
+    pub equipment_id: i64,
+    pub item_name: String,
+    pub item_kind: HotbarItemKind,
+    pub cost_per_use_ped: f64,
+    pub reload_seconds: f64,
+    pub healing_profile: Option<HealingProfile>,
+    pub lifesteal_percent: Option<f64>,
+}
+
 /// A tracking-session lifecycle boundary (started / stopped).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SessionLifecyclePayload {
@@ -215,6 +243,7 @@ pub enum BusEvent {
     ActiveToolChanged(ActiveToolChangedPayload),
     ActiveHealToolChanged(ActiveHealToolChangedPayload),
     ActiveHarvestToolChanged(ActiveHarvestToolChangedPayload),
+    HotbarIntent(HotbarIntentPayload),
     SessionStarted(SessionLifecyclePayload),
     SessionStopped(SessionLifecyclePayload),
     MissionReceived(MissionReceivedPayload),
@@ -238,6 +267,7 @@ impl BusEvent {
             BusEvent::ActiveToolChanged(_) => Topic::ActiveToolChanged,
             BusEvent::ActiveHealToolChanged(_) => Topic::ActiveHealToolChanged,
             BusEvent::ActiveHarvestToolChanged(_) => Topic::ActiveHarvestToolChanged,
+            BusEvent::HotbarIntent(_) => Topic::HotbarIntent,
             BusEvent::SessionStarted(_) => Topic::SessionStarted,
             BusEvent::SessionStopped(_) => Topic::SessionStopped,
             BusEvent::MissionReceived(_) => Topic::MissionReceived,

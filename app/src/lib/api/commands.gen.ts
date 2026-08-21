@@ -703,6 +703,7 @@ export interface EquipmentComponent {
  */
 export interface EquipmentDetail {
 	id: string;
+	type: EquipmentKind;
 	weapon: EquipmentComponent;
 	amplifier: EquipmentComponent | null;
 	scope: EquipmentComponent | null;
@@ -711,6 +712,8 @@ export interface EquipmentDetail {
 	implant: AbsorberComponent | null;
 	costBreakdown: CostBreakdownLine[];
 	totalCostPerUse: number;
+	healingProfile: HealingProfileDto | null;
+	lifestealPercent: number | null;
 }
 
 /**
@@ -751,6 +754,13 @@ export interface EquipmentRequest {
 	damage_enhancers?: number;
 	implant_catalog_id?: string | null;
 	implant_markup?: number;
+	healing_mode?: HealingMode;
+	heal_min?: number | null;
+	heal_max?: number | null;
+	effect_duration_seconds?: number | null;
+	tick_min?: number | null;
+	tick_max?: number | null;
+	tick_seconds?: number | null;
 }
 
 /**
@@ -766,6 +776,10 @@ export interface EquipmentSearchHit {
 	/** Decay-absorption share, percent, for absorbers/extenders and Mindforce implants; null for catalogue rows without one. */
 	absorptionPercent: number | null;
 	isLimited: boolean;
+	healMin: number | null;
+	healMax: number | null;
+	reloadSeconds: number | null;
+	lifestealPercent: number | null;
 }
 
 /**
@@ -783,6 +797,8 @@ export interface EquipmentSummary {
 	isLimited: boolean;
 	/** 1 = base item, 2 = amplified, 3 = fully accessorised. */
 	enrichmentLevel: number;
+	healingProfile: HealingProfileDto | null;
+	lifestealPercent: number | null;
 }
 
 /**
@@ -886,6 +902,52 @@ export interface HarvestTierComparison {
  * Tree Cutting's durable source-activity vocabulary.
  */
 export type HarvestYieldTier = 'short' | 'long' | 'huge' | 'unknown';
+
+export interface HealingActivationRow {
+	id: string;
+	toolName: string;
+	observedAt: number;
+	cost: number;
+	provenance: string;
+	effectUntil: number | null;
+	outputCount: number;
+}
+
+export type HealingMode = 'direct' | 'over_time' | 'compound';
+
+export interface HealingProfileDto {
+	mode: HealingMode;
+	directMin: number | null;
+	directMax: number | null;
+	effectDurationSeconds: number | null;
+	tickMin: number | null;
+	tickMax: number | null;
+	tickSeconds: number | null;
+}
+
+export interface HealingSessionSummary {
+	activations: HealingActivationRow[];
+	activationCount: number;
+	outputCount: number;
+	directOutputs: number;
+	effectOutputs: number;
+	passiveOutputs: number;
+	unattributedOutputs: number;
+}
+
+export type HealingState = 'passive' | 'ready' | 'cooldown' | 'effect';
+
+export interface HealingStatus {
+	toolName: string | null;
+	state: HealingState;
+	cooldownUntil: number | null;
+	effectUntil: number | null;
+	activations: number;
+	directOutputs: number;
+	effectOutputs: number;
+	passiveOutputs: number;
+	unattributedOutputs: number;
+}
 
 /**
  * One latency-histogram bucket: the inclusive upper bound in
@@ -2582,6 +2644,7 @@ export interface SessionDetail {
 	effectiveLoot: number;
 	toolStats: ToolStat[];
 	skillGains: SkillGain[];
+	healing: HealingSessionSummary;
 }
 
 /**
@@ -2953,6 +3016,7 @@ export interface TrackingSnapshot {
 	harvestCost?: number | null;
 	/** The standing harvest-guardrail disagreement; present only while the loot evidence contradicts the hotbar-equipped tool. */
 	harvestGuardrail?: HarvestGuardrailAlert | null;
+	healing?: HealingStatus | null;
 	warnings?: Warning[] | null;
 }
 

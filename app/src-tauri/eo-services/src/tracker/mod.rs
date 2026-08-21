@@ -24,6 +24,7 @@
 mod actor;
 mod combat;
 mod harvest;
+mod healing;
 mod intervals;
 mod loot;
 mod mob;

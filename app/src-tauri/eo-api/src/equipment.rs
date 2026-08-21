@@ -15,6 +15,11 @@ use eo_services::cost_engine::{
     cost_per_shot_from_props, get_weapon_damage_profile, heal_cost_per_use,
     heal_cost_per_use_with_implant, heal_reload_seconds, is_limited,
 };
+use eo_services::equipment_pricing::{
+    healing_profile_from_props, lifesteal_percent_from_props,
+    lifesteal_percent_from_props_with_catalog,
+};
+use eo_services::game_data_store::GameDataStore;
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -92,6 +97,41 @@ pub struct EquipmentSearchHit {
     /// Mindforce implants; null for catalogue rows without one.
     pub absorption_percent: Nullable<f64>,
     pub is_limited: bool,
+    pub heal_min: Nullable<f64>,
+    pub heal_max: Nullable<f64>,
+    pub reload_seconds: Nullable<f64>,
+    pub lifesteal_percent: Nullable<f64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HealingMode {
+    #[default]
+    Direct,
+    OverTime,
+    Compound,
+}
+
+impl HealingMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::OverTime => "over_time",
+            Self::Compound => "compound",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HealingProfileDto {
+    pub mode: HealingMode,
+    pub direct_min: Nullable<f64>,
+    pub direct_max: Nullable<f64>,
+    pub effect_duration_seconds: Nullable<f64>,
+    pub tick_min: Nullable<f64>,
+    pub tick_max: Nullable<f64>,
+    pub tick_seconds: Nullable<f64>,
 }
 
 /// A library entry in the list shape.
@@ -110,6 +150,8 @@ pub struct EquipmentSummary {
     pub is_limited: bool,
     /// 1 = base item, 2 = amplified, 3 = fully accessorised.
     pub enrichment_level: i64,
+    pub healing_profile: Nullable<HealingProfileDto>,
+    pub lifesteal_percent: Nullable<f64>,
 }
 
 /// One configured component of a stored weapon setup.
@@ -153,6 +195,8 @@ pub struct CostBreakdownLine {
 #[serde(rename_all = "camelCase")]
 pub struct EquipmentDetail {
     pub id: String,
+    #[serde(rename = "type")]
+    pub kind: EquipmentKind,
     pub weapon: EquipmentComponent,
     pub amplifier: Nullable<EquipmentComponent>,
     pub scope: Nullable<EquipmentComponent>,
@@ -163,6 +207,8 @@ pub struct EquipmentDetail {
     pub implant: Nullable<AbsorberComponent>,
     pub cost_breakdown: Vec<CostBreakdownLine>,
     pub total_cost_per_use: f64,
+    pub healing_profile: Nullable<HealingProfileDto>,
+    pub lifesteal_percent: Nullable<f64>,
 }
 
 /// An add or update request. Field names stay in the request casing the
@@ -195,6 +241,20 @@ pub struct EquipmentRequest {
     pub implant_catalog_id: Option<String>,
     #[serde(default = "default_markup")]
     pub implant_markup: i64,
+    #[serde(default)]
+    pub healing_mode: HealingMode,
+    #[serde(default)]
+    pub heal_min: Option<f64>,
+    #[serde(default)]
+    pub heal_max: Option<f64>,
+    #[serde(default)]
+    pub effect_duration_seconds: Option<f64>,
+    #[serde(default)]
+    pub tick_min: Option<f64>,
+    #[serde(default)]
+    pub tick_max: Option<f64>,
+    #[serde(default)]
+    pub tick_seconds: Option<f64>,
 }
 
 fn default_markup() -> i64 {
@@ -325,7 +385,43 @@ fn search_hit(row: &Value) -> EquipmentSearchHit {
             .map(|share| round_half_even(share * 100.0, 1))
             .into(),
         is_limited: is_limited(entity),
+        heal_min: entity.get("min_heal").and_then(Value::as_f64).into(),
+        heal_max: entity.get("max_heal").and_then(Value::as_f64).into(),
+        reload_seconds: entity
+            .get("uses_per_minute")
+            .and_then(Value::as_f64)
+            .filter(|uses| *uses > 0.0)
+            .map(|uses| round_half_even(60.0 / uses, 2))
+            .into(),
+        lifesteal_percent: entity
+            .get("lifesteal_percent")
+            .and_then(Value::as_f64)
+            .into(),
     }
+}
+
+fn healing_profile_dto(props: &Value) -> HealingProfileDto {
+    let profile = healing_profile_from_props(&props.to_string());
+    let mode = match profile.mode {
+        eo_services::healing_profile::HealingMode::Direct => HealingMode::Direct,
+        eo_services::healing_profile::HealingMode::OverTime => HealingMode::OverTime,
+        eo_services::healing_profile::HealingMode::Compound => HealingMode::Compound,
+    };
+    HealingProfileDto {
+        mode,
+        direct_min: profile.direct_min.into(),
+        direct_max: profile.direct_max.into(),
+        effect_duration_seconds: profile.effect_duration_seconds.into(),
+        tick_min: profile.tick_min.into(),
+        tick_max: profile.tick_max.into(),
+        tick_seconds: profile.tick_seconds.into(),
+    }
+}
+
+fn lifesteal_for_props(props: &Value, game_data: &GameDataStore) -> Option<f64> {
+    let raw = props.to_string();
+    lifesteal_percent_from_props_with_catalog(&raw, game_data)
+        .or_else(|| lifesteal_percent_from_props(&raw))
 }
 
 /// The typed cost lines from the cost engine's breakdown value.
@@ -342,6 +438,7 @@ fn row_to_summary(
     name: &str,
     item_type: &str,
     props: &Value,
+    game_data: &GameDataStore,
 ) -> Result<EquipmentSummary, ApiError> {
     if item_type == "weapon" {
         let weapon_e = props
@@ -376,6 +473,8 @@ fn row_to_summary(
             reload_seconds: None.into(),
             is_limited: is_limited(weapon_e),
             enrichment_level: compute_enrichment(props),
+            healing_profile: None.into(),
+            lifesteal_percent: lifesteal_for_props(props, game_data).into(),
         });
     }
 
@@ -391,6 +490,8 @@ fn row_to_summary(
             reload_seconds: None.into(),
             is_limited: false,
             enrichment_level: 1,
+            healing_profile: None.into(),
+            lifesteal_percent: None.into(),
         });
     }
 
@@ -415,6 +516,8 @@ fn row_to_summary(
             reload_seconds: None.into(),
             is_limited: is_limited(tool_e),
             enrichment_level: 1,
+            healing_profile: None.into(),
+            lifesteal_percent: None.into(),
         });
     }
 
@@ -436,6 +539,8 @@ fn row_to_summary(
         reload_seconds: Some(round_half_even(heal_reload_seconds(tool_e), 2)).into(),
         is_limited: is_limited(tool_e),
         enrichment_level: 1,
+        healing_profile: Some(healing_profile_dto(props)).into(),
+        lifesteal_percent: None.into(),
     })
 }
 
@@ -447,6 +552,7 @@ fn row_to_detail(
     item_type: &str,
     catalog_id: Option<&str>,
     props: &Value,
+    game_data: &GameDataStore,
 ) -> Result<EquipmentDetail, ApiError> {
     let item_id = id.to_string();
 
@@ -492,6 +598,7 @@ fn row_to_detail(
         };
         return Ok(EquipmentDetail {
             id: item_id,
+            kind: EquipmentKind::Weapon,
             weapon: EquipmentComponent {
                 catalog_id: weapon_catalog_id.into(),
                 name: entity_name(weapon_e)?,
@@ -513,12 +620,15 @@ fn row_to_detail(
             .into(),
             cost_breakdown: breakdown_lines(&cost_result)?,
             total_cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
+            healing_profile: None.into(),
+            lifesteal_percent: lifesteal_for_props(props, game_data).into(),
         });
     }
 
     if item_type == "consumable" {
         return Ok(EquipmentDetail {
             id: item_id,
+            kind: EquipmentKind::Consumable,
             weapon: EquipmentComponent {
                 catalog_id: catalog_id.map(str::to_string).into(),
                 name: name.to_string(),
@@ -534,6 +644,8 @@ fn row_to_detail(
             implant: None.into(),
             cost_breakdown: Vec::new(),
             total_cost_per_use: 0.0,
+            healing_profile: None.into(),
+            lifesteal_percent: None.into(),
         });
     }
 
@@ -590,6 +702,11 @@ fn row_to_detail(
     };
     Ok(EquipmentDetail {
         id: item_id,
+        kind: if item_type == "tool" {
+            EquipmentKind::Tool
+        } else {
+            EquipmentKind::Healing
+        },
         weapon: EquipmentComponent {
             catalog_id: tool_catalog_id.into(),
             name: entity_name(tool_e)?,
@@ -611,6 +728,10 @@ fn row_to_detail(
         .into(),
         cost_breakdown: breakdown,
         total_cost_per_use: cost,
+        healing_profile: (item_type == "healing")
+            .then(|| healing_profile_dto(props))
+            .into(),
+        lifesteal_percent: None.into(),
     })
 }
 
@@ -646,7 +767,13 @@ impl Api {
             .map_err(ApiError::internal("equipment library read"))?;
         let mut results = Vec::with_capacity(rows.len());
         for (id, name, item_type, raw_props) in rows {
-            results.push(summary_from_parts(id, &name, &item_type, &raw_props)?);
+            results.push(summary_from_parts(
+                id,
+                &name,
+                &item_type,
+                &raw_props,
+                &self.game_data,
+            )?);
         }
         Ok(results)
     }
@@ -680,7 +807,7 @@ impl Api {
                 "inserted equipment read-back failed",
             ));
         };
-        summary_from_parts(id, &name, &item_type, &raw_props)
+        summary_from_parts(id, &name, &item_type, &raw_props, &self.game_data)
     }
 
     /// Replace a stored entry's configuration; its class is fixed.
@@ -720,7 +847,7 @@ impl Api {
                 "updated equipment read-back failed",
             ));
         };
-        summary_from_parts(id, &name, &item_type, &raw_props)
+        summary_from_parts(id, &name, &item_type, &raw_props, &self.game_data)
     }
 
     /// Delete a stored entry; refused while a trifecta preset references
@@ -757,7 +884,14 @@ impl Api {
         };
         let props = serde_json::from_str::<Value>(&raw_props)
             .map_err(ApiError::internal("stored equipment props parse"))?;
-        row_to_detail(id, &name, &item_type, catalog_id.as_deref(), &props)
+        row_to_detail(
+            id,
+            &name,
+            &item_type,
+            catalog_id.as_deref(),
+            &props,
+            &self.game_data,
+        )
     }
 
     /// `_fetch_entity`: catalogue lookup with the not-found contract.
@@ -834,10 +968,37 @@ impl Api {
                     .ok_or_else(|| ApiError::bad_request("catalog_id required for healing"))?;
                 let tool_e = self.fetch_entity("medical_tools", catalog_id)?;
                 let name = tool_e["name"].as_str().unwrap_or_default().to_string();
+                let direct_min = req
+                    .heal_min
+                    .or_else(|| tool_e.get("min_heal").and_then(Value::as_f64));
+                let direct_max = req
+                    .heal_max
+                    .or_else(|| tool_e.get("max_heal").and_then(Value::as_f64));
+                validate_healing_profile(
+                    req.healing_mode,
+                    direct_min,
+                    direct_max,
+                    req.effect_duration_seconds,
+                    req.tick_min,
+                    req.tick_max,
+                    req.tick_seconds,
+                )?;
                 let mut props = Map::new();
                 props.insert("tool_entity".into(), tool_e);
                 props.insert("tool_catalog_id".into(), json!(catalog_id));
                 props.insert("markup".into(), json!(req.weapon_markup));
+                props.insert(
+                    "healing_profile".into(),
+                    json!({
+                        "mode": req.healing_mode.as_str(),
+                        "direct_min": direct_min,
+                        "direct_max": direct_max,
+                        "effect_duration_seconds": req.effect_duration_seconds,
+                        "tick_min": req.tick_min,
+                        "tick_max": req.tick_max,
+                        "tick_seconds": req.tick_seconds,
+                    }),
+                );
                 let implant_e = match req
                     .implant_catalog_id
                     .as_deref()
@@ -912,6 +1073,66 @@ impl Api {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_healing_profile(
+    mode: HealingMode,
+    direct_min: Option<f64>,
+    direct_max: Option<f64>,
+    effect_duration_seconds: Option<f64>,
+    tick_min: Option<f64>,
+    tick_max: Option<f64>,
+    tick_seconds: Option<f64>,
+) -> Result<(), ApiError> {
+    let values = [
+        direct_min,
+        direct_max,
+        effect_duration_seconds,
+        tick_min,
+        tick_max,
+        tick_seconds,
+    ];
+    if values
+        .into_iter()
+        .flatten()
+        .any(|value| !value.is_finite() || value < 0.0)
+    {
+        return Err(ApiError::bad_request(
+            "Healing profile values must be finite and non-negative",
+        ));
+    }
+    if direct_min
+        .zip(direct_max)
+        .is_some_and(|(min, max)| min > max)
+        || tick_min.zip(tick_max).is_some_and(|(min, max)| min > max)
+    {
+        return Err(ApiError::bad_request(
+            "Healing profile minimum cannot exceed its maximum",
+        ));
+    }
+    if matches!(mode, HealingMode::Direct | HealingMode::Compound)
+        && (direct_min.is_none() || direct_max.is_none())
+    {
+        return Err(ApiError::bad_request(
+            "Direct and compound healing require a direct output interval",
+        ));
+    }
+    if matches!(mode, HealingMode::OverTime | HealingMode::Compound)
+        && (effect_duration_seconds.is_none_or(|value| value <= 0.0)
+            || tick_min.is_none()
+            || tick_max.is_none())
+    {
+        return Err(ApiError::bad_request(
+            "Over-time and compound healing require an effect duration and tick interval",
+        ));
+    }
+    if tick_seconds.is_some_and(|value| value <= 0.0) {
+        return Err(ApiError::bad_request(
+            "Healing tick cadence must be greater than zero",
+        ));
+    }
+    Ok(())
+}
+
 /// The healing per-use cost over a row's stored props: the tool at its
 /// markup plus any configured implant at its own.
 fn heal_cost_with_stored_implant(props: &Value, tool_e: &Value, markup: f64) -> f64 {
@@ -930,8 +1151,9 @@ fn summary_from_parts(
     name: &str,
     item_type: &str,
     raw_props: &str,
+    game_data: &GameDataStore,
 ) -> Result<EquipmentSummary, ApiError> {
     let props = serde_json::from_str::<Value>(raw_props)
         .map_err(ApiError::internal("stored equipment props parse"))?;
-    row_to_summary(id, name, item_type, &props)
+    row_to_summary(id, name, item_type, &props, game_data)
 }

@@ -22,7 +22,7 @@ import {
 	equipmentDemoLibrary,
 	equipmentDemoTrifecta,
 } from '$lib/guide/fixtures/equipment';
-import type { Equipment, EquipmentDetail, HealingTool } from '$lib/types';
+import type { Equipment, EquipmentDetail, HealingMode, HealingTool } from '$lib/types';
 import type { HarvestGuardrailSettings, Hotbar, TrifectaSettings } from '$lib/types/settings';
 import { describeError } from '$lib/view/errorState';
 import { createTypeahead } from '$lib/view/typeahead.svelte';
@@ -69,6 +69,14 @@ export function createLibraryModel() {
 	let absorberMarkupPercent = $state(100);
 	let damageEnhancers = $state(0);
 	let implantMarkupPercent = $state(100);
+	let healingMode = $state<HealingMode>('direct');
+	let healMin = $state<number | null>(null);
+	let healMax = $state<number | null>(null);
+	let effectDurationSeconds = $state<number | null>(null);
+	let tickMin = $state<number | null>(null);
+	let tickMax = $state<number | null>(null);
+	let tickSeconds = $state<number | null>(null);
+	let seededHealerId = $state<string | null>(null);
 
 	// ── Catalogue pickers ──
 	const label = (item: EquipmentSearchResult) => item.name;
@@ -119,6 +127,19 @@ export function createLibraryModel() {
 		toolPicker,
 	];
 
+	$effect(() => {
+		const selected = healerPicker.selected;
+		if (!selected?.catalogId || selected.catalogId === seededHealerId || editingEquipmentId) return;
+		seededHealerId = selected.catalogId;
+		healingMode = 'direct';
+		healMin = selected.healMin;
+		healMax = selected.healMax;
+		effectDurationSeconds = null;
+		tickMin = null;
+		tickMax = null;
+		tickSeconds = null;
+	});
+
 	// ── Computed ──
 	const sortedEquipment = $derived([...equipmentList].sort((a, b) => a.name.localeCompare(b.name)));
 
@@ -149,6 +170,8 @@ export function createLibraryModel() {
 				name: e.name,
 				costPerHeal: e.costPerUse,
 				isLimited: e.isLimited,
+				reloadSeconds: e.reloadSeconds,
+				profile: e.healingProfile,
 			}))
 			.sort((a, b) => a.name.localeCompare(b.name));
 		consumables = library
@@ -207,6 +230,14 @@ export function createLibraryModel() {
 		absorberMarkupPercent = 100;
 		damageEnhancers = 0;
 		implantMarkupPercent = 100;
+		healingMode = 'direct';
+		healMin = null;
+		healMax = null;
+		effectDurationSeconds = null;
+		tickMin = null;
+		tickMax = null;
+		tickSeconds = null;
+		seededHealerId = null;
 		showAddModal = true;
 	}
 
@@ -222,8 +253,8 @@ export function createLibraryModel() {
 		}
 		detailCache[id] = detail;
 		editingEquipmentId = id;
-		addType = 'weapon';
-		weaponPicker.select({
+		addType = detail.type;
+		const primary = {
 			catalogId: detail.weapon.catalogId,
 			name: detail.weapon.name,
 			decay: detail.weapon.decay,
@@ -232,7 +263,13 @@ export function createLibraryModel() {
 			isLimited: detail.weapon.isLimited,
 			absorptionPercent: null,
 			damageEnhancers: detail.weapon.damageEnhancers,
-		});
+			healMin: detail.healingProfile?.directMin ?? null,
+			healMax: detail.healingProfile?.directMax ?? null,
+			reloadSeconds: null,
+			lifestealPercent: detail.lifestealPercent,
+		};
+		if (detail.type === 'healing') healerPicker.select(primary);
+		else weaponPicker.select(primary);
 		if (detail.amplifier) {
 			selectCompanion(ampPicker, detail.amplifier);
 		} else {
@@ -248,6 +285,10 @@ export function createLibraryModel() {
 				isLimited: detail.scope.isLimited,
 				absorptionPercent: null,
 				damageEnhancers: detail.scope.damageEnhancers,
+				healMin: null,
+				healMax: null,
+				reloadSeconds: null,
+				lifestealPercent: null,
 			});
 		} else {
 			scopePicker.clear();
@@ -262,13 +303,21 @@ export function createLibraryModel() {
 		} else {
 			implantPicker.clear();
 		}
-		healerPicker.clear();
+		if (detail.type !== 'healing') healerPicker.clear();
 		markupPercent = detail.weapon.markupPercent;
 		ampMarkupPercent = detail.amplifier?.markupPercent ?? 100;
 		scopeMarkupPercent = detail.scope?.markupPercent ?? 100;
 		absorberMarkupPercent = detail.absorber?.markupPercent ?? 100;
 		implantMarkupPercent = detail.implant?.markupPercent ?? 100;
 		damageEnhancers = detail.weapon.damageEnhancers;
+		healingMode = detail.healingProfile?.mode ?? 'direct';
+		healMin = detail.healingProfile?.directMin ?? null;
+		healMax = detail.healingProfile?.directMax ?? null;
+		effectDurationSeconds = detail.healingProfile?.effectDurationSeconds ?? null;
+		tickMin = detail.healingProfile?.tickMin ?? null;
+		tickMax = detail.healingProfile?.tickMax ?? null;
+		tickSeconds = detail.healingProfile?.tickSeconds ?? null;
+		seededHealerId = detail.type === 'healing' ? detail.weapon.catalogId : null;
 		showAddModal = true;
 	}
 
@@ -295,6 +344,10 @@ export function createLibraryModel() {
 			isLimited: component.isLimited,
 			absorptionPercent: component.absorptionPercent ?? null,
 			damageEnhancers: 0,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 	}
 
@@ -331,6 +384,10 @@ export function createLibraryModel() {
 			ammoBurn: 0,
 			absorptionPercent: null,
 			isLimited: false,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 	}
 
@@ -383,14 +440,25 @@ export function createLibraryModel() {
 			} else if (addType === 'healing') {
 				const healer = healerPicker.selected;
 				if (!healer?.catalogId) return;
-				const item = await addToLibrary({
+				const payload = {
 					type: 'healing',
 					catalog_id: healer.catalogId,
 					weapon_markup: healer.isLimited ? markupPercent : 100,
 					implant_catalog_id: implantPicker.selected?.catalogId ?? null,
 					implant_markup: implantPicker.selected?.isLimited ? implantMarkupPercent : 100,
-				});
+					healing_mode: healingMode,
+					heal_min: healMin ?? healer.healMin,
+					heal_max: healMax ?? healer.healMax,
+					effect_duration_seconds: effectDurationSeconds,
+					tick_min: tickMin,
+					tick_max: tickMax,
+					tick_seconds: tickSeconds,
+				} as const;
+				const item = editingEquipmentId
+					? await updateLibrary(editingEquipmentId, payload)
+					: await addToLibrary(payload);
 				replaceEquipment(item);
+				detailCache[item.id] = await getEquipmentDetail(item.id);
 			} else if (addType === 'tool') {
 				const tool = toolPicker.selected;
 				if (!tool?.catalogId) return;
@@ -556,6 +624,48 @@ export function createLibraryModel() {
 		},
 		set implantMarkupPercent(value: number) {
 			implantMarkupPercent = value;
+		},
+		get healingMode() {
+			return healingMode;
+		},
+		set healingMode(value: HealingMode) {
+			healingMode = value;
+		},
+		get healMin() {
+			return healMin;
+		},
+		set healMin(value: number | null) {
+			healMin = value;
+		},
+		get healMax() {
+			return healMax;
+		},
+		set healMax(value: number | null) {
+			healMax = value;
+		},
+		get effectDurationSeconds() {
+			return effectDurationSeconds;
+		},
+		set effectDurationSeconds(value: number | null) {
+			effectDurationSeconds = value;
+		},
+		get tickMin() {
+			return tickMin;
+		},
+		set tickMin(value: number | null) {
+			tickMin = value;
+		},
+		get tickMax() {
+			return tickMax;
+		},
+		set tickMax(value: number | null) {
+			tickMax = value;
+		},
+		get tickSeconds() {
+			return tickSeconds;
+		},
+		set tickSeconds(value: number | null) {
+			tickSeconds = value;
 		},
 
 		// ── Pickers ──

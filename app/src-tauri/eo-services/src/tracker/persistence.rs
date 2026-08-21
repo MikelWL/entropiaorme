@@ -36,8 +36,13 @@ impl TrackerActor {
                     .db
                     .with_reader(move |conn| {
                         Ok(conn.query_row(
-                            "SELECT MAX(timestamp) FROM kills WHERE session_id = ?",
-                            rusqlite::params![sid_read],
+                            "SELECT MAX(timestamp) FROM (\
+                                 SELECT timestamp FROM kills WHERE session_id = ? \
+                                 UNION ALL \
+                                 SELECT observed_at AS timestamp FROM healing_outputs \
+                                 WHERE session_id = ?\
+                             )",
+                            rusqlite::params![sid_read, sid_read],
                             |row| row.get::<_, Option<f64>>(0),
                         )?)
                     })

@@ -1,6 +1,6 @@
 //! Combat-stream handlers: shot recording with tool attribution and
-//! cost phases, the per-kill accumulator, heal-tick dedup, hotbar
-//! tool/heal-tool changes, and enhancer breaks.
+//! cost phases, the per-kill accumulator, hotbar tool changes, and
+//! enhancer breaks.
 
 use eo_wire::domain_events::{TrackingReason, TrackingStatus};
 
@@ -11,7 +11,7 @@ use crate::tracking_models::ToolStats;
 use super::actor::TrackerActor;
 use super::providers::Providers;
 use super::session::ActiveSession;
-use super::time::{instant_to_epoch, parse_timestamp_instant, python_total_seconds, resolve_local};
+use super::time::{instant_to_epoch, resolve_local};
 use super::weapons::break_matches_active_weapon;
 use super::HealTool;
 
@@ -191,10 +191,14 @@ impl TrackerActor {
         let BusEvent::Combat(payload) = event else {
             return;
         };
+        if let CombatPayload::SelfHeal { amount, timestamp } = payload {
+            let _ = self.on_self_heal(*amount, timestamp).await;
+            return;
+        }
+        let observed_at = instant_to_epoch(resolve_local(self.clock.now()));
         let Self {
             db,
             session,
-            heal_tool,
             providers,
             ..
         } = self;
@@ -212,10 +216,12 @@ impl TrackerActor {
         match payload {
             CombatPayload::DamageDealt { amount, .. } => {
                 Self::record_offensive_shot(providers, active, *amount, false, true);
+                active.healing.note_damage(observed_at, *amount);
                 mutated = true;
             }
             CombatPayload::CriticalHit { amount, .. } => {
                 Self::record_offensive_shot(providers, active, *amount, true, true);
+                active.healing.note_damage(observed_at, *amount);
                 mutated = true;
             }
             CombatPayload::TargetDodge { .. }
@@ -238,37 +244,7 @@ impl TrackerActor {
                 });
                 mutated = true;
             }
-            CombatPayload::SelfHeal { amount, timestamp } => {
-                // Deduplicate: tool activations produce multiple heal
-                // ticks in chat.log. Use the tool's reload time as the
-                // dedup window.
-                if let Some(timestamp) = parse_timestamp_instant(timestamp) {
-                    let is_new_heal_activation = match active.last_heal_time {
-                        None => true,
-                        Some(last) => {
-                            python_total_seconds(timestamp - last) >= heal_tool.reload_seconds
-                        }
-                    };
-                    if is_new_heal_activation {
-                        if providers.config.weapon_attribution_trifecta()
-                            && !heal_amount_matches_trifecta_tool(heal_tool, *amount)
-                        {
-                            return;
-                        }
-                        if heal_tool.name.is_none() && !active.heal_warning_emitted {
-                            active.warnings.push(
-                                "Healing detected: no heal tool equipped via hotbar".to_string(),
-                            );
-                            active.heal_warning_emitted = true;
-                        }
-                        if heal_tool.cost_per_use.is_positive() {
-                            active.heal_cost += heal_tool.cost_per_use;
-                        }
-                        active.last_heal_time = Some(timestamp);
-                        mutated = true;
-                    }
-                }
-            }
+            CombatPayload::SelfHeal { .. } => unreachable!("handled before the state borrow"),
             // The player-defence kinds are parsed and recorded on the
             // stream but do not move the session model, as before.
             CombatPayload::PlayerDodge { .. }
@@ -521,14 +497,5 @@ impl TrackerActor {
             .get_mut(&key)
             .expect("checked above")
             .apply_break(remaining);
-    }
-}
-
-/// Trifecta direct-heal attribution uses the configured heal
-/// interval.
-fn heal_amount_matches_trifecta_tool(heal_tool: &HealTool, amount: f64) -> bool {
-    match (heal_tool.amount_min, heal_tool.amount_max) {
-        (Some(min), Some(max)) => min <= amount && amount <= max,
-        _ => true,
     }
 }

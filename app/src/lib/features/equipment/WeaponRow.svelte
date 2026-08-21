@@ -69,6 +69,9 @@
 					+ {item.amplifierName}
 				</p>
 			{/if}
+			{#if item.lifestealPercent}
+				<p class="text-xs text-positive mt-0.5">{item.lifestealPercent}% lifesteal</p>
+			{/if}
 		</div>
 
 		<!-- Cost -->

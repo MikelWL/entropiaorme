@@ -66,6 +66,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eo_services::bus_events::BusEvent;
+use eo_services::bus_events::HotbarItemKind;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
@@ -73,12 +74,15 @@ use eo_services::config_service::{
 };
 use eo_services::db::{AdoptError, Db};
 use eo_services::equipment_pricing::{
-    cost_per_shot_ped, heal_cost_from_props, hotbar_equipment_row_sync, weapon_cost_by_name,
+    cost_per_shot_ped, heal_cost_from_props, healing_profile_from_props, hotbar_equipment_row_sync,
+    lifesteal_percent_from_props, lifesteal_percent_from_props_with_catalog, weapon_cost_by_name,
 };
 use eo_services::eu_window;
 use eo_services::event_bus::{EventBus, Topic};
 use eo_services::game_data_store::GameDataStore;
-use eo_services::hotbar_listener::{HotbarListener, HotbarResolver, HOTBAR_SLOT_KEYS};
+use eo_services::hotbar_listener::{
+    HotbarListener, HotbarResolver, ResolvedHotbarItem, HOTBAR_SLOT_KEYS,
+};
 use eo_services::keystroke_source::{HookKeystrokeSource, KeystrokeSource, SharedKeystrokeSource};
 use eo_services::ocr_engine::load_bgr_png;
 pub use eo_services::ocr_engine::OcrEngine;
@@ -709,6 +713,7 @@ async fn compose_with(
         &data_dir,
         None,
         keystroke_source,
+        Some(game_data.clone()),
     ) {
         Ok(producers) => producers,
         Err(err) => {
@@ -1208,6 +1213,7 @@ fn compose_producers(
     data_dir: &std::path::Path,
     chatlog_override: Option<PathBuf>,
     keystroke_source: Arc<dyn KeystrokeSource>,
+    game_data: Option<Arc<GameDataStore>>,
 ) -> Result<ProducerState, ComposeError> {
     // The producers run on the substrate's tokio runtime; the trackers
     // bridge their database work onto this handle from their own
@@ -1269,7 +1275,7 @@ fn compose_producers(
     let hotbar = HotbarListener::new(
         bus.clone(),
         Some(keystroke_source.clone()),
-        Some(build_hotbar_resolver(db.clone(), data_dir)),
+        Some(build_hotbar_resolver(db.clone(), data_dir, game_data)),
     );
     // Apply the stored toggle; the source still only attaches while a session
     // is active (the listener reconciles on the session bus events).
@@ -1388,12 +1394,17 @@ fn compose_producers(
 /// entity, a consumable's zero-cost one-off, or a weapon's per-shot cost
 /// looked up by name fragment exactly as the cost provider does). An unbound
 /// slot, an absent row, or a read failure yields None (no tool change).
-fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
+fn build_hotbar_resolver(
+    db: Db,
+    data_dir: &std::path::Path,
+    game_data: Option<Arc<GameDataStore>>,
+) -> HotbarResolver {
     let data_dir = data_dir.to_path_buf();
     Arc::new(move |slot: &str| {
         let config = load_config_readonly(&data_dir).ok()?;
         let equip_id = config.hotbar.get(slot).and_then(Value::as_i64)?;
         let db = db.clone();
+        let game_data = game_data.clone();
         // The hotbar listener runs on the input listener's plain OS key
         // thread (no async runtime), so the slot lookup reads through the
         // synchronous reader core rather than bridging an async query onto
@@ -1408,19 +1419,59 @@ fn build_hotbar_resolver(db: Db, data_dir: &std::path::Path) -> HotbarResolver {
             let outcome = match item_type.as_str() {
                 "healing" => {
                     let (cost_ped, reload_seconds) = heal_cost_from_props(&properties_json);
-                    (name, cost_ped, "healing".to_string(), reload_seconds)
+                    ResolvedHotbarItem {
+                        equipment_id: equip_id,
+                        name,
+                        kind: HotbarItemKind::Healing,
+                        cost_per_use_ped: cost_ped,
+                        reload_seconds,
+                        healing_profile: Some(healing_profile_from_props(&properties_json)),
+                        lifesteal_percent: None,
+                    }
                 }
-                "consumable" => (name, 0.0, "consumable".to_string(), 0.0),
+                "consumable" => ResolvedHotbarItem {
+                    equipment_id: equip_id,
+                    name,
+                    kind: HotbarItemKind::Consumable,
+                    cost_per_use_ped: 0.0,
+                    reload_seconds: 0.0,
+                    healing_profile: None,
+                    lifesteal_percent: None,
+                },
                 // A harvesting tool stores the same single-entity props
                 // shape as a healing tool (tool_entity + markup), so the
                 // heal per-use recipe prices it; no reload semantics.
                 "tool" => {
                     let (cost_ped, _) = heal_cost_from_props(&properties_json);
-                    (name, cost_ped, "tool".to_string(), 0.0)
+                    ResolvedHotbarItem {
+                        equipment_id: equip_id,
+                        name,
+                        kind: HotbarItemKind::Harvesting,
+                        cost_per_use_ped: cost_ped,
+                        reload_seconds: 0.0,
+                        healing_profile: None,
+                        lifesteal_percent: None,
+                    }
                 }
                 _ => {
                     let cost = weapon_cost_by_name(conn, &name);
-                    (name, cost, "weapon".to_string(), 0.0)
+                    ResolvedHotbarItem {
+                        equipment_id: equip_id,
+                        name,
+                        kind: HotbarItemKind::Weapon,
+                        cost_per_use_ped: cost,
+                        reload_seconds: 0.0,
+                        healing_profile: None,
+                        lifesteal_percent: game_data
+                            .as_deref()
+                            .and_then(|catalogue| {
+                                lifesteal_percent_from_props_with_catalog(
+                                    &properties_json,
+                                    catalogue,
+                                )
+                            })
+                            .or_else(|| lifesteal_percent_from_props(&properties_json)),
+                    }
                 }
             };
             Ok(Some(outcome))
@@ -2119,6 +2170,7 @@ mod tests {
             data_dir,
             Some(chatlog),
             Arc::new(MockKeystrokeSource::new()),
+            None,
         )
         .expect("producer spine composes")
     }

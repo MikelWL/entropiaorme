@@ -47,6 +47,7 @@ The variants of the `Topic` enum in `app/src-tauri/eo-services/src/event_bus.rs`
 | `SkillGain` | `skill_gain` | A skill-gain line parsed from chat.log. |
 | `EnhancerBreak` | `enhancer_break` | An enhancer-break line parsed from chat.log. |
 | `Global` | `global` | A global / hall-of-fame broadcast line. |
+| `HotbarIntent` | `hotbar_intent` | A resolved hotbar press with its operating-system occurrence time, equipment identity, kind, cost, reload, healing profile, and optional lifesteal metadata. |
 | `ActiveToolChanged` | `active_tool_changed` | The active hotbar tool changed. |
 | `ActiveHealToolChanged` | `active_heal_tool_changed` | The active heal tool changed. |
 | `ActiveHarvestToolChanged` | `active_harvest_tool_changed` | The active harvesting tool changed (a hotbar "tool" equip), carrying its per-use cost. |
@@ -56,6 +57,28 @@ The variants of the `Topic` enum in `app/src-tauri/eo-services/src/event_bus.rs`
 | `TickFlushed` | `tick_flushed` | The settling boundary: a parse tick has closed and every per-event subscriber write for that tick has completed. |
 
 The same enum also carries the four frontend-facing domain topics (`TrackingSessionUpdated`, `ScanStatusChanged`, `HarvestRecorded`, and `NavigationUpdated`), whose `as_str()` returns the dotted constants from `app/src-tauri/eo-wire/src/domain_events.rs`, because the typed envelopes ride this same bus before the bridge republishes them onto the broadcast channel.
+
+### Healing intent and chat evidence
+
+Healing attribution consumes two independent observations. `HotbarIntent`
+carries the user's resolved equipment intent and the time at which the input
+hook observed the key. A later compatible self-heal line confirms one paid
+activation. The game chat timestamp is retained as provenance, but it has only
+whole-second precision, so local monotonic observation and input occurrence
+times decide ordering and bounded reconciliation.
+
+The hotbar resolver runs off the hook callback on its worker thread. A rapid
+healer activation followed by a weapon switch therefore keeps a short closed
+intent tail, allowing the heal output to confirm the healer that was actually
+used. The inverse delivery order is also safe: an unexplained output is first
+persisted at zero cost and can be reconciled only when a subsequently delivered
+intent proves it occurred first and matches the healing profile.
+
+`ActiveToolChanged`, `ActiveHealToolChanged`, and
+`ActiveHarvestToolChanged` remain as compatibility topics for weapon and
+harvesting attribution. Healing cost no longer depends on chat-only tool
+inference: a self-heal without compatible hotbar intent is passive or
+unattributed evidence and cannot add PED cost.
 
 ### The tick_flushed settling boundary
 

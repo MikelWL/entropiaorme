@@ -22,6 +22,8 @@ export const equipmentDemoLibrary: Equipment[] = [
 		reloadSeconds: 2.5,
 		isLimited: false,
 		enrichmentLevel: 2,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 	{
 		id: '2',
@@ -34,6 +36,8 @@ export const equipmentDemoLibrary: Equipment[] = [
 		reloadSeconds: 4.2,
 		isLimited: false,
 		enrichmentLevel: 3,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 	{
 		id: '3',
@@ -46,6 +50,8 @@ export const equipmentDemoLibrary: Equipment[] = [
 		reloadSeconds: 3.1,
 		isLimited: true,
 		enrichmentLevel: 1,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 	{
 		id: '4',
@@ -58,6 +64,16 @@ export const equipmentDemoLibrary: Equipment[] = [
 		reloadSeconds: 3.5,
 		isLimited: false,
 		enrichmentLevel: 2,
+		healingProfile: {
+			mode: 'direct',
+			directMin: 8,
+			directMax: 10,
+			effectDurationSeconds: null,
+			tickMin: null,
+			tickMax: null,
+			tickSeconds: null,
+		},
+		lifestealPercent: null,
 	},
 	{
 		id: '5',
@@ -70,12 +86,15 @@ export const equipmentDemoLibrary: Equipment[] = [
 		reloadSeconds: null,
 		isLimited: false,
 		enrichmentLevel: 0,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 ];
 
 export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 	'1': {
 		id: '1',
+		type: 'weapon',
 		weapon: {
 			catalogId: 'jester-d1',
 			name: 'Jester D-1',
@@ -104,9 +123,12 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 			},
 		],
 		totalCostPerUse: 0.42,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 	'2': {
 		id: '2',
+		type: 'weapon',
 		weapon: {
 			catalogId: 'korss-h400',
 			name: 'Korss H400',
@@ -155,6 +177,8 @@ export const equipmentDemoDetails: Record<string, EquipmentDetail> = {
 			},
 		],
 		totalCostPerUse: 4.18,
+		healingProfile: null,
+		lifestealPercent: null,
 	},
 };
 

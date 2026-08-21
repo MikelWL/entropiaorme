@@ -819,6 +819,7 @@
 			activities: snap.activities,
 			trifectaAttribution: snap.trifectaAttribution,
 			harvestGuardrail: snap.harvestGuardrail,
+			healing: snap.healing,
 			warnings: snap.warnings,
 		};
 		const startedMs = snap.started_at ? new Date(snap.started_at).getTime() : NaN;

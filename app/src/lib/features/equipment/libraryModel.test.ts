@@ -30,6 +30,8 @@ function summary(overrides: Partial<Equipment> = {}): Equipment {
 		reloadSeconds: 2.5,
 		isLimited: false,
 		enrichmentLevel: 1,
+		healingProfile: null,
+		lifestealPercent: null,
 		...overrides,
 	};
 }
@@ -37,6 +39,7 @@ function summary(overrides: Partial<Equipment> = {}): Equipment {
 function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 	return {
 		id: '1',
+		type: 'weapon',
 		weapon: {
 			catalogId: 'jester-d1',
 			name: 'Jester D-1',
@@ -52,6 +55,8 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 		implant: null,
 		costBreakdown: [],
 		totalCostPerUse: 2.05,
+		healingProfile: null,
+		lifestealPercent: null,
 		...overrides,
 	};
 }
@@ -77,6 +82,10 @@ const weaponHit = {
 	ammoBurn: 1.0,
 	absorptionPercent: null,
 	isLimited: false,
+	healMin: null,
+	healMax: null,
+	reloadSeconds: null,
+	lifestealPercent: null,
 };
 
 beforeEach(() => {
@@ -109,6 +118,8 @@ describe('loadData', () => {
 			name: 'Vivo T1',
 			costPerHeal: 0.18,
 			isLimited: true,
+			reloadSeconds: 2.5,
+			profile: null,
 		});
 		expect(model.consumables.map((c) => c.name)).toEqual(['Oil']);
 		expect(model.hotbarHooksEnabled).toBe(false);
@@ -181,6 +192,10 @@ describe('form open and reset', () => {
 			ammoBurn: 0,
 			absorptionPercent: null,
 			isLimited: false,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 		model.markupPercent = 150;
 		model.damageEnhancers = 3;
@@ -304,6 +319,10 @@ describe('setAddType clearing', () => {
 			ammoBurn: 0,
 			absorptionPercent: null,
 			isLimited: false,
+			healMin: null,
+			healMax: null,
+			reloadSeconds: null,
+			lifestealPercent: null,
 		});
 		return model;
 	}
@@ -426,6 +445,8 @@ describe('saveEquipment', () => {
 			catalogId: 'vivo-t1',
 			name: 'Vivo',
 			isLimited: true,
+			healMin: 8,
+			healMax: 10,
 		});
 		model.markupPercent = 120;
 		await model.saveEquipment();
@@ -436,6 +457,13 @@ describe('saveEquipment', () => {
 			weapon_markup: 120,
 			implant_catalog_id: null,
 			implant_markup: 100,
+			healing_mode: 'direct',
+			heal_min: 8,
+			heal_max: 10,
+			effect_duration_seconds: null,
+			tick_min: null,
+			tick_max: null,
+			tick_seconds: null,
 		});
 		expect(model.healingTools.map((t) => t.id)).toEqual(['5']);
 	});
