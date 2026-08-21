@@ -1210,7 +1210,8 @@ fn snapshot_aggregates_and_rounds_the_readout() {
         .unwrap();
     }
 
-    rig.clock.advance(60.0).unwrap();
+    // The reload exercise above already advanced the session by 2.5 seconds.
+    rig.clock.advance(57.5).unwrap();
     let readout = rig.wait(tracker.snapshot()).unwrap();
     assert_eq!(readout.current_tool.as_deref(), Some("Rifle"));
     let active = readout.active.unwrap();

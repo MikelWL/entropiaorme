@@ -1813,11 +1813,12 @@ mod tests {
         // earlier triggers + the protection and deferred-settlement
         // migrations' 11 tables and 11 indexes + the manual-hand-in
         // migration's 2 tables and 5 indexes + canonical quest rewards'
-        // 3 tables and 5 attribution and provenance indexes (only
-        // SQLite's own bookkeeping is excluded; the
-        // conformance comparison filters the ledger externally as its
-        // one deliberate difference).
-        assert_eq!(master.len(), 185);
+        // 3 tables and 5 attribution and provenance indexes + healing
+        // attribution's 3 activation, effect-window, and output tables with
+        // 3 session indexes (only SQLite's own bookkeeping is excluded; the
+        // conformance comparison filters the ledger externally as its one
+        // deliberate difference).
+        assert_eq!(master.len(), 191);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");
