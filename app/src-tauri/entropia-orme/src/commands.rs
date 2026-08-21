@@ -217,6 +217,17 @@ pub async fn protection_select(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn protection_assign_session_loadout(
+    app: tauri::AppHandle,
+    session_id: String,
+    loadout_id: i64,
+) -> Result<ProtectionOverview, ApiError> {
+    facade(&app)?
+        .protection_assign_session_loadout(&session_id, loadout_id)
+        .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn protection_observation_confirm(
     app: tauri::AppHandle,
     input: ProtectionObservationInput,
@@ -1839,6 +1850,7 @@ mod tests {
         "protection_set_archive",
         "protection_loadout_archive",
         "protection_select",
+        "protection_assign_session_loadout",
         "protection_observation_confirm",
         "protection_repair_confirm",
         "protection_trade_terminal_scan",

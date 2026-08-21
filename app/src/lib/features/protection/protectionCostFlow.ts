@@ -52,6 +52,15 @@ export function buildProtectionCostSteps(
 
 	const active = overview.loadouts.find((loadout) => loadout.id === overview.activeLoadoutId);
 	if (!active) return [];
+	return buildProtectionCostStepsForLoadout(overview, active.id);
+}
+
+export function buildProtectionCostStepsForLoadout(
+	overview: ProtectionOverview,
+	loadoutId: string,
+): ProtectionCostStep[] {
+	const active = overview.loadouts.find((loadout) => loadout.id === loadoutId);
+	if (!active) return [];
 
 	const components: ProtectionCostStep[] = [];
 	if (active.armour) components.push(componentStep(overview, 'armour', active.armour));
@@ -75,16 +84,69 @@ export function buildProtectionCostSteps(
 	return components;
 }
 
+/** The layer a step measures, in the product's own words. */
+export function protectionCostLayerLabel(layer: ProtectionCostLayer): string {
+	if (layer === 'armour') return 'Armour';
+	if (layer === 'plates') return 'Plates';
+	return 'Armour + plates';
+}
+
+/** What the user has to do at the terminal before a step can be read. */
+export function protectionCostInstruction(step: ProtectionCostStep): string {
+	if (step.layer === 'combined') {
+		return 'Place all equipped armour and plates in the Repair Terminal.';
+	}
+	const items = step.layer === 'armour' ? 'seven armour pieces' : 'seven plates';
+	const terminal = step.method === 'limited' ? 'Trade Terminal' : 'Repair Terminal';
+	return `Place the ${items} in the ${terminal}. Do not complete the transaction.`;
+}
+
+/** Idempotency token for one step's confirmation. */
+export function protectionCostClientToken(index: number): string {
+	return (
+		globalThis.crypto?.randomUUID?.() ??
+		`protection-cost-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`
+	);
+}
+
+export interface ProtectionCostAction {
+	/** Whether pressing the control can actually start a recording flow. */
+	enabled: boolean;
+	/** What the control says it will do, matching the flow that will run. */
+	label: string;
+}
+
+/**
+ * What the armour-cost control offers right now, for the attribution the
+ * session was stamped with. Whole-session attribution asks which composed
+ * setup was worn, so it is available whenever a setup exists, whatever the
+ * live selection is; per-segment attribution follows the active loadout's
+ * steps. A catalogue with no setups at all keeps the generic combined
+ * repair reading, which needs no composition.
+ */
+export function protectionCostAction(
+	overview: ProtectionOverview | null,
+	bySegment: boolean,
+): ProtectionCostAction {
+	if (!bySegment && (overview?.loadouts.length ?? 0) > 0) {
+		return { enabled: true, label: 'Record armour cost' };
+	}
+	return {
+		enabled: buildProtectionCostSteps(overview).length > 0,
+		label: protectionCostActionLabel(overview),
+	};
+}
+
 export function protectionCostActionLabel(overview: ProtectionOverview | null): string {
 	if (
 		overview &&
 		overview.loadouts.length > 0 &&
 		!overview.loadouts.some((loadout) => loadout.id === overview.activeLoadoutId)
 	) {
-		return 'Select a protection loadout first';
+		return 'Select an armour loadout first';
 	}
 	const steps = buildProtectionCostSteps(overview);
-	if (steps.length === 0) return 'No protection cost to record';
+	if (steps.length === 0) return 'No armour cost to record';
 	if (steps.length === 1 && steps[0].method === 'repair') return 'Record repair cost';
-	return `Record ${steps.length} protection ${steps.length === 1 ? 'cost' : 'costs'}`;
+	return `Record ${steps.length} armour ${steps.length === 1 ? 'cost' : 'costs'}`;
 }

@@ -133,6 +133,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "planet_map_image",
     "planet_maps_list",
     "private_sale_undo",
+    "protection_assign_session_loadout",
     "protection_loadout_archive",
     "protection_loadout_create",
     "protection_loadout_update",

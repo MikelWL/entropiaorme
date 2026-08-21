@@ -178,8 +178,7 @@ pub struct ProtectionOverview {
 #[serde(rename_all = "camelCase")]
 pub struct ProtectionCostAllocation {
     pub session_id: String,
-    pub damage_weight: f64,
-    pub deflection_count: i64,
+    pub hit_count: i64,
     pub allocation_share: f64,
     pub cost_ped: f64,
 }
@@ -411,6 +410,11 @@ impl Api {
                         .await
                         .map_err(protection_error)?;
                 }
+                Err(eo_services::tracker::TrackerCommandError::ProtectionBySegmentDisabled) => {
+                    return Err(ApiError::conflict(
+                        "Armour costs are not tracked by segment for this session",
+                    ));
+                }
                 Err(eo_services::tracker::TrackerCommandError::Persistence) => {
                     return Err(ApiError::invalid_state(
                         "live protection selection persistence failed",
@@ -423,6 +427,18 @@ impl Api {
                 .await
                 .map_err(protection_error)?;
         }
+        self.protection_overview().await
+    }
+
+    pub async fn protection_assign_session_loadout(
+        &self,
+        session_id: &str,
+        loadout_id: i64,
+    ) -> Result<ProtectionOverview, ApiError> {
+        self.protection
+            .assign_session_loadout(session_id, loadout_id)
+            .await
+            .map_err(protection_error)?;
         self.protection_overview().await
     }
 
@@ -590,8 +606,7 @@ impl From<ServiceCostAllocation> for ProtectionCostAllocation {
     fn from(value: ServiceCostAllocation) -> Self {
         Self {
             session_id: value.session_id,
-            damage_weight: value.damage_weight,
-            deflection_count: value.deflection_count,
+            hit_count: value.hit_count,
             allocation_share: value.allocation_share,
             cost_ped: value.cost_ped,
         }

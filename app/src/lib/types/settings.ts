@@ -10,6 +10,7 @@ export type {
 	GameConnection,
 	HarvestGuardrailInput,
 	HarvestGuardrailSettings,
+	PassiveEffectSourceView,
 	TrifectaPresetView as TrifectaPreset,
 	TrifectaSettings,
 } from '$lib/api/commands.gen';

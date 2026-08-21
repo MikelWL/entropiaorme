@@ -424,6 +424,7 @@ pub fn run() {
             commands::protection_set_archive,
             commands::protection_loadout_archive,
             commands::protection_select,
+            commands::protection_assign_session_loadout,
             commands::protection_observation_confirm,
             commands::protection_repair_confirm,
             commands::protection_trade_terminal_scan,

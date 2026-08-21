@@ -46,6 +46,7 @@ pub mod navigation;
 pub mod observability_config;
 pub mod ocr_engine;
 pub mod ocr_text;
+pub mod passive_effects;
 pub mod paths;
 pub mod ped;
 pub mod pin_configs;

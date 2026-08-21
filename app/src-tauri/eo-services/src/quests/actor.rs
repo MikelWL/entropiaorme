@@ -33,7 +33,7 @@ use super::QuestService;
 pub(super) enum QuestMsg {
     /// A bus event forwarded by a permanent subscription; the reply
     /// closes the rendezvous once the event is fully absorbed.
-    Event(BusEvent, oneshot::Sender<()>),
+    Event(Box<BusEvent>, oneshot::Sender<()>),
     /// A chat-log MISSION_COMPLETE tick asking which loot item or
     /// skill gain to suppress so the reward is not double-counted.
     RewardFilter {
@@ -69,7 +69,7 @@ pub(super) fn subscribe_handlers(
         let registration = bus.subscribe(topic, move |event| {
             let (done_tx, done_rx) = oneshot::channel();
             if sender
-                .send(QuestMsg::Event(event.clone(), done_tx))
+                .send(QuestMsg::Event(Box::new(event.clone()), done_tx))
                 .is_err()
             {
                 return;

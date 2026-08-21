@@ -9,6 +9,8 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		id: '1',
 		name: 'ARIS Dailies',
 		adHocSegments: false,
+		trackProtectionCosts: true,
+		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,
 		instanceCount: 0,
@@ -162,6 +164,8 @@ describe('createDefinitionsModel', () => {
 		expect(deps.createDefinition).toHaveBeenCalledWith({
 			name: 'General Hunting',
 			ad_hoc_segments: false,
+			track_protection_costs: true,
+			track_protection_by_segment: false,
 			roster: [{ kind: 'quest', ref_id: 9, label: null }],
 		});
 		expect(deps.selectDefinition).toHaveBeenCalledWith(7);
@@ -206,8 +210,47 @@ describe('createDefinitionsModel', () => {
 		expect(deps.updateDefinition).toHaveBeenCalledWith('2', {
 			name: 'ARIS Dailies',
 			ad_hoc_segments: false,
+			track_protection_costs: true,
+			track_protection_by_segment: true,
 			roster: [{ kind: 'segment', ref_id: null, label: 'Grind' }],
 		});
+	});
+
+	it('defaults new definitions to armour costs without segment attribution', () => {
+		const model = createDefinitionsModel(makeDeps());
+		model.openCreate();
+
+		expect(model.trackProtectionCosts).toBe(true);
+		expect(model.trackProtectionBySegment).toBe(false);
+	});
+
+	it('persists the whole-session armour policy on a definition', async () => {
+		const deps = makeDeps();
+		const model = createDefinitionsModel(deps);
+		model.openEdit(definition({ id: '2', trackProtectionBySegment: false }));
+		expect(model.trackProtectionBySegment).toBe(false);
+
+		expect(await model.save()).toBe(true);
+		expect(deps.updateDefinition).toHaveBeenCalledWith(
+			'2',
+			expect.objectContaining({ track_protection_by_segment: false }),
+		);
+	});
+
+	it('normalises segment attribution off when armour costs are disabled', async () => {
+		const deps = makeDeps();
+		const model = createDefinitionsModel(deps);
+		model.openEdit(definition({ id: '2', trackProtectionBySegment: true }));
+		model.trackProtectionCosts = false;
+
+		expect(await model.save()).toBe(true);
+		expect(deps.updateDefinition).toHaveBeenCalledWith(
+			'2',
+			expect.objectContaining({
+				track_protection_costs: false,
+				track_protection_by_segment: false,
+			}),
+		);
 	});
 
 	it('archives only on the armed second step', async () => {

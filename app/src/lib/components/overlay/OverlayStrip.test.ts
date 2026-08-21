@@ -140,7 +140,7 @@ describe('armour track decision prompt', () => {
 			},
 		});
 
-		expect(screen.getByText('Record protection?')).toBeTruthy();
+		expect(screen.getByText('Record armour costs?')).toBeTruthy();
 		expect(screen.queryByTitle('Stop tracking')).toBeNull();
 
 		screen.getByText('Record').click();
@@ -348,6 +348,70 @@ describe('derived activity feedback', () => {
 		});
 		expect(screen.queryByTestId('activity-feedback')).toBeNull();
 	});
+
+	it('shows a held healer as the sole item without backend healing telemetry', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({
+					weaponAttribution: 'trifecta',
+					currentTool: 'Restoration Chip 10',
+					currentToolKind: 'healing',
+					currentActivity: null,
+					trifectaAttribution: {
+						activePresetId: 'p1',
+						presetName: 'Hunting Set',
+						presets: [{ id: 'p1', name: 'Hunting Set' }],
+						smallWeapon: null,
+						bigWeapon: null,
+						healTool: null,
+					},
+					healing: {
+						toolName: 'Restoration Chip 10',
+						state: 'cooldown',
+						cooldownUntil: 20,
+						effectUntil: null,
+						activations: 2,
+						directOutputs: 1,
+						effectOutputs: 0,
+						passiveOutputs: 3,
+						unattributedOutputs: 0,
+					},
+				}),
+			},
+		});
+
+		expect(screen.getByText('Restoration Chip 10')).toBeTruthy();
+		expect(screen.queryByText('Hunting Set')).toBeNull();
+		expect(screen.queryByTestId('activity-feedback')).toBeNull();
+		expect(screen.queryByTestId('healing-state')).toBeNull();
+		expect(screen.queryByText(/passive heal/i)).toBeNull();
+		expect(screen.queryByText(/cooldown/i)).toBeNull();
+	});
+});
+
+describe('protection declaration policy', () => {
+	it('hides segment protection selectors when the definition records whole-session cost only', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ trackProtectionBySegment: false }),
+				protection: mixedProtection,
+			},
+		});
+		expect(screen.queryByTestId('protection-facet')).toBeNull();
+	});
+
+	it('removes armour controls altogether when armour-cost tracking is disabled', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionCosts: false }),
+				armourSessionId: 'session-1',
+				protection: mixedProtection,
+			},
+		});
+
+		expect(screen.queryByTestId('protection-facet')).toBeNull();
+		expect(document.querySelector('[data-guide-anchor="overlay-armour-section"]')).toBeNull();
+	});
 });
 
 describe('customisable stat pills', () => {
@@ -520,7 +584,7 @@ describe('armour cost control', () => {
 				protection: mixedProtection,
 			},
 		});
-		expect(screen.getByTitle('Record 2 protection costs')).toBeTruthy();
+		expect(screen.getByTitle('Record 2 armour costs')).toBeTruthy();
 	});
 
 	it('disables cost recording for an explicit no-protection loadout', () => {
@@ -538,9 +602,37 @@ describe('armour cost control', () => {
 				protection,
 			},
 		});
-		expect((screen.getByTitle('No protection cost to record') as HTMLButtonElement).disabled).toBe(
+		expect((screen.getByTitle('No armour cost to record') as HTMLButtonElement).disabled).toBe(
 			true,
 		);
+	});
+
+	it('stays available under whole-session attribution with no live selection', () => {
+		// Whole-session attribution asks which setup was worn rather than reading
+		// the live selection, so the control must not go dark just because
+		// nothing is selected.
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionBySegment: false }),
+				armourSessionId: 's1',
+				protection: { ...mixedProtection, activeLoadoutId: null },
+			},
+		});
+		const button = screen.getByTitle('Record armour cost') as HTMLButtonElement;
+		expect(button.disabled).toBe(false);
+	});
+
+	it('keeps the generic repair reading when the catalogue holds no setups', () => {
+		// Nothing to choose between: the control offers the reading that needs no
+		// composition rather than promising a flow it would refuse.
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionBySegment: false }),
+				armourSessionId: 's1',
+			},
+		});
+		const button = screen.getByTitle('Record repair cost') as HTMLButtonElement;
+		expect(button.disabled).toBe(false);
 	});
 
 	it('surfaces the armour cost error while the popup is closed', () => {

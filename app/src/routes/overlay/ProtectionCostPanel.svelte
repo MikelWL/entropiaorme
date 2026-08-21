@@ -8,7 +8,15 @@
 		type ProtectionObservationOutcome,
 		type ProtectionCostWindow,
 	} from '$lib/api';
-	import type { ProtectionCostStep } from '$lib/features/protection/protectionCostFlow';
+	import type { ProtectionOverview } from '$lib/api';
+	import {
+		buildProtectionCostStepsForLoadout,
+		protectionCostClientToken,
+		protectionCostInstruction,
+		protectionCostLayerLabel,
+		type ProtectionCostStep,
+	} from '$lib/features/protection/protectionCostFlow';
+	import ArmourSetupChoice from '$lib/features/protection/ArmourSetupChoice.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Input from '$lib/components/Input.svelte';
 
@@ -16,10 +24,21 @@
 		sessionId: string;
 		repairOcrEnabled: boolean;
 		steps: ProtectionCostStep[];
+		protection?: ProtectionOverview | null;
+		requiresLoadoutSelection?: boolean;
+		recordNow?: boolean;
 		onClose: () => void;
 	}
 
-	let { sessionId, repairOcrEnabled, steps, onClose }: Props = $props();
+	let {
+		sessionId,
+		repairOcrEnabled,
+		steps,
+		protection = null,
+		requiresLoadoutSelection = false,
+		recordNow = true,
+		onClose,
+	}: Props = $props();
 
 	type Mode = 'ready' | 'scanning' | 'review' | 'saved';
 	let stepIndex = $state(0);
@@ -30,21 +49,22 @@
 	let calibrated = $state(true);
 	let errorHint = $state<string | null>(null);
 	let saving = $state(false);
-	let asserted = $state(false);
 	let resetReason = $state('');
 	let limitedOutcome = $state<ProtectionObservationOutcome | null>(null);
 	let savedRepairCost = $state<number | null>(null);
 	let savedWindow = $state<ProtectionCostWindow | null>(null);
-	const tokens = untrack(() =>
-		steps.map(
-			(_, index) =>
-				globalThis.crypto?.randomUUID?.() ??
-				`protection-cost-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
-		),
-	);
+	let currentSteps = $state<ProtectionCostStep[]>(untrack(() => steps));
+	let selectedLoadoutId = $state<string | null>(null);
+	let setupSaved = $state(false);
+	let tokens = $state<string[]>([]);
 
-	const step = $derived(steps[stepIndex]);
-	const lastStep = $derived(stepIndex === steps.length - 1);
+	function tokenFor(index: number): string {
+		tokens[index] ??= protectionCostClientToken(index);
+		return tokens[index];
+	}
+
+	const step = $derived(currentSteps[stepIndex]);
+	const lastStep = $derived(stepIndex === currentSteps.length - 1);
 	const parsedValue = $derived.by(() => {
 		const parsed = Number(value.trim().replace(',', '.'));
 		return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -55,30 +75,11 @@
 		parsedValue !== null &&
 		parsedValue > step.baselineTtPed + 0.0000001,
 	);
-	const requiresAssertion = $derived(
-		step?.method === 'limited' && step.baselineTtPed !== null && !increased,
-	);
 	const canConfirm = $derived(
 		parsedValue !== null &&
-		(!requiresAssertion || asserted) &&
 		(!increased || resetReason.trim().length > 0) &&
 		!saving,
 	);
-
-	function layerLabel(layer: ProtectionCostStep['layer']): string {
-		if (layer === 'armour') return 'Armour';
-		if (layer === 'plates') return 'Plates';
-		return 'Armour + plates';
-	}
-
-	function instruction(current: ProtectionCostStep): string {
-		if (current.layer === 'combined') {
-			return 'Place all equipped armour and plates in the Repair Terminal.';
-		}
-		const items = current.layer === 'armour' ? 'seven armour pieces' : 'seven plates';
-		const terminal = current.method === 'limited' ? 'Trade Terminal' : 'Repair Terminal';
-		return `Place the ${items} in the ${terminal}. Do not complete the transaction.`;
-	}
 
 	function resetEntry(): void {
 		mode = 'ready';
@@ -87,7 +88,6 @@
 		rawText = null;
 		calibrated = true;
 		errorHint = null;
-		asserted = false;
 		resetReason = '';
 		limitedOutcome = null;
 		savedRepairCost = null;
@@ -145,7 +145,7 @@
 			if (step.method === 'limited' && step.setId) {
 				limitedOutcome = await confirmProtectionObservation({
 					setId: Number(step.setId),
-					clientToken: tokens[stepIndex],
+					clientToken: tokenFor(stepIndex),
 					ttValuePed: parsedValue,
 					source,
 					rawText,
@@ -153,7 +153,7 @@
 				});
 			} else {
 				const outcome = await confirmProtectionRepair({
-					clientToken: tokens[stepIndex],
+					clientToken: tokenFor(stepIndex),
 					armourSetId: step.armourSetId ? Number(step.armourSetId) : null,
 					plateSetId: step.plateSetId ? Number(step.plateSetId) : null,
 					costPed: parsedValue,
@@ -163,7 +163,7 @@
 			}
 			mode = 'saved';
 		} catch (error) {
-			errorHint = error instanceof Error ? error.message : 'Protection cost could not be saved';
+			errorHint = error instanceof Error ? error.message : 'Armour cost could not be saved';
 		} finally {
 			saving = false;
 		}
@@ -177,21 +177,41 @@
 		stepIndex += 1;
 		resetEntry();
 	}
+
+	function adoptLoadout(loadoutId: string) {
+		if (!protection) return;
+		selectedLoadoutId = loadoutId;
+		currentSteps = buildProtectionCostStepsForLoadout(protection, loadoutId);
+		stepIndex = 0;
+		setupSaved = !recordNow || currentSteps.length === 0;
+	}
 </script>
 
-{#if step}
+{#if requiresLoadoutSelection && selectedLoadoutId === null}
+	<ArmourSetupChoice {sessionId} {protection} onassigned={adoptLoadout} />
+{:else if setupSaved}
+	<div class="flex min-w-[390px] items-center justify-between gap-6 text-white">
+		<div>
+			<p class="text-xs font-medium">Armour setup saved</p>
+			<p class="mt-1 text-[11px] text-white/45">
+				{recordNow ? 'No armour cost needs recording.' : 'You can record its measured cost later.'}
+			</p>
+		</div>
+		<Button size="sm" onclick={onClose}>Done</Button>
+	</div>
+{:else if step}
 	<div class="flex min-w-[390px] flex-col gap-3 text-white">
 		<div class="flex items-start justify-between gap-6 border-b border-white/10 pb-2.5">
 			<div>
 				<div class="flex items-center gap-2">
-					<span class="text-xs font-semibold">{layerLabel(step.layer)}</span>
+					<span class="text-xs font-semibold">{protectionCostLayerLabel(step.layer)}</span>
 					<span class="text-[10px] uppercase tracking-wider text-white/35">{step.method === 'limited' ? 'Limited' : 'Unlimited'}</span>
 				</div>
 				<p class="mt-0.5 text-[11px] text-white/45">{step.name}</p>
 			</div>
 			<div class="flex items-center gap-2">
-				{#if steps.length > 1}<span class="text-[10px] tabular-nums text-white/35">{stepIndex + 1} of {steps.length}</span>{/if}
-				<Button variant="ghost" size="sm" aria-label="Record protection cost later" onclick={onClose}>Later</Button>
+				{#if currentSteps.length > 1}<span class="text-[10px] tabular-nums text-white/35">{stepIndex + 1} of {currentSteps.length}</span>{/if}
+				<Button variant="ghost" size="sm" aria-label="Record armour cost later" onclick={onClose}>Later</Button>
 			</div>
 		</div>
 
@@ -200,7 +220,7 @@
 				<div>
 					<p class="text-xs font-medium">
 						{#if limitedOutcome?.costWindow}
-							{limitedOutcome.costWindow.status === 'booked' ? 'Protection cost allocated' : 'Measurement saved for later allocation'}
+							{limitedOutcome.costWindow.status === 'booked' ? 'Armour cost allocated' : 'Measurement saved for later allocation'}
 						{:else if limitedOutcome}
 							Baseline established
 						{:else if savedWindow}
@@ -213,15 +233,15 @@
 						<p class="mt-1 text-[11px] text-white/45">
 							{limitedOutcome.costWindow.consumedTtPed?.toFixed(4)} TT at {limitedOutcome.costWindow.markupPercent?.toFixed(2)}% MU = {limitedOutcome.costWindow.costPed.toFixed(4)} PED
 						</p>
-						{#if limitedOutcome.costWindow.allocations.length > 0}<p class="mt-1 text-[10px] text-white/35">Spread across {limitedOutcome.costWindow.allocations.length} {limitedOutcome.costWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded damage.</p>{/if}
+						{#if limitedOutcome.costWindow.allocations.length > 0}<p class="mt-1 text-[10px] text-white/35">Spread across {limitedOutcome.costWindow.allocations.length} {limitedOutcome.costWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded hits.</p>{/if}
 					{:else if savedWindow?.allocations.length}
-						<p class="mt-1 text-[11px] text-white/45">{savedWindow.costPed.toFixed(4)} PED spread across {savedWindow.allocations.length} {savedWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded damage.</p>
+						<p class="mt-1 text-[11px] text-white/45">{savedWindow.costPed.toFixed(4)} PED spread across {savedWindow.allocations.length} {savedWindow.allocations.length === 1 ? 'session' : 'sessions'} from recorded hits.</p>
 					{/if}
 				</div>
-				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${layerLabel(steps[stepIndex + 1].layer).toLowerCase()}`}</Button>
+				<Button size="sm" onclick={continueFlow}>{lastStep ? 'Done' : `Continue to ${protectionCostLayerLabel(currentSteps[stepIndex + 1].layer).toLowerCase()}`}</Button>
 			</div>
 		{:else}
-			<p class="text-[11px] text-white/55">{instruction(step)}</p>
+			<p class="text-[11px] text-white/55">{protectionCostInstruction(step)}</p>
 
 			{#if mode === 'ready'}
 				<div class="flex items-center gap-2">
@@ -251,11 +271,6 @@
 						<span class="text-[10px] text-white/45">Above the baseline. Explain the reset:</span>
 						<Input class="min-w-52" bind:value={resetReason} placeholder="Pieces replaced or reading corrected" />
 					</div>
-				{:else if requiresAssertion}
-					<label class="flex items-start gap-2 text-[10px] text-white/45">
-						<input class="mt-0.5 accent-accent" type="checkbox" bind:checked={asserted} />
-						<span>This set was not replaced and was used only while EntropiaOrme was recording between these readings.</span>
-					</label>
 				{/if}
 			{/if}
 

@@ -30,8 +30,9 @@ fn is_missing_table(error: &rusqlite::Error) -> bool {
 // harvest columns); to 4 when the session facets replaced the exclusive
 // tag-or-mob capture (session name and skill boost carried onto the summary,
 // mob dominance computed over species-bearing kills only, the dominant-tag
-// pair retired to NULL/0). A below-version row heals on the next read.
-pub const SUMMARY_VERSION: i64 = 4;
+// pair retired to NULL/0); to 5 when protection costs were re-attributed by
+// hit count. A below-version row heals on the next read.
+pub const SUMMARY_VERSION: i64 = 5;
 pub const DOMINANCE_THRESHOLD: f64 = 0.6;
 
 /// The computed summary for one completed session, or None when the

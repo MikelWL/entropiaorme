@@ -103,7 +103,11 @@ pub(super) enum TrackerMsg {
     Inspect(Box<dyn FnOnce(&mut TrackerActor) + Send>),
 }
 
-type AggregateReply = oneshot::Sender<(Option<String>, bool, Option<SessionAggregate>)>;
+type AggregateReply = oneshot::Sender<(
+    Option<String>,
+    Option<crate::bus_events::HotbarItemKind>,
+    Option<SessionAggregate>,
+)>;
 
 tokio::task_local! {
     /// Set while the actor dispatches, so a bus subscriber reacting to
@@ -137,11 +141,9 @@ pub(super) struct TrackerActor {
     /// The resolved harvest guardrail (config-derived), refreshed at
     /// session start and on config reload; None while disabled.
     pub(super) harvest_guardrail: Option<super::providers::HarvestGuardrailTools>,
-    /// Whether the hand item is currently the harvesting tool (set by
-    /// a harvest-tool equip, cleared by a weapon equip). Display-only:
-    /// it picks which name the snapshot's `current_tool` shows and
-    /// never feeds shot or swing cost attribution.
-    pub(super) hand_is_harvest: bool,
+    /// The one item currently held in the game. This is display truth only;
+    /// each accounting domain retains its own attribution state.
+    pub(super) held_item: Option<(String, crate::bus_events::HotbarItemKind)>,
     /// The actor's own sender, cloned into the bus forwarders it
     /// installs at session start.
     sender: mpsc::UnboundedSender<TrackerMsg>,
@@ -175,7 +177,7 @@ impl TrackerActor {
             heal_tool: HealTool::default(),
             harvest_tool: None,
             harvest_guardrail: None,
-            hand_is_harvest: false,
+            held_item: None,
             sender,
             subscriptions: Vec::new(),
             status,

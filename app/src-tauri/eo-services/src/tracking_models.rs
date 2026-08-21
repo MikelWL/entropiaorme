@@ -184,6 +184,8 @@ pub struct ActiveSessionView {
     /// The session definition this session is an instance of, as
     /// stamped at start; None for a session outside any definition.
     pub definition_id: Option<i64>,
+    pub track_protection_costs: bool,
+    pub track_protection_by_segment: bool,
     /// The skill-boost facet the session runs under (percent), when set.
     pub skill_boost_percent: Option<i64>,
     /// The activities standing on the session, in the order they were
@@ -239,10 +241,6 @@ pub struct HarvestGuardrailMismatchView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackingReadout {
     pub current_tool: Option<String>,
-    /// Whether the hand item is currently a harvesting tool: the signal
-    /// the overlay's derived-activity feedback reads ("this is Tree
-    /// Cutting" versus "this is Hunting"). Meaningless when
-    /// `current_tool` is None.
-    pub current_tool_is_harvest: bool,
+    pub current_tool_kind: Option<crate::bus_events::HotbarItemKind>,
     pub active: Option<ActiveSessionView>,
 }

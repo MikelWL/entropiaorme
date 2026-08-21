@@ -6,10 +6,7 @@
 	import TrifectaSelector from './TrifectaSelector.svelte';
 	import { ICON_EQUIPMENT, ICON_ARMOUR } from './icons';
 	import { NO_DATA } from '$lib/utils/format';
-	import {
-		buildProtectionCostSteps,
-		protectionCostActionLabel,
-	} from '$lib/features/protection/protectionCostFlow';
+	import { protectionCostAction } from '$lib/features/protection/protectionCostFlow';
 
 	type LastSessionStats = { cost: number; returns: number; pes: number; net: number };
 
@@ -147,20 +144,12 @@
 				? 'Hunting'
 				: null
 	);
-	const healingLabel = $derived.by(() => {
-		const healing = data.healing;
-		if (!healing) return null;
-		if (healing.state === 'effect') return `${healing.toolName ?? 'Healing'} effect active`;
-		if (healing.state === 'cooldown') return `${healing.toolName ?? 'Healing'} cooldown`;
-		if (healing.state === 'ready') return `${healing.toolName ?? 'Healer'} ready`;
-		if (healing.passiveOutputs > 0) return `${healing.passiveOutputs} passive heal${healing.passiveOutputs === 1 ? '' : 's'}`;
-		return null;
-	});
 	const activeProtection = $derived(
 		protection?.loadouts.find((loadout) => loadout.id === protection?.activeLoadoutId) ?? null
 	);
-	const protectionCostSteps = $derived(buildProtectionCostSteps(protection));
-	const protectionCostTitle = $derived(protectionCostActionLabel(protection));
+	const costAction = $derived(
+		protectionCostAction(protection, data.trackProtectionBySegment !== false),
+	);
 	const trackingWarnings = $derived(data.warnings ?? []);
 
 	function formatElapsed(seconds: number): string {
@@ -183,7 +172,7 @@
 		<div class="flex items-center gap-3 shrink-0 border-r border-white/10 pr-3">
 			{#if awaitingArmourTrackDecision && data.status === 'active'}
 				<div class="armour-prompt flex items-center gap-1.5 shrink-0">
-					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record protection?</span>
+					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record armour costs?</span>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-yes"
@@ -458,7 +447,11 @@
 			data-guide-anchor="overlay-equipment-section"
 		>
 			<span class="text-white/40 shrink-0">{@html ICON_EQUIPMENT}</span>
-			{#if isTrifectaAttribution}
+			{#if data.currentToolKind === 'healing'}
+				<div class="text-xs {data.currentTool ? 'text-white/70' : 'text-white/20'} truncate max-w-[120px]">
+					{data.currentTool || NO_DATA}
+				</div>
+			{:else if isTrifectaAttribution}
 				<TrifectaSelector
 					trifecta={data.trifectaAttribution}
 					tone={data.status === 'active' ? 'active' : 'idle'}
@@ -504,21 +497,16 @@
 							{activityLabel}
 						</div>
 					{/if}
-					{#if healingLabel}
-						<div class="text-[10px] leading-tight text-emerald-300/80 whitespace-nowrap" data-testid="healing-state">
-							{healingLabel}
-						</div>
-					{/if}
 				</div>
 			{/if}
 		</div>
 
 		<!-- Active protection identity and live selection. -->
-		{#if protection && protection.loadouts.length > 0}
+		{#if data.trackProtectionCosts !== false && data.trackProtectionBySegment !== false && protection && protection.loadouts.length > 0}
 			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
-				<span class="facet-label">Protection</span>
+				<span class="facet-label">Armour</span>
 				{#if protection.loadouts.length === 1}
-					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Protection recorded from now on">
+					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Armour recorded from now on">
 						{activeProtection?.name ?? protection.loadouts[0].name}
 					</div>
 				{:else}
@@ -543,25 +531,26 @@
 			</div>
 		{/if}
 
-		<!-- Protection cost, sequenced from the active loadout. -->
-		<div
-			class="flex flex-col shrink-0 border-l border-white/10 pl-3"
-			data-guide-anchor="overlay-armour-section"
-		>
+		<!-- Armour cost, sequenced from the active loadout. -->
+		{#if data.trackProtectionCosts !== false}
+			<div
+				class="flex flex-col shrink-0 border-l border-white/10 pl-3"
+				data-guide-anchor="overlay-armour-section"
+			>
 			<div class="flex items-center gap-2 shrink-0">
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
-					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-						{armourSessionId && protectionCostSteps.length > 0
+					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all
+						{armourSessionId && costAction.enabled
 							? armourCostOpen
-								? 'bg-accent/20 border-accent/40 text-accent'
-								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
-							: 'bg-white/5 border-white/10 text-white/20 cursor-not-allowed'}"
-					disabled={!armourSessionId || protectionCostSteps.length === 0}
+								? 'cursor-pointer bg-accent/20 border-accent/40 text-accent'
+								: 'cursor-pointer bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
+							: 'cursor-not-allowed bg-white/5 border-white/10 text-white/20'}"
+					disabled={!armourSessionId || !costAction.enabled}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}
 					onclick={onArmourCostToggle}
-					title={armourSessionId ? protectionCostTitle : 'Start or stop a session to enable'}
+					title={armourSessionId ? costAction.label : 'Start or stop a session to enable'}
 					data-guide-anchor="overlay-armour-cost-btn"
 				>
 					Cost
@@ -572,7 +561,8 @@
 					{armourCostError}
 				</div>
 			{/if}
-		</div>
+			</div>
+		{/if}
 
 		<!-- Customisable stat pills (driven by the overlay stat prefs): treated as
 			 one unit, so the section separator sits at the unit boundary, not
@@ -639,20 +629,23 @@
 			{/if}
 
 			<!-- Armour cost remains reachable post-session for end-of-session bookkeeping. -->
-			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3">
+			{#if data.trackProtectionCosts !== false}
+				<div class="flex flex-col shrink-0 border-l border-white/10 pl-3">
 				<div class="flex items-center gap-2 shrink-0">
 					<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 					<button
 						bind:this={postSessionArmourButton}
-						class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-							{armourCostOpen
-								? 'bg-accent/20 border-accent/40 text-accent'
-								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'}"
+						class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all
+							{!costAction.enabled
+								? 'cursor-not-allowed bg-white/5 border-white/10 text-white/20'
+								: armourCostOpen
+									? 'cursor-pointer bg-accent/20 border-accent/40 text-accent'
+									: 'cursor-pointer bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'}"
 						aria-haspopup="dialog"
 						aria-expanded={armourCostOpen}
 						onclick={onArmourCostToggle}
-						disabled={protectionCostSteps.length === 0}
-						title={protectionCostTitle}
+						disabled={!costAction.enabled}
+						title={costAction.label}
 					>
 						Cost
 					</button>
@@ -662,7 +655,8 @@
 						{armourCostError}
 					</div>
 				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>

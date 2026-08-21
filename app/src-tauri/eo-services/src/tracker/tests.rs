@@ -1225,7 +1225,7 @@ fn snapshot_aggregates_and_rounds_the_readout() {
     // The reload exercise above already advanced the session by 2.5 seconds.
     rig.clock.advance(57.5).unwrap();
     let readout = rig.wait(tracker.snapshot()).unwrap();
-    assert_eq!(readout.current_tool.as_deref(), Some("Rifle"));
+    assert_eq!(readout.current_tool.as_deref(), Some("FAP"));
     let active = readout.active.unwrap();
     assert_eq!(active.session_id, session.id);
     assert_eq!(active.started_at, "2026-01-01T00:00:00");
@@ -1514,6 +1514,64 @@ fn healing_cost_requires_compatible_intent_and_respects_cooldown() {
 }
 
 #[test]
+fn effective_reload_accepts_back_to_back_heals_within_the_base_interval() {
+    let rig = rig();
+    let tracker = rig.tracker(Providers::default());
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let effective_reload = crate::passive_effects::effective_reload_seconds(
+        2.5,
+        &[crate::passive_effects::PassiveEffectSource {
+            id: "ares-perfect".into(),
+            name: "Ares Ring, Perfected".into(),
+            enabled: true,
+            effects: vec![crate::passive_effects::PassiveEffect {
+                kind: crate::passive_effects::PassiveEffectKind::ReloadSpeed,
+                magnitude_percent: 14.0,
+            }],
+        }],
+    );
+    rig.bus.publish(&healer_intent(
+        7,
+        "FAP",
+        0.03,
+        effective_reload,
+        naive_to_epoch(naive("2026-01-01T00:00:00")),
+        HealingProfile {
+            direct_min: Some(8.0),
+            direct_max: Some(12.0),
+            base_reload_seconds: Some(2.5),
+            reload_speed_percent: Some(14.0),
+            effective_reload_seconds: Some(effective_reload),
+            ..HealingProfile::default()
+        },
+    ));
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:20".into(),
+    }));
+    rig.clock.advance(2.206).unwrap();
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
+        amount: 10.0,
+        timestamp: "2026-01-01T00:00:22.206".into(),
+    }));
+
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM healing_activations WHERE session_id = ?",
+            &[&session.id],
+        ),
+        2
+    );
+    assert_eq!(
+        rig.scalar_f64(
+            "SELECT heal_cost FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        0.06
+    );
+}
+
+#[test]
 fn an_unprofiled_healer_press_invalidates_the_previous_activation_candidate() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
@@ -1610,7 +1668,10 @@ fn stale_session_hotbar_intents_cannot_mutate_equipment_state() {
         assert_eq!(actor.heal_tool.name.as_deref(), Some("Current FAP"));
         assert_eq!(actor.heal_tool.cost_per_use, Ped(0.02));
         assert!(actor.harvest_tool.is_none());
-        assert!(!actor.hand_is_harvest);
+        assert_eq!(
+            actor.held_item.as_ref().map(|(_, kind)| *kind),
+            Some(HotbarItemKind::Healing)
+        );
     });
 }
 
@@ -1707,6 +1768,7 @@ fn compound_healing_costs_once_and_suppresses_ticks_even_with_another_healer_rea
             tick_min: Some(9.0),
             tick_max: Some(11.0),
             tick_seconds: Some(2.0),
+            ..HealingProfile::default()
         },
     ));
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
@@ -1763,6 +1825,7 @@ fn a_fresh_healer_edge_wins_an_overlap_then_the_effect_wins_after_the_edge_ages(
             tick_min: Some(60.0),
             tick_max: Some(100.0),
             tick_seconds: Some(2.0),
+            ..HealingProfile::default()
         },
     ));
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
@@ -1821,6 +1884,7 @@ fn overlapping_effects_suppress_cost_without_inventing_one_source_window() {
         tick_min: Some(9.0),
         tick_max: Some(11.0),
         tick_seconds: Some(2.0),
+        ..HealingProfile::default()
     };
 
     rig.bus.publish(&healer_intent(
@@ -1928,6 +1992,7 @@ fn pure_over_time_healing_costs_on_its_first_tick_and_not_on_later_ticks() {
             tick_min: Some(9.0),
             tick_max: Some(11.0),
             tick_seconds: Some(2.0),
+            ..HealingProfile::default()
         },
     ));
     rig.bus.publish(&BusEvent::Combat(CombatPayload::SelfHeal {
@@ -1995,6 +2060,7 @@ fn delayed_pure_over_time_intent_reconciles_its_first_tick_as_one_activation() {
             tick_min: Some(9.0),
             tick_max: Some(11.0),
             tick_seconds: Some(2.0),
+            ..HealingProfile::default()
         },
     ));
 
@@ -4730,7 +4796,10 @@ fn yield_inference_stops_at_hotkey_and_time_boundaries() {
     rig.probe(&tracker, |actor| {
         let active = actor.session.active().expect("session is active");
         assert_eq!(active.harvest_press_floor, 3);
-        assert!(!actor.hand_is_harvest);
+        assert_eq!(
+            actor.held_item.as_ref().map(|(_, kind)| *kind),
+            Some(HotbarItemKind::Weapon)
+        );
     });
     equip_harvest_tool(&rig, "Terratech PH-3", 0.1);
     rig.bus.publish(&wood_group("2026-01-01T00:00:08", None));
@@ -5205,7 +5274,7 @@ fn the_snapshot_carries_the_guardrail_mismatch_view() {
 }
 
 #[test]
-fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
+fn the_snapshot_current_tool_follows_the_hand_between_weapon_healer_and_harvest() {
     use crate::bus_events::ActiveHarvestToolChangedPayload;
 
     let rig = rig();
@@ -5217,8 +5286,21 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
             tool_name: "Rifle".into(),
             source: Some("hotbar:1".into()),
         }));
-    let (tool, _, _) = rig.wait(tracker.aggregate());
+    let (tool, kind, _) = rig.wait(tracker.aggregate());
     assert_eq!(tool.as_deref(), Some("Rifle"));
+    assert_eq!(kind, Some(HotbarItemKind::Weapon));
+
+    rig.bus.publish(&BusEvent::ActiveHealToolChanged(
+        ActiveHealToolChangedPayload {
+            tool_name: "Restoration Chip 10".into(),
+            cost_per_use_ped: 0.04,
+            reload_seconds: 2.5,
+            source: Some("hotbar:8".into()),
+        },
+    ));
+    let (tool, kind, _) = rig.wait(tracker.aggregate());
+    assert_eq!(tool.as_deref(), Some("Restoration Chip 10"));
+    assert_eq!(kind, Some(HotbarItemKind::Healing));
 
     rig.bus.publish(&BusEvent::ActiveHarvestToolChanged(
         ActiveHarvestToolChangedPayload {
@@ -5227,24 +5309,26 @@ fn the_snapshot_current_tool_follows_the_hand_between_weapon_and_harvest() {
             source: Some("hotbar:4".into()),
         },
     ));
-    let (tool, _, _) = rig.wait(tracker.aggregate());
+    let (tool, kind, _) = rig.wait(tracker.aggregate());
     assert_eq!(
         tool.as_deref(),
         Some("Terratech PH-3"),
         "a harvest equip takes the displayed hand item"
     );
+    assert_eq!(kind, Some(HotbarItemKind::Harvesting));
 
     rig.bus
         .publish(&BusEvent::ActiveToolChanged(ActiveToolChangedPayload {
             tool_name: "Rifle".into(),
             source: Some("hotbar:1".into()),
         }));
-    let (tool, _, _) = rig.wait(tracker.aggregate());
+    let (tool, kind, _) = rig.wait(tracker.aggregate());
     assert_eq!(
         tool.as_deref(),
         Some("Rifle"),
         "a weapon equip takes the hand back"
     );
+    assert_eq!(kind, Some(HotbarItemKind::Weapon));
 }
 
 #[test]
@@ -5366,7 +5450,12 @@ fn a_weapon_equip_clears_the_harvest_hand_even_in_trifecta_mode() {
             source: Some("hotbar:4".into()),
         },
     ));
-    rig.probe(&tracker, |actor| assert!(actor.hand_is_harvest));
+    rig.probe(&tracker, |actor| {
+        assert_eq!(
+            actor.held_item.as_ref().map(|(_, kind)| *kind),
+            Some(HotbarItemKind::Harvesting)
+        )
+    });
 
     // The trifecta early-return must not preserve the stale hand flag.
     rig.bus
@@ -5374,7 +5463,12 @@ fn a_weapon_equip_clears_the_harvest_hand_even_in_trifecta_mode() {
             tool_name: "Rifle".into(),
             source: Some("hotbar:1".into()),
         }));
-    rig.probe(&tracker, |actor| assert!(!actor.hand_is_harvest));
+    rig.probe(&tracker, |actor| {
+        assert_eq!(
+            actor.held_item.as_ref().map(|(_, kind)| *kind),
+            Some(HotbarItemKind::Weapon)
+        )
+    });
 }
 
 #[test]
@@ -5404,6 +5498,82 @@ fn a_selected_definition_stamps_the_session_row_at_start() {
     let active = readout.active.unwrap();
     assert_eq!(active.definition_id, Some(7));
     assert_eq!(active.session_name.as_deref(), Some("ARIS Dailies"));
+}
+
+#[test]
+fn a_whole_session_protection_definition_stamps_and_surfaces_its_policy() {
+    let rig = rig();
+    rig.execute(
+        "INSERT INTO session_definitions \
+         (id, name, track_protection_by_segment) VALUES (7, 'Whole session', 0)",
+    );
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT track_protection_by_segment FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        0
+    );
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert!(!active.track_protection_by_segment);
+    assert_eq!(
+        rig.wait(tracker.set_protection(ProtectionSelection {
+            loadout_id: 1,
+            loadout_name: "Segment-disabled setup".into(),
+            armour: None,
+            plates: None,
+        })),
+        Err(TrackerCommandError::ProtectionBySegmentDisabled)
+    );
+}
+
+#[test]
+fn an_armour_cost_opt_out_stamps_policy_and_records_no_defence_evidence() {
+    let rig = rig();
+    rig.execute(
+        "INSERT INTO session_definitions \
+         (id, name, track_protection_costs, track_protection_by_segment) \
+         VALUES (7, 'Offensive costs only', 0, 0)",
+    );
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert!(!active.track_protection_costs);
+    assert!(!active.track_protection_by_segment);
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT track_protection_costs FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        0
+    );
+
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::Deflect {
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM protection_defence_events WHERE session_id = ?",
+            &[&session.id],
+        ),
+        0
+    );
 }
 
 #[test]

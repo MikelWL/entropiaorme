@@ -72,6 +72,8 @@ fn definition(name: &str, roster: Vec<SessionRosterEntryInput>) -> SessionDefini
     SessionDefinitionInput {
         name: name.to_string(),
         ad_hoc_segments: false,
+        track_protection_costs: true,
+        track_protection_by_segment: true,
         roster,
     }
 }
@@ -157,6 +159,8 @@ async fn a_create_reads_back_the_wire_shape() {
         .session_definition_create(SessionDefinitionInput {
             name: "ARIS Dailies".to_string(),
             ad_hoc_segments: true,
+            track_protection_costs: true,
+            track_protection_by_segment: true,
             roster: vec![
                 SessionRosterEntryInput {
                     kind: SessionRosterEntryKind::QuestFamily,
@@ -187,6 +191,8 @@ async fn a_create_reads_back_the_wire_shape() {
     assert_eq!(
         serde_json::to_string(&listed[1]).unwrap(),
         "{\"id\":\"2\",\"name\":\"ARIS Dailies\",\"adHocSegments\":true,\
+         \"trackProtectionCosts\":true,\
+         \"trackProtectionBySegment\":true,\
          \"isProtected\":false,\"isActive\":true,\
          \"instanceCount\":0,\"createdAt\":2000.0,\"updatedAt\":null,\"roster\":[\
          {\"id\":\"1\",\"kind\":\"quest_family\",\"refId\":\"1\",\"label\":null,\
@@ -215,6 +221,8 @@ async fn the_update_archive_and_restore_ladder_holds() {
             SessionDefinitionInput {
                 name: "General Hunting".to_string(),
                 ad_hoc_segments: true,
+                track_protection_costs: true,
+                track_protection_by_segment: true,
                 roster: vec![segment("Grind"), segment("Wind-down")],
             },
         )

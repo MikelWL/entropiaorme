@@ -306,6 +306,21 @@ describe('overlay popup readiness handshake', () => {
 	});
 });
 
+describe('snapshot fields reaching the strip', () => {
+	it('shows the held healing tool from a snapshot that reports one', async () => {
+		// Guards the mapping itself: the strip's healer branch keys on
+		// currentToolKind, so a field the backend emits but the page never
+		// copies leaves the branch unreachable in the built app.
+		seams.getTrackingSnapshot.mockResolvedValue({
+			...activeSnapshot,
+			currentTool: 'Restoration Chip',
+			currentToolKind: 'healing',
+		});
+		render(OverlayPage);
+		expect(await screen.findByText('Restoration Chip')).toBeTruthy();
+	});
+});
+
 describe('armour-cost popup', () => {
 	it('hands the popup its state and leaves sizing, placement and reveal to the popup', async () => {
 		render(OverlayPage);

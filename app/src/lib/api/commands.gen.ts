@@ -270,6 +270,7 @@ export interface AppSettings {
 	/** The slot-to-equipment map, carried through in its stored insertion order (`serde_json`'s `preserve_order`), so slot "0" stays last. */
 	hotbar: Record<string, unknown>;
 	trifecta: TrifectaSettings;
+	passiveEffectSources: PassiveEffectSourceView[];
 	harvestGuardrail: HarvestGuardrailSettings;
 	lootFilterBlacklist: string[];
 	dbPath: string;
@@ -1002,6 +1003,8 @@ export interface HealingStatus {
 	passiveOutputs: number;
 	unattributedOutputs: number;
 }
+
+export type HeldItemKind = 'weapon' | 'healing' | 'consumable' | 'harvesting';
 
 /**
  * One latency-histogram bucket: the inclusive upper bound in
@@ -1861,6 +1864,32 @@ export interface OverlayPosition {
 	y: number | null;
 }
 
+export interface PassiveEffectInput {
+	kind: PassiveEffectKind;
+	magnitude_percent: number;
+}
+
+export type PassiveEffectKind = 'reload_speed';
+
+export interface PassiveEffectSourceInput {
+	id: string;
+	name: string;
+	enabled: boolean;
+	effects: PassiveEffectInput[];
+}
+
+export interface PassiveEffectSourceView {
+	id: string;
+	name: string;
+	enabled: boolean;
+	effects: PassiveEffectView[];
+}
+
+export interface PassiveEffectView {
+	kind: PassiveEffectKind;
+	magnitudePercent: number;
+}
+
 /**
  * One allocation of the path optimizer.
  */
@@ -2129,8 +2158,7 @@ export type ProspectSliceType = 'global' | 'tag' | 'mob' | 'weapon';
 
 export interface ProtectionCostAllocation {
 	sessionId: string;
-	damageWeight: number;
-	deflectionCount: number;
+	hitCount: number;
 	allocationShare: number;
 	costPed: number;
 }
@@ -2658,6 +2686,8 @@ export interface SessionDefinition {
 	id: string;
 	name: string;
 	adHocSegments: boolean;
+	trackProtectionCosts: boolean;
+	trackProtectionBySegment: boolean;
 	/** A session that cannot be archived, because tracking always needs one to run under. It renames and takes a roster like any other. */
 	isProtected: boolean;
 	/** False for an archived definition: no longer offered for new sessions, but its recorded instances still reference it, so the review surface can still reach them. Only ever false in a listing that asked for the inactive ones. */
@@ -2677,6 +2707,8 @@ export interface SessionDefinition {
 export interface SessionDefinitionInput {
 	name: string;
 	ad_hoc_segments?: boolean;
+	track_protection_costs?: boolean;
+	track_protection_by_segment?: boolean;
 	roster?: SessionRosterEntryInput[];
 }
 
@@ -2831,6 +2863,7 @@ export interface SettingsPatch {
 	hotbar?: Record<string, unknown> | null;
 	active_trifecta_preset_id?: string | null;
 	trifecta_presets?: TrifectaPresetInput[] | null;
+	passive_effect_sources?: PassiveEffectSourceInput[] | null;
 	harvest_guardrail?: HarvestGuardrailInput | null;
 	loot_filter_blacklist?: string[] | null;
 }
@@ -3027,10 +3060,13 @@ export interface TrackingSnapshot {
 	sessionName?: string | null;
 	/** The selected session definition (stringified id): the active session's stamped reference when tracking, the configured selection (re-validated against an active definition) when idle. Absent when no definition is in force. */
 	sessionDefinitionId?: string | null;
+	trackProtectionCosts?: boolean | null;
+	trackProtectionBySegment?: boolean | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;
 	currentMob?: string | null;
 	currentTool?: string | null;
+	currentToolKind?: HeldItemKind | null;
 	/** What the held tool implies the next action is recorded as. */
 	currentActivity?: ToolActivity | null;
 	/** The Activities control's strip-level readout: whether it appears at all, the ready cue, and the standing set. Carried on every frame, idle included, over the definition a start would stamp, so picking a session shows what it will offer rather than making the surface appear only once tracking begins. The standing set is necessarily empty while idle. */
@@ -3253,6 +3289,10 @@ export async function protectionLoadoutArchive(loadoutId: number): Promise<Prote
 
 export async function protectionSelect(loadoutId: number): Promise<ProtectionOverview> {
 	return invokeCommand('protection_select', { loadout_id: loadoutId });
+}
+
+export async function protectionAssignSessionLoadout(sessionId: string, loadoutId: number): Promise<ProtectionOverview> {
+	return invokeCommand('protection_assign_session_loadout', { session_id: sessionId, loadout_id: loadoutId });
 }
 
 export async function protectionObservationConfirm(input: ProtectionObservationInput): Promise<ProtectionObservationOutcome> {

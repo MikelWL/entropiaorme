@@ -49,6 +49,8 @@ fn input(name: &str, roster: Vec<RosterEntryInput>) -> SessionDefinitionInput {
     SessionDefinitionInput {
         name: name.to_string(),
         ad_hoc_segments: false,
+        track_protection_costs: true,
+        track_protection_by_segment: true,
         roster,
     }
 }
@@ -88,6 +90,8 @@ async fn definition_crud_round_trips() {
         .create(SessionDefinitionInput {
             name: "  ARIS Dailies  ".to_string(),
             ad_hoc_segments: true,
+            track_protection_costs: true,
+            track_protection_by_segment: true,
             roster: vec![
                 family_entry(family_id),
                 quest_entry(quest_id),
@@ -135,6 +139,26 @@ async fn definition_crud_round_trips() {
 }
 
 #[tokio::test]
+async fn disabling_armour_costs_also_disables_segment_attribution() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _) = service(dir.path()).await;
+
+    let created = svc
+        .create(SessionDefinitionInput {
+            name: "Offensive costs only".to_string(),
+            ad_hoc_segments: false,
+            track_protection_costs: false,
+            track_protection_by_segment: true,
+            roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    assert!(!created.track_protection_costs);
+    assert!(!created.track_protection_by_segment);
+}
+
+#[tokio::test]
 async fn update_replaces_the_roster_wholesale() {
     let dir = tempfile::tempdir().unwrap();
     let (svc, db) = service(dir.path()).await;
@@ -154,6 +178,8 @@ async fn update_replaces_the_roster_wholesale() {
             SessionDefinitionInput {
                 name: "General Hunting".to_string(),
                 ad_hoc_segments: true,
+                track_protection_costs: true,
+                track_protection_by_segment: true,
                 roster: vec![segment_entry("Grind")],
             },
         )
@@ -368,6 +394,7 @@ async fn the_protected_default_cannot_be_archived_and_backs_every_selection() {
     assert_eq!(seeded.len(), 1);
     let default_id = seeded[0].id;
     assert_eq!(seeded[0].name, "Default Tracking");
+    assert!(!seeded[0].track_protection_by_segment);
 
     // Renaming is allowed: protection guards existence, not identity.
     svc.update(default_id, input("General Play", vec![]))
@@ -385,21 +412,21 @@ async fn the_protected_default_cannot_be_archived_and_backs_every_selection() {
     for configured in [None, Some(9999), Some(default_id)] {
         assert_eq!(
             super::resolve_selection(&db, configured).await.unwrap(),
-            Some((default_id, "General Play".to_string()))
+            Some((default_id, "General Play".to_string(), true, true))
         );
     }
     assert_eq!(
         super::resolve_selection(&db, Some(authored.id))
             .await
             .unwrap(),
-        Some((authored.id, "ARIS Dailies".to_string()))
+        Some((authored.id, "ARIS Dailies".to_string(), true, true))
     );
     svc.archive(authored.id).await.unwrap();
     assert_eq!(
         super::resolve_selection(&db, Some(authored.id))
             .await
             .unwrap(),
-        Some((default_id, "General Play".to_string()))
+        Some((default_id, "General Play".to_string(), true, true))
     );
 }
 

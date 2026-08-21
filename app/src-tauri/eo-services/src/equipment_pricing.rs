@@ -98,6 +98,7 @@ pub fn healing_profile_from_props(properties_json: &str) -> HealingProfile {
         tick_min: number("tick_min"),
         tick_max: number("tick_max"),
         tick_seconds: number("tick_seconds"),
+        ..HealingProfile::default()
     }
 }
 

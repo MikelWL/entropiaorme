@@ -223,6 +223,20 @@ pub fn manifest() -> Vec<CommandSpec> {
             returns: Some(schema(schema_for!(ProtectionOverview))),
         },
         CommandSpec {
+            name: "protection_assign_session_loadout",
+            args: vec![
+                ArgSpec {
+                    name: "session_id",
+                    schema: schema(schema_for!(String)),
+                },
+                ArgSpec {
+                    name: "loadout_id",
+                    schema: schema(schema_for!(i64)),
+                },
+            ],
+            returns: Some(schema(schema_for!(ProtectionOverview))),
+        },
+        CommandSpec {
             name: "protection_observation_confirm",
             args: vec![ArgSpec {
                 name: "input",

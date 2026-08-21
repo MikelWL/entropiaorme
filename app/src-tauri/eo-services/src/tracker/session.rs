@@ -54,6 +54,8 @@ pub struct SessionFacets {
     /// validated against an ACTIVE definition at start and immutable
     /// for the session's life (it rides the name facet's selection).
     pub definition_id: Option<i64>,
+    pub track_protection_costs: bool,
+    pub track_protection_by_segment: bool,
     /// The skill-boost configuration the session runs under, as the
     /// pill's labelled percentage.
     pub skill_boost_percent: Option<i64>,
@@ -193,6 +195,8 @@ pub(super) struct SessionAggregate {
     pub(super) mob_name: Option<String>,
     pub(super) session_name: Option<String>,
     pub(super) definition_id: Option<i64>,
+    pub(super) track_protection_costs: bool,
+    pub(super) track_protection_by_segment: bool,
     pub(super) skill_boost_percent: Option<i64>,
     pub(super) active_activities: Vec<ActiveActivity>,
     pub(super) harvest_swings: i64,
@@ -205,23 +209,32 @@ pub(super) struct SessionAggregate {
 }
 
 impl TrackerActor {
-    /// The in-memory aggregation over the live session: the detected
-    /// tool, whether the hand item is a harvesting tool, plus the
-    /// aggregate (None when idle).
-    pub(super) fn aggregate(&self) -> (Option<String>, bool, Option<SessionAggregate>) {
+    /// The in-memory aggregation over the live session: the held item and its
+    /// semantic kind, plus the aggregate (None when idle).
+    pub(super) fn aggregate(
+        &self,
+    ) -> (
+        Option<String>,
+        Option<crate::bus_events::HotbarItemKind>,
+        Option<SessionAggregate>,
+    ) {
         let Some(active) = self.session.active() else {
-            return (None, self.hand_is_harvest, None);
+            return (
+                self.held_item.as_ref().map(|item| item.0.clone()),
+                self.held_item.as_ref().map(|item| item.1),
+                None,
+            );
         };
-        // The displayed hand item: the harvesting tool when it was the
-        // last hand equip, otherwise the hotbar weapon.
-        let current_tool = if self.hand_is_harvest {
-            self.harvest_tool
+        let current_tool = self
+            .held_item
+            .as_ref()
+            .map(|item| item.0.clone())
+            .or_else(|| active.weapons.hotbar_tool.clone());
+        let current_tool_kind = self.held_item.as_ref().map(|item| item.1).or_else(|| {
+            current_tool
                 .as_ref()
-                .map(|tool| tool.name.clone())
-                .or_else(|| active.weapons.hotbar_tool.clone())
-        } else {
-            active.weapons.hotbar_tool.clone()
-        };
+                .map(|_| crate::bus_events::HotbarItemKind::Weapon)
+        });
 
         let kills = &active.session.kills;
         let mut weapon_cost: Ped = kills
@@ -426,6 +439,8 @@ impl TrackerActor {
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
             definition_id: active.facets.definition_id,
+            track_protection_costs: active.facets.track_protection_costs,
+            track_protection_by_segment: active.facets.track_protection_by_segment,
             // Read from the interval state, not the row mirror: the row's
             // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
             // and the readout is what the overlay renders the facet from.
@@ -455,7 +470,7 @@ impl TrackerActor {
                 unattributed_output_count: active.healing.unattributed_output_count,
             },
         };
-        (current_tool, self.hand_is_harvest, Some(aggregate))
+        (current_tool, current_tool_kind, Some(aggregate))
     }
 
     /// Prime the tracker with a fully-formed demo session, bypassing
@@ -736,7 +751,6 @@ impl TrackerActor {
         // row therefore keeps the magnitude only, while the declaration
         // itself rides the opening interval below, where `Some(0)`
         // survives as the baseline it is.
-        let protection = active_selection(&self.db).await?;
         let declared_boost = self
             .providers
             .config
@@ -763,11 +777,25 @@ impl TrackerActor {
             .to_string();
         let resolved =
             crate::session_definitions::resolve_selection(&self.db, configured_selection).await?;
+        let track_protection_costs = resolved
+            .as_ref()
+            .is_none_or(|(_, _, track_costs, _)| *track_costs);
+        let track_protection_by_segment = track_protection_costs
+            && resolved
+                .as_ref()
+                .is_some_and(|(_, _, _, track_by_segment)| *track_by_segment);
+        let protection = if track_protection_by_segment {
+            active_selection(&self.db).await?
+        } else {
+            None
+        };
         let facets = SessionFacets {
             name: Some(configured_name)
                 .filter(|name| !name.is_empty())
-                .or_else(|| resolved.as_ref().map(|(_, name)| name.clone())),
-            definition_id: resolved.map(|(id, _)| id),
+                .or_else(|| resolved.as_ref().map(|(_, name, _, _)| name.clone())),
+            definition_id: resolved.as_ref().map(|(id, _, _, _)| *id),
+            track_protection_costs,
+            track_protection_by_segment,
             skill_boost_percent: declared_boost.filter(|percent| *percent > 0),
         };
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -804,20 +832,24 @@ impl TrackerActor {
         let insert_name = facets.name.clone();
         let insert_definition = facets.definition_id;
         let insert_boost = facets.skill_boost_percent;
+        let insert_track_protection_costs = facets.track_protection_costs;
+        let insert_track_protection = facets.track_protection_by_segment;
         let opening_boost = declared_boost;
         self.db
             .with_writer(move |conn| {
                 conn.execute(
                     "INSERT INTO tracking_sessions \
                      (id, started_at, is_active, session_name, definition_id, \
-                      skill_boost_percent) \
-                     VALUES (?, ?, 1, ?, ?, ?)",
+                      skill_boost_percent, track_protection_costs, track_protection_by_segment) \
+                     VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         insert_id,
                         start_ts,
                         insert_name,
                         insert_definition,
-                        insert_boost
+                        insert_boost,
+                        insert_track_protection_costs as i64,
+                        insert_track_protection as i64,
                     ],
                 )?;
                 Ok(())
@@ -918,6 +950,9 @@ impl TrackerActor {
         let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
+        if !active.facets.track_protection_by_segment {
+            return Err(TrackerCommandError::ProtectionBySegmentDisabled);
+        }
         let now = instant_to_epoch(resolve_local(self.clock.now()));
         let session_id = active.session.id.clone();
         active
@@ -1114,11 +1149,11 @@ impl HuntTracker {
     /// the actor; the two session-scoped reads (skill-gain total,
     /// notable-event feed) run here, keyed on the captured session id.
     pub async fn snapshot(&self) -> Result<TrackingReadout, DbError> {
-        let (current_tool, current_tool_is_harvest, aggregate) = self.aggregate().await;
+        let (current_tool, current_tool_kind, aggregate) = self.aggregate().await;
         let Some(aggregated) = aggregate else {
             return Ok(TrackingReadout {
                 current_tool,
-                current_tool_is_harvest,
+                current_tool_kind,
                 active: None,
             });
         };
@@ -1199,6 +1234,8 @@ impl HuntTracker {
             current_mob: aggregated.mob_name.clone(),
             session_name: aggregated.session_name.clone(),
             definition_id: aggregated.definition_id,
+            track_protection_costs: aggregated.track_protection_costs,
+            track_protection_by_segment: aggregated.track_protection_by_segment,
             skill_boost_percent: aggregated.skill_boost_percent,
             active_activities: aggregated.active_activities.clone(),
             harvest_swings: aggregated.harvest_swings,
@@ -1222,7 +1259,7 @@ impl HuntTracker {
         };
         Ok(TrackingReadout {
             current_tool,
-            current_tool_is_harvest,
+            current_tool_kind,
             active: Some(active),
         })
     }

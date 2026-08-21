@@ -89,6 +89,8 @@ const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
+    #[error("Armour costs are not tracked by segment for this session")]
+    ProtectionBySegmentDisabled,
     #[error("Protection selection could not be persisted")]
     Persistence,
 }
@@ -330,7 +332,13 @@ impl HuntTracker {
 
     /// The in-memory aggregate half of the snapshot (see
     /// `session::SessionAggregate`).
-    async fn aggregate(&self) -> (Option<String>, bool, Option<session::SessionAggregate>) {
+    async fn aggregate(
+        &self,
+    ) -> (
+        Option<String>,
+        Option<crate::bus_events::HotbarItemKind>,
+        Option<session::SessionAggregate>,
+    ) {
         self.call(|reply| TrackerMsg::Aggregate(Box::new(reply)))
             .await
     }
