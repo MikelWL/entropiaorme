@@ -493,6 +493,11 @@ pub struct HuntingSignatureRow {
     pub confirmed_reward_ped: f64,
     /// Net markup realised when reward stock was later sold or converted.
     pub realised_reward_markup: f64,
+    /// Net markup realised when ordinary loot from this exact context was
+    /// later sold or converted. Internal accounting input for the API's
+    /// existing realised-return total, not a separate public statistic.
+    #[serde(skip)]
+    pub realised_loot_markup: f64,
     /// Actual reward items observed at completion. Their current market
     /// projection is resolved outside the accounting service.
     pub reward_items: Vec<HarvestLootItemRow>,
@@ -2151,6 +2156,7 @@ struct SignatureAgg {
     duration_hours: f64,
     confirmed_reward_ped: f64,
     realised_reward_markup: f64,
+    realised_loot_markup: f64,
     reward_kinds: std::collections::BTreeSet<String>,
     reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
@@ -2529,22 +2535,10 @@ fn hunting_expected_aggregates(
             target.add(&evidence, cell.shots_fired);
             context.add(&evidence, cell.shots_fired);
         } else {
-            overall.mark_missing(
-                cell.missing_candidate_raw_tt,
-                cell.missing_basis_phases,
-            );
-            definition.mark_missing(
-                cell.missing_candidate_raw_tt,
-                cell.missing_basis_phases,
-            );
-            target.mark_missing(
-                cell.missing_candidate_raw_tt,
-                cell.missing_basis_phases,
-            );
-            context.mark_missing(
-                cell.missing_candidate_raw_tt,
-                cell.missing_basis_phases,
-            );
+            overall.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            definition.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            target.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            context.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
         }
     }
 
@@ -2570,12 +2564,8 @@ fn hunting_activity_read(
     use std::collections::{BTreeMap, HashMap};
 
     let (sessions, kill_grain, pes_grain) = hunting_sessions(conn, epoch_start)?;
-    let (
-        overall_expected,
-        mut definition_expected,
-        mut species_expected,
-        mut context_expected,
-    ) = hunting_expected_aggregates(conn, epoch_start, &sessions)?;
+    let (overall_expected, mut definition_expected, mut species_expected, mut context_expected) =
+        hunting_expected_aggregates(conn, epoch_start, &sessions)?;
     let round2 = |value: f64| eo_wire::normalizer::round_half_even(value, 2);
     let round4 = |value: f64| eo_wire::normalizer::round_half_even(value, 4);
     let rate = |returns: f64, cycled: f64| {
@@ -3080,11 +3070,12 @@ fn hunting_activity_read(
         }
     }
 
-    // A later sale realises only markup beyond the reward's TT principal.
-    // Project that gain back through the immutable quest context carried by
-    // each consumed stock movement. Quantity is the allocation basis so a
-    // zero-TT voucher remains attributable.
+    // A later stock outcome realises only markup beyond the item's TT
+    // principal. Project that gain back through the immutable activity
+    // context carried by each consumed movement. Quantity is the allocation
+    // basis so a zero-TT reward voucher remains attributable.
     let mut context_realised_reward_markup: HashMap<i64, f64> = HashMap::new();
+    let mut context_realised_loot_markup: HashMap<i64, f64> = HashMap::new();
     for realised in realised_stock_outcomes(conn)? {
         if realised.outcome.activity_net_markup.abs() <= STOCK_EPSILON {
             continue;
@@ -3107,16 +3098,23 @@ fn hunting_activity_read(
             continue;
         }
         for (source_kind, context_id, quantity) in contributions {
-            if source_kind != "quest" {
-                continue;
-            }
             let Some(context_id) = context_id else {
                 continue;
             };
-            *context_realised_reward_markup
-                .entry(context_id)
-                .or_default() +=
+            let attributed_markup =
                 realised.outcome.activity_net_markup * quantity / attributed_quantity;
+            match source_kind.as_str() {
+                "hunt" => {
+                    *context_realised_loot_markup.entry(context_id).or_default() +=
+                        attributed_markup;
+                }
+                "quest" => {
+                    *context_realised_reward_markup
+                        .entry(context_id)
+                        .or_default() += attributed_markup;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -3178,6 +3176,10 @@ fn hunting_activity_read(
                 agg.reward_kinds.extend(kinds.iter().cloned());
             }
             agg.realised_reward_markup += context_realised_reward_markup
+                .get(context_id)
+                .copied()
+                .unwrap_or(0.0);
+            agg.realised_loot_markup += context_realised_loot_markup
                 .get(context_id)
                 .copied()
                 .unwrap_or(0.0);
@@ -3440,6 +3442,7 @@ fn assemble_signatures(
             expected: agg.expected.finish(),
             confirmed_reward_ped: round2(agg.confirmed_reward_ped),
             realised_reward_markup: round2(agg.realised_reward_markup),
+            realised_loot_markup: round2(agg.realised_loot_markup),
             reward_items: loot_rows(&agg.reward_items),
             reward_status: status,
             loot_items: loot_rows(&agg.loot_items),
@@ -3567,6 +3570,7 @@ fn assemble_signatures(
                 .and_then(|expected| expected.finish()),
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
             realised_reward_markup: round2(variants.iter().map(|v| v.realised_reward_markup).sum()),
+            realised_loot_markup: round2(variants.iter().map(|v| v.realised_loot_markup).sum()),
             reward_items: loot_rows(&family_reward_items),
             reward_status: family_reward_status,
             loot_items: loot_rows(&family_items),
@@ -3874,6 +3878,7 @@ fn insert_movement(
     ref_id: Option<&str>,
     provenance: Option<stock_allocation::StockProvenance<'_>>,
     session_definition_id: Option<i64>,
+    activity_context_id: Option<i64>,
     tool_name: Option<&str>,
     quantity: f64,
     tt_value: f64,
@@ -3897,7 +3902,8 @@ fn insert_movement(
         Some(StockProvenance::Hunt(species)) => species,
         _ => None,
     };
-    let (quest_reward_item_id, quest_run_id, quest_id, activity_context_id) = match provenance {
+    let (quest_reward_item_id, quest_run_id, quest_id, quest_activity_context_id) = match provenance
+    {
         Some(StockProvenance::Quest {
             reward_item_id,
             quest_run_id,
@@ -3911,6 +3917,7 @@ fn insert_movement(
         ),
         _ => (None, None, None, None),
     };
+    let activity_context_id = activity_context_id.or(quest_activity_context_id);
     conn.execute(
         "INSERT INTO stock_movements ( \
              item_name, movement_kind, ref_id, source_kind, source_event_id, \
@@ -3973,6 +3980,7 @@ fn record_opening_balance(
         item_name,
         "opening_balance",
         Some(ref_id),
+        None,
         None,
         None,
         None,
@@ -4195,6 +4203,10 @@ struct PositionKey {
     /// Hunting's user-designated context; absent for harvesting and
     /// genuinely unassigned or pre-context hunted stock.
     definition_id: Option<i64>,
+    /// Hunting's exact declared activity context. This remains separate from
+    /// the definition so realised stock outcomes can reach the sub-activity
+    /// breakdown without making that attribution a target-species guess.
+    activity_context_id: Option<i64>,
     /// The producing tool; empty when unknown.
     tool: String,
     /// Present only for confirmed quest-reward stock.
@@ -4242,6 +4254,7 @@ fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<Positi
             tier: String::new(),
             species: species.clone(),
             definition_id: None,
+            activity_context_id: None,
             tool: String::new(),
             quest: None,
         };
@@ -4314,6 +4327,7 @@ fn item_positions(
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: None,
                 })
@@ -4328,13 +4342,13 @@ fn item_positions(
         let mut stmt = conn.prepare(
             "SELECT CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
                     ELSE '' END AS species, \
-                    li.is_enhancer_shrapnel, s.definition_id, \
+                    li.is_enhancer_shrapnel, s.definition_id, k.context_id, \
                     SUM(li.quantity), SUM(li.value_ped) \
              FROM kill_loot_items AS li \
              JOIN kills AS k ON k.id = li.kill_id \
              JOIN tracking_sessions AS s ON s.id = k.session_id \
              WHERE li.item_name = ? AND li.deactivated_at IS NULL \
-             GROUP BY species, li.is_enhancer_shrapnel, s.definition_id",
+             GROUP BY species, li.is_enhancer_shrapnel, s.definition_id, k.context_id",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
@@ -4342,12 +4356,13 @@ fn item_positions(
                     row.get::<_, String>(0)?,
                     row.get::<_, bool>(1)?,
                     row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, f64>(3)?,
+                    row.get::<_, Option<i64>>(3)?,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (species, is_shrapnel, definition_id, quantity, tt_value) in rows {
+        for (species, is_shrapnel, definition_id, context_id, quantity, tt_value) in rows {
             base_qty += quantity;
             base_tt += tt_value;
             *by_source
@@ -4356,6 +4371,7 @@ fn item_positions(
                     tier: String::new(),
                     species,
                     definition_id,
+                    activity_context_id: (!is_shrapnel).then_some(context_id).flatten(),
                     tool: String::new(),
                     quest: None,
                 })
@@ -4412,6 +4428,7 @@ fn item_positions(
                     tier: String::new(),
                     species: String::new(),
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: Some(QuestPositionKey {
                         reward_item_id,
@@ -4480,6 +4497,11 @@ fn item_positions(
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
+                    activity_context_id: if source_kind == "hunt" {
+                        context_id
+                    } else {
+                        None
+                    },
                     tool: tool.unwrap_or_default(),
                     quest: match (reward_item_id, run_id, quest_id) {
                         (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
@@ -4562,6 +4584,7 @@ fn all_item_positions(
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: None,
                 })
@@ -4588,6 +4611,7 @@ fn all_item_positions(
                     tier: String::new(),
                     species,
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: None,
                 })
@@ -4641,6 +4665,7 @@ fn all_item_positions(
                     tier: String::new(),
                     species: String::new(),
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: Some(QuestPositionKey {
                         reward_item_id,
@@ -4691,6 +4716,11 @@ fn all_item_positions(
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
+                    // The batch inventory read uses session-grain projected
+                    // loot, so collapse hunted movement contexts back to that
+                    // same grain. Write paths use `item_positions`, which
+                    // retains the exact context for future attribution.
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: match (reward_item_id, run_id, quest_id) {
                         (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
@@ -4759,6 +4789,7 @@ fn as_source_positions(
             // Keep the session-definition key on every Hunting position;
             // optional target evidence never gates the deliberate axis.
             session_definition_id: key.definition_id,
+            activity_context_id: key.activity_context_id,
             tool_name: (!key.tool.is_empty()).then_some(key.tool.as_str()),
             quantity: *quantity,
         })
@@ -5354,6 +5385,7 @@ impl AnalyticsService {
                         Some(&id_c),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -5834,6 +5866,7 @@ impl AnalyticsService {
                             Some(&listing_id),
                             provenance,
                             definition_id,
+                            context_id,
                             tool.as_deref(),
                             -quantity,
                             -tt_value,
@@ -5991,6 +6024,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -6010,6 +6044,7 @@ impl AnalyticsService {
                             Some(&id),
                             allocation.provenance,
                             allocation.session_definition_id,
+                            allocation.activity_context_id,
                             allocation.tool_name,
                             allocation_output_tt / target_unit_tt,
                             allocation_output_tt,
@@ -6102,6 +6137,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -6197,6 +6233,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -10634,12 +10671,12 @@ mod tests {
     #[test]
     fn aggregate_effective_efficiency_weights_mixed_loadouts_by_their_economics() {
         use crate::expected_hunting::{
-            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence,
-            OffensiveComponentKind, OffensiveLoadoutEvidence,
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
         };
 
-        let evidence = |name: &str, efficiency_pct: f64, raw_tt: f64, premium: f64| {
-            OffensiveLoadoutEvidence {
+        let evidence =
+            |name: &str, efficiency_pct: f64, raw_tt: f64, premium: f64| OffensiveLoadoutEvidence {
                 components: vec![OffensiveComponentEvidence {
                     kind: OffensiveComponentKind::Weapon,
                     catalog_id: None,
@@ -10654,14 +10691,10 @@ mod tests {
                     robot: 50.0,
                 },
                 looter_source: LooterSource::ThreeLooterMean,
-            }
-        };
+            };
         let mut aggregate = ExpectedHuntingAccumulator::default();
         aggregate.add(&evidence("High-efficiency rifle", 90.0, 0.03, 0.0), 10);
-        aggregate.add(
-            &evidence("Limited finisher", 70.0, 0.01, 0.0002),
-            20,
-        );
+        aggregate.add(&evidence("Limited finisher", 70.0, 0.01, 0.0002), 20);
 
         let result = aggregate.finish().expect("modelled mixed loadouts");
         assert_eq!(result.modelled_raw_tt, 0.5);
@@ -11156,6 +11189,14 @@ mod tests {
         // unattributed. Only the non-enhancer half reaches Hunting realised.
         let realised = service.realised_markup_by_species().await.unwrap();
         assert!((realised[0].net_markup - 0.05).abs() < 1e-9);
+        let activity = service.hunting_activity("all").await.unwrap();
+        let family = activity.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("activity carrying the converted loot");
+        assert!((family.realised_loot_markup - 0.05).abs() < 1e-9);
+        assert!(family.realised_reward_markup.abs() < 1e-9);
 
         let conversion = service
             .activity_history(Profession::Hunting)

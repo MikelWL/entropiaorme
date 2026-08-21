@@ -111,6 +111,7 @@ describe('inventory assets', () => {
 						markupHorizon: null,
 						tier: 'illiquid',
 						effectiveMarkupPct: 100.6,
+						markupBasis: 'nanocube',
 						floored: true,
 						salesPed: null,
 						weeklySalesPed: null,
@@ -149,6 +150,7 @@ describe('inventory assets', () => {
 			markupHorizon: 'week',
 			tier: 'liquid' as const,
 			effectiveMarkupPct: 110,
+			markupBasis: 'market' as const,
 			floored: false,
 			salesPed: 1_000,
 			weeklySalesPed: 1_000,
@@ -170,6 +172,53 @@ describe('inventory assets', () => {
 		expect(within(accumulating).getByText('2.00').className).toContain('text-text');
 		expect(within(accumulating).getByText('2.00').className).not.toContain('text-positive');
 		expect(within(ready).getByText('2.00').className).toContain('text-positive');
+	});
+
+	it('shows Shrapnel market MU as context but applies the fixed 101% conversion value', async () => {
+		render(InventoryHoldings, {
+			props: lootProps([
+				{
+					itemName: 'Shrapnel',
+					heldQty: 10_000,
+					heldTt: 10,
+					listedQty: 0,
+					readings: [{ horizon: 'week', markupPct: 100.9, salesPed: 20_000 }],
+					opportunity: marketOpportunity(
+						{
+							itemName: 'Shrapnel',
+							markupPct: 100.9,
+							unitPricePed: null,
+							horizon: 'week',
+							salesPed: 20_000,
+							recommendedPacketTt: null,
+							readings: [{ horizon: 'week', markupPct: 100.9, salesPed: 20_000 }],
+						},
+						100.6,
+					),
+					markupPct: 100.9,
+					markupHorizon: 'week',
+					tier: 'liquid',
+					effectiveMarkupPct: 101,
+					markupBasis: 'shrapnel_conversion',
+					floored: false,
+					salesPed: 20_000,
+					weeklySalesPed: 20_000,
+					recommendedPacketTt: null,
+				},
+			]),
+		});
+
+		const shrapnelRow = screen.getByText('Shrapnel').closest('li');
+		expect(shrapnelRow).toBeInstanceOf(HTMLElement);
+		if (!(shrapnelRow instanceof HTMLElement)) return;
+		const observed = within(shrapnelRow).getByText('100.9%');
+		expect(observed.className).toContain('line-through');
+		expect(within(shrapnelRow).getByText('101.0%')).not.toBeNull();
+		const info = screen.getByRole('button', { name: 'Fixed Shrapnel conversion value' });
+		expect(info.textContent).toBe('i');
+		await fireEvent.mouseEnter(info);
+		expect(screen.getByText(/last seen market markup on Shrapnel was 100.9%/i)).not.toBeNull();
+		expect(screen.getByText(/1% gain then enters Realised Net/i)).not.toBeNull();
 	});
 
 	it('offers preset and custom packet fee caps beside markup confidence', async () => {

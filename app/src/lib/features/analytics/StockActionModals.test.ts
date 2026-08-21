@@ -17,6 +17,7 @@ const stock: TreeCuttingStock = {
 	markupHorizon: null,
 	tier: 'illiquid',
 	effectiveMarkupPct: 100.6,
+	markupBasis: 'nanocube',
 	floored: true,
 	salesPed: null,
 	weeklySalesPed: null,

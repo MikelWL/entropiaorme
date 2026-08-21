@@ -1074,6 +1074,7 @@ export interface HuntingActivityComparison {
 	realisedRewardMarkup: number;
 	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */
 	rewardItems: HarvestLootItem[];
+	/** Historical wire name for total realised returns at this activity grain: ordinary loot TT, confirmed reward TT, and later confirmed markup from both ordinary loot and reward stock. */
 	rewardedReturns: number;
 	rewardedRate: number;
 	rewardStatus: HuntingRewardStatus;

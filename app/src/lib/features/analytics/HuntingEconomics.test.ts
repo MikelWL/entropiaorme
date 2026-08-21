@@ -23,6 +23,7 @@ const item = {
 	ownMarkupPct: 130,
 	markupHorizon: 'week',
 	effectiveMarkupPct: 130,
+	markupBasis: 'market' as const,
 	floored: false,
 	tier: 'liquid' as const,
 	salesPed: 5000,
@@ -55,7 +56,6 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		returns: 90,
 		lootRate: 0.9,
 		expected: null,
-		expected: null,
 		lootItems: [],
 		activities: [],
 		key: 'definition:7',
@@ -63,9 +63,6 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		confirmedRewardPed: 0,
 		realisedMarkup: 15,
 		muProjectedReturns: 106,
-		lootMarkupFactor: null,
-		expectedTtRate: null,
-		expectedMarketRate: null,
 		muRate: 1.06,
 		lootMarkupFactor: 106 / 90,
 		expectedTtRate: null,
@@ -117,6 +114,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		confirmedRewardPed: 0,
 		realisedRewardMarkup: 0,
 		rewardItems: [],
@@ -128,6 +126,9 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		key: 'quest:daily-hunting-1',
 		isUnscoped: false,
 		muProjectedReturns: 106,
+		lootMarkupFactor: 106 / 90,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		items: [item],
 		variants: [],
 		...overrides,
@@ -178,6 +179,7 @@ describe('Hunting economic comparisons', () => {
 			markupHorizon: null,
 			tier: 'illiquid' as const,
 			effectiveMarkupPct: 100.6,
+			markupBasis: 'nanocube' as const,
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
@@ -227,6 +229,7 @@ describe('Hunting economic comparisons', () => {
 			markupHorizon: null,
 			tier: 'illiquid' as const,
 			effectiveMarkupPct: 100.6,
+			markupBasis: 'nanocube' as const,
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
@@ -308,9 +311,12 @@ describe('Hunting economic comparisons', () => {
 		const trigger = screen.getByLabelText('Switch hunting view (currently ARIS Dailies)');
 		expect(trigger.className).not.toContain('border');
 		expect(screen.getByTitle('ARIS Dailies').className).toContain('text-text');
-		expect(screen.getByTestId('activity-economic-headline').className).toContain(
-			'grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))]',
-		);
+		const headline = screen.getByTestId('activity-economic-headline');
+		expect(headline.className).toContain('economic-horizon');
+		expect(screen.getByText('Session view')).not.toBeNull();
+		expect(
+			within(headline).queryByLabelText('Switch hunting view (currently ARIS Dailies)'),
+		).toBeNull();
 		expect(screen.getByTestId('economic-subordinate-cycled').textContent).toContain('100.00');
 		const ttRate = within(screen.getByTestId('economic-subordinate-tt-rate')).getByText('90.0%');
 		const muRate = within(screen.getByTestId('economic-subordinate-mu-rate')).getByText('106.0%');

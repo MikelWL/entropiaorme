@@ -55,6 +55,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 				ownMarkupPct: 120,
 				markupHorizon: 'week',
 				effectiveMarkupPct: 120,
+				markupBasis: 'market',
 				floored: false,
 				tier: 'liquid',
 				salesPed: 5000,
@@ -88,21 +89,23 @@ describe('HuntingSessionActivities', () => {
 		expect(activityName.className).toContain('break-words');
 		expect(activityName.className).not.toContain('truncate');
 		const grid = screen.getByTestId('activity-economic-grid');
-		expect(grid.className).toContain('grid-cols-4');
+		expect(grid.className).toContain('economic-horizon');
 		for (const label of [
-			'Reward TT',
 			'TT Net',
 			'MU Net',
 			'Realised Net',
-			'Reward MU',
 			'TT Rate',
 			'MU Rate',
 			'Realised Rate',
 		]) {
 			expect(within(grid).getByText(label)).not.toBeNull();
 		}
-		expect(within(grid).getByText('+15.00')).not.toBeNull();
-		expect(within(grid).getByText('18.00')).not.toBeNull();
+		const reward = screen.getByTestId('activity-reward-context');
+		expect(within(reward).getByText('Completion reward')).not.toBeNull();
+		expect(within(reward).getByText('Reward TT')).not.toBeNull();
+		expect(within(reward).getByText('Reward MU')).not.toBeNull();
+		expect(within(reward).getByText('+15.00')).not.toBeNull();
+		expect(within(reward).getByText('18.00')).not.toBeNull();
 		expect(within(grid).queryByText('Cycled')).toBeNull();
 		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
 		expect(within(grid).getByText('+5.00').className).toContain('text-positive');

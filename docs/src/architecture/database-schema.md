@@ -917,10 +917,13 @@ activity's TT return.
   source kind carries Hunting independently of its optional observed species;
   harvesting tier/tool and Hunting species/session definition remain
   downstream analytical dimensions through transformations and into realised
-  outcomes. Quest stock additionally carries reward-item, durable-run, quest,
-  activity-context, and session-definition identity. Missing mob evidence
-  therefore limits target detail without suppressing stock or activity
-  attribution.
+  outcomes. Hunting loot also retains the exact declared activity context when
+  one was captured, so a later sale or conversion can attribute realised
+  markup to that activity rather than only to the session or species. Quest
+  stock additionally carries reward-item, durable-run, quest,
+  activity-context, and session-definition identity. Missing mob or context
+  evidence therefore limits target detail without suppressing stock or broader
+  activity attribution.
 
 Every outcome can be undone as a correction while retaining its lifecycle row
 marked as undone. A conversion undo is refused if later movements have already

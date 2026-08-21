@@ -87,6 +87,7 @@
 					data-testid={disclosure ? `${disclosure}-loot-list` : undefined}
 				>
 			{#each visible as item (item.name)}
+				{@const valuationAvailable = marketAvailable || item.markupBasis === 'shrapnel_conversion'}
 				<li
 					class="flex items-center gap-3 rounded-md border border-transparent px-2.5 py-2
 						hover:border-border/40 hover:bg-surface-hover/30
@@ -103,14 +104,14 @@
 					</span>
 
 					<div class="w-20 shrink-0 flex items-center justify-end">
-						{#if !marketAvailable}
+						{#if !valuationAvailable}
 							<span class="text-sm text-text-tertiary">{NO_DATA}</span>
 						{:else}
 							<span
 								class="inline-flex h-5 flex-col items-end justify-center tabular-nums"
 								aria-label={markupLabel(item)}
 							>
-								{#if item.floored && item.ownMarkupPct !== null}
+								{#if (item.floored || item.markupBasis === 'shrapnel_conversion') && item.ownMarkupPct !== null}
 									<span class="text-[9px] leading-[9px] text-text-tertiary line-through">
 										{formatPercent(item.ownMarkupPct / 100)}
 									</span>
@@ -127,8 +128,12 @@
 					</div>
 
 					<div class="w-12 shrink-0 flex items-center justify-center">
-						{#if !marketAvailable}
+						{#if !valuationAvailable}
 							<span class="text-sm text-text-tertiary">{NO_DATA}</span>
+						{:else if item.markupBasis === 'shrapnel_conversion'}
+							<InfoTip align="right" width="w-96" label="Fixed Shrapnel conversion value">
+								{@render confidenceBody(item)}
+							</InfoTip>
 						{:else}
 							<InfoTip align="right" width="w-96" label={confidenceTitle(item.tier)}>
 								{#snippet trigger()}

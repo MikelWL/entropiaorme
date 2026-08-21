@@ -60,6 +60,9 @@ pub struct SourcePosition<'a> {
     /// Hunting's user-designated context. `None` for harvesting, genuinely
     /// unassigned hunting, and movements recorded before this dimension.
     pub session_definition_id: Option<i64>,
+    /// The exact declared activity context that produced hunted stock.
+    /// `None` for harvesting, unstamped hunting, and legacy positions.
+    pub activity_context_id: Option<i64>,
     /// The tool that produced it. `None` when the swing recorded no tool,
     /// when the movement predates tool capture, or for hunted stock (a
     /// kill's loot is not a single tool's produce).
@@ -72,6 +75,7 @@ pub struct SourcePosition<'a> {
 pub struct SourceAllocation<'a> {
     pub provenance: Option<StockProvenance<'a>>,
     pub session_definition_id: Option<i64>,
+    pub activity_context_id: Option<i64>,
     pub tool_name: Option<&'a str>,
     pub quantity: f64,
     pub tt_value: f64,
@@ -143,6 +147,7 @@ pub fn allocate<'a>(
         allocations.push(SourceAllocation {
             provenance: position.provenance,
             session_definition_id: position.session_definition_id,
+            activity_context_id: position.activity_context_id,
             tool_name: position.tool_name,
             quantity: share,
             tt_value: share * unit_tt,
@@ -167,6 +172,7 @@ pub fn allocate<'a>(
         allocations.push(SourceAllocation {
             provenance: None,
             session_definition_id: None,
+            activity_context_id: None,
             tool_name: None,
             quantity: excess,
             tt_value: excess * unit_tt,
@@ -255,6 +261,7 @@ mod tests {
         SourcePosition {
             provenance: Some(StockProvenance::Harvest(tier)),
             session_definition_id: None,
+            activity_context_id: None,
             tool_name: None,
             quantity,
         }
@@ -264,6 +271,7 @@ mod tests {
         SourcePosition {
             provenance: Some(StockProvenance::Hunt(Some(name))),
             session_definition_id: None,
+            activity_context_id: None,
             tool_name: None,
             quantity,
         }
@@ -273,6 +281,7 @@ mod tests {
         SourcePosition {
             provenance: Some(StockProvenance::Hunt(None)),
             session_definition_id: None,
+            activity_context_id: None,
             tool_name: None,
             quantity,
         }
@@ -282,6 +291,7 @@ mod tests {
         SourcePosition {
             provenance: Some(StockProvenance::Harvest(tier)),
             session_definition_id: None,
+            activity_context_id: None,
             tool_name: Some(tool),
             quantity,
         }
@@ -381,12 +391,14 @@ mod tests {
             SourcePosition {
                 provenance: Some(StockProvenance::Hunt(Some("Atrox"))),
                 session_definition_id: Some(7),
+                activity_context_id: Some(31),
                 tool_name: None,
                 quantity: 75.0,
             },
             SourcePosition {
                 provenance: Some(StockProvenance::Hunt(Some("Atrox"))),
                 session_definition_id: Some(9),
+                activity_context_id: Some(32),
                 tool_name: None,
                 quantity: 25.0,
             },
@@ -406,10 +418,12 @@ mod tests {
         assert!((first.quantity - 30.0).abs() < 1e-9);
         assert!((second.quantity - 10.0).abs() < 1e-9);
         assert_eq!(first.provenance, Some(StockProvenance::Hunt(Some("Atrox"))));
+        assert_eq!(first.activity_context_id, Some(31));
         assert_eq!(
             second.provenance,
             Some(StockProvenance::Hunt(Some("Atrox")))
         );
+        assert_eq!(second.activity_context_id, Some(32));
     }
 
     /// Missing target evidence never turns known Hunting loot into external
@@ -492,6 +506,7 @@ mod tests {
             SourcePosition {
                 provenance: None,
                 session_definition_id: None,
+                activity_context_id: None,
                 tool_name: None,
                 quantity: 5.0,
             },
@@ -530,6 +545,7 @@ mod tests {
             SourcePosition {
                 provenance: None,
                 session_definition_id: None,
+                activity_context_id: None,
                 tool_name: None,
                 quantity: 50.0,
             },

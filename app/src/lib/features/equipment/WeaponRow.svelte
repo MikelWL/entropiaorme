@@ -48,7 +48,9 @@
 		if (!effective) return NO_DATA;
 		switch (effective.status) {
 			case 'within_model_range':
-				return `${effective.efficiencyPct.toFixed(1)}%`;
+				return effective.efficiencyPct === null
+					? NO_DATA
+					: `${effective.efficiencyPct.toFixed(1)}%`;
 			case 'below_model_range':
 				return 'Below model range';
 			case 'above_model_range':

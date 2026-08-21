@@ -27,7 +27,35 @@ export const confidenceTitle = (tier: TreeCuttingItem['tier']) => {
 	return 'Low markup confidence: Do not rely on realising this markup';
 };
 
+export const shrapnelMarkupLabel = (
+	observedMarkupPct: number | null,
+	effectiveMarkupPct: number,
+) => {
+	if (observedMarkupPct !== null) {
+		return `Last seen market markup ${formatPercent(observedMarkupPct / 100)}; projections use the fixed ${formatPercent(effectiveMarkupPct / 100)} Shrapnel conversion value`;
+	}
+	return `Projections use the fixed ${formatPercent(effectiveMarkupPct / 100)} Shrapnel conversion value`;
+};
+
+export function shrapnelConversionTip(
+	observedMarkupPct: number | null,
+	effectiveMarkupPct: number,
+): { title: string; subtitle: string; note: string } {
+	const observed =
+		observedMarkupPct === null
+			? ''
+			: `The last seen market markup on Shrapnel was ${formatPercent(observedMarkupPct / 100)}. `;
+	return {
+		title: 'Fixed Shrapnel conversion value',
+		subtitle: `${observed}EntropiaOrme uses ${formatPercent(effectiveMarkupPct / 100)} as a fixed value for Loot MU and expected-return projections, representing conversion to Universal Ammo.`,
+		note: 'This remains projected value until the conversion is recorded. The 1% gain then enters Realised Net.',
+	};
+}
+
 export const markupLabel = (item: TreeCuttingItem) => {
+	if (item.markupBasis === 'shrapnel_conversion') {
+		return shrapnelMarkupLabel(item.ownMarkupPct, item.effectiveMarkupPct);
+	}
 	if (item.floored && item.ownMarkupPct !== null) {
 		return `Observed markup ${formatPercent(item.ownMarkupPct / 100)}; projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
 	}
@@ -45,6 +73,9 @@ export function confidenceTip(item: TreeCuttingItem): {
 	example?: string;
 	note?: string;
 } {
+	if (item.markupBasis === 'shrapnel_conversion') {
+		return shrapnelConversionTip(item.ownMarkupPct, item.effectiveMarkupPct);
+	}
 	const projectionNote = item.floored
 		? `With the current confidence setting, MU projections use the ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube MU instead.`
 		: undefined;

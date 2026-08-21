@@ -213,12 +213,10 @@ pub struct EquipmentEffectiveEfficiency {
 impl From<expected_hunting::EffectiveEfficiency> for EquipmentEffectiveEfficiency {
     fn from(value: expected_hunting::EffectiveEfficiency) -> Self {
         match value {
-            expected_hunting::EffectiveEfficiency::WithinModelRange { efficiency_pct } => {
-                Self {
-                    status: EquipmentEffectiveEfficiencyStatus::WithinModelRange,
-                    efficiency_pct: Some(efficiency_pct).into(),
-                }
-            }
+            expected_hunting::EffectiveEfficiency::WithinModelRange { efficiency_pct } => Self {
+                status: EquipmentEffectiveEfficiencyStatus::WithinModelRange,
+                efficiency_pct: Some(efficiency_pct).into(),
+            },
             expected_hunting::EffectiveEfficiency::BelowModelRange => Self {
                 status: EquipmentEffectiveEfficiencyStatus::BelowModelRange,
                 efficiency_pct: None.into(),

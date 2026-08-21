@@ -5,6 +5,7 @@
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import { tick } from 'svelte';
 	import type { TreeCuttingStock } from './treeCuttingModel.svelte';
+	import { shrapnelConversionTip, shrapnelMarkupLabel } from './marketConfidence';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
 
 	let {
@@ -114,6 +115,9 @@
 	};
 	const markupLabel = (item: TreeCuttingStock) => {
 		if (item.effectiveMarkupPct == null) return 'No markup available';
+		if (item.markupBasis === 'shrapnel_conversion') {
+			return shrapnelMarkupLabel(item.markupPct, item.effectiveMarkupPct);
+		}
 		if (item.floored && item.markupPct !== null) {
 			return `Observed markup ${formatPercent(item.markupPct / 100)}; projections use ${formatPercent(item.effectiveMarkupPct / 100)} Nanocube markup`;
 		}
@@ -129,6 +133,9 @@
 		example?: string;
 		note?: string;
 	} {
+		if (item.markupBasis === 'shrapnel_conversion' && item.effectiveMarkupPct !== null) {
+			return shrapnelConversionTip(item.markupPct, item.effectiveMarkupPct);
+		}
 		if (item.markupPct == null || !item.opportunity) {
 			return {
 				title: confidenceTitle(item.tier),
@@ -351,7 +358,7 @@
 									class="inline-flex h-5 flex-col items-end justify-center tabular-nums
 										border-b border-dotted border-border/70"
 								>
-									{#if item.floored}
+									{#if item.floored || item.markupBasis === 'shrapnel_conversion'}
 										<span class="text-[9px] leading-[9px] text-text-tertiary line-through">
 											{formatPercent(observedMarkup / 100)}
 										</span>
@@ -381,7 +388,11 @@
 				</div>
 
 				<div class="w-12 shrink-0 flex items-center justify-center">
-					{#if item.tier}
+					{#if item.markupBasis === 'shrapnel_conversion'}
+						<InfoTip align="right" width="w-96" label="Fixed Shrapnel conversion value">
+							{@render confidenceBody(item)}
+						</InfoTip>
+					{:else if item.tier}
 						<InfoTip
 							align="right"
 							width="w-96"

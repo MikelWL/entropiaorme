@@ -908,8 +908,7 @@ mod tests {
             );
 
             recompute_session(conn, "ended")?;
-            let recomputed =
-                evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            let recomputed = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
             assert_eq!(
                 recomputed[&(
                     "ended".to_string(),

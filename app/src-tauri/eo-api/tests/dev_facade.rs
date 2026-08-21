@@ -228,5 +228,5 @@ async fn rebuild_projections_reports_every_model_matching_under_developer_mode()
 
     let report = api.dev_rebuild_projections().await.expect("rebuild");
     assert!(report.all_matched, "{report:?}");
-    assert_eq!(report.tables.len(), 8);
+    assert_eq!(report.tables.len(), 9);
 }

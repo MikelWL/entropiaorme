@@ -19,6 +19,7 @@ const item = {
 	ownMarkupPct: 353.7,
 	markupHorizon: 'week',
 	effectiveMarkupPct: 353.7,
+	markupBasis: 'market' as const,
 	floored: false,
 	tier: 'liquid' as const,
 	salesPed: 320,
@@ -85,7 +86,13 @@ describe('Tree Cutting economic comparisons', () => {
 			expect(surface.className).not.toContain(boxClass);
 		}
 		expect(screen.getByLabelText('Switch tree cutting view (currently Overall)')).not.toBeNull();
-		for (const label of ['TT Net', 'MU Net', 'Realised Net', 'Cycled', 'TT Rate', 'MU Rate']) {
+		expect(screen.getByText('Board activity')).not.toBeNull();
+		expect(
+			within(screen.getByTestId('activity-economic-headline')).queryByLabelText(
+				'Switch tree cutting view (currently Overall)',
+			),
+		).toBeNull();
+		for (const label of ['TT Net', 'MU Net', 'Realised Net', 'PED cycled', 'TT Rate', 'MU Rate']) {
 			expect(screen.getByText(label)).not.toBeNull();
 		}
 		for (const operation of ['Stock', 'Market', 'History', 'Sell', 'Convert', 'Remove']) {
