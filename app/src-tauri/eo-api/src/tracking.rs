@@ -57,7 +57,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 45] = [
+const SNAPSHOT_FIELDS: [&str; 48] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -85,6 +85,9 @@ const SNAPSHOT_FIELDS: [&str; 45] = [
     "damageDealtTotal",
     "weaponDamageDealt",
     "weaponCost",
+    "expectedTtRate",
+    "expectedReturnCoverage",
+    "expectedReturnModel",
     "shotsFiredTotal",
     "criticalHitsTotal",
     "maxDamage",
@@ -569,6 +572,12 @@ pub struct TrackingSnapshot {
     pub weapon_damage_dealt: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weapon_cost: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_tt_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_return_coverage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_return_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shots_fired_total: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1571,6 +1580,9 @@ pub(crate) async fn build_snapshot_value(
                 "damageDealtTotal": active.damage_dealt_total,
                 "weaponDamageDealt": active.weapon_damage_dealt,
                 "weaponCost": active.weapon_cost,
+                "expectedTtRate": active.expected_tt_rate,
+                "expectedReturnCoverage": active.expected_return_coverage,
+                "expectedReturnModel": active.expected_return_model.clone(),
                 "shotsFiredTotal": active.shots_fired_total,
                 "criticalHitsTotal": active.critical_hits_total,
                 "maxDamage": active.max_damage,

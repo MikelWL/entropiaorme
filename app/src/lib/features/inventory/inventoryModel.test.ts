@@ -194,4 +194,36 @@ describe('central inventory model', () => {
 			floored: false,
 		});
 	});
+
+	it('uses fixed 101% Shrapnel conversion value while retaining the market observation', async () => {
+		mocked.getLootInventory.mockResolvedValue([
+			{ itemName: 'Shrapnel', quantity: 10_000, ttValue: 10, listedQuantity: 0 },
+		]);
+		mockedMarket.getMarketHuntMarkups.mockResolvedValue({
+			nanocubeMarkupPct: 100.6,
+			items: [
+				{
+					itemName: 'Shrapnel',
+					markupPct: 100.9,
+					unitPricePed: null,
+					horizon: 'week',
+					salesPed: 20_000,
+					recommendedPacketTt: null,
+					readings: [{ horizon: 'week', markupPct: 100.9, salesPed: 20_000 }],
+				},
+			],
+		});
+
+		const model = createInventoryModel();
+		await model.load();
+
+		expect(model.loot[0]).toMatchObject({
+			markupPct: 100.9,
+			effectiveMarkupPct: 101,
+			markupBasis: 'shrapnel_conversion',
+			floored: false,
+		});
+		model.confidenceMode = 'all';
+		expect(model.loot[0].effectiveMarkupPct).toBe(101);
+	});
 });

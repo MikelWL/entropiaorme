@@ -27,6 +27,7 @@ pub mod difflib;
 pub mod equipment_pricing;
 pub mod eu_window;
 pub mod event_bus;
+pub mod expected_hunting;
 pub mod fingerprint_recorder;
 pub mod fuzzy_match;
 pub mod game_data_store;

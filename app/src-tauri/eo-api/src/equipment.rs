@@ -19,6 +19,9 @@ use eo_services::equipment_pricing::{
     healing_profile_from_props, lifesteal_percent_from_props,
     lifesteal_percent_from_props_with_catalog,
 };
+use eo_services::expected_hunting::{
+    self, HuntingLooterLevels, LooterSource, OffensiveLoadoutEvidence,
+};
 use eo_services::game_data_store::GameDataStore;
 use eo_wire::normalizer::{round_half_even, to_python_json_dumps};
 use schemars::JsonSchema;
@@ -165,6 +168,84 @@ pub struct EquipmentComponent {
     pub markup_percent: f64,
     pub is_limited: bool,
     pub damage_enhancers: i64,
+    /// The component's in-game Efficiency. Null means the bundled catalogue
+    /// does not carry enough evidence to model this stream.
+    pub efficiency_pct: Nullable<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpectedLooterSource {
+    Animal,
+    Mutant,
+    Robot,
+    ThreeLooterMean,
+}
+
+impl From<LooterSource> for ExpectedLooterSource {
+    fn from(value: LooterSource) -> Self {
+        match value {
+            LooterSource::Animal => Self::Animal,
+            LooterSource::Mutant => Self::Mutant,
+            LooterSource::Robot => Self::Robot,
+            LooterSource::ThreeLooterMean => Self::ThreeLooterMean,
+        }
+    }
+}
+
+/// Unlimited-item Efficiency equivalent of the setup's premium-adjusted
+/// expected return under the selected community model and looter basis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentEffectiveEfficiencyStatus {
+    WithinModelRange,
+    BelowModelRange,
+    AboveModelRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquipmentEffectiveEfficiency {
+    pub status: EquipmentEffectiveEfficiencyStatus,
+    pub efficiency_pct: Nullable<f64>,
+}
+
+impl From<expected_hunting::EffectiveEfficiency> for EquipmentEffectiveEfficiency {
+    fn from(value: expected_hunting::EffectiveEfficiency) -> Self {
+        match value {
+            expected_hunting::EffectiveEfficiency::WithinModelRange { efficiency_pct } => Self {
+                status: EquipmentEffectiveEfficiencyStatus::WithinModelRange,
+                efficiency_pct: Some(efficiency_pct).into(),
+            },
+            expected_hunting::EffectiveEfficiency::BelowModelRange => Self {
+                status: EquipmentEffectiveEfficiencyStatus::BelowModelRange,
+                efficiency_pct: None.into(),
+            },
+            expected_hunting::EffectiveEfficiency::AboveModelRange => Self {
+                status: EquipmentEffectiveEfficiencyStatus::AboveModelRange,
+                efficiency_pct: None.into(),
+            },
+        }
+    }
+}
+
+/// Community-model economics for the supported offensive slice of one use.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EquipmentExpectedReturn {
+    pub model_version: String,
+    pub looter_source: ExpectedLooterSource,
+    pub looter_level: f64,
+    pub weighted_efficiency_pct: Nullable<f64>,
+    pub offensive_tt_recovery: Nullable<f64>,
+    pub expected_tt_rate: Nullable<f64>,
+    pub effective_efficiency: Nullable<EquipmentEffectiveEfficiency>,
+    pub break_even_loot_markup: Nullable<f64>,
+    pub modelled_raw_tt_per_use: f64,
+    pub eligible_offensive_cost_per_use: f64,
+    pub consumed_premium_per_use: f64,
+    pub coverage: f64,
+    pub incomplete: bool,
 }
 
 /// The absorber component of a stored weapon setup.
@@ -207,6 +288,7 @@ pub struct EquipmentDetail {
     pub implant: Nullable<AbsorberComponent>,
     pub cost_breakdown: Vec<CostBreakdownLine>,
     pub total_cost_per_use: f64,
+    pub expected_return: Nullable<EquipmentExpectedReturn>,
     pub healing_profile: Nullable<HealingProfileDto>,
     pub lifesteal_percent: Nullable<f64>,
 }
@@ -550,10 +632,14 @@ fn row_to_detail(
     catalog_id: Option<&str>,
     props: &Value,
     game_data: &GameDataStore,
+    looters: HuntingLooterLevels,
 ) -> Result<EquipmentDetail, ApiError> {
     let item_id = id.to_string();
 
     if item_type == "weapon" {
+        let enriched_props =
+            expected_hunting::with_current_offensive_efficiencies(props, game_data);
+        let props = &enriched_props;
         let weapon_e = props
             .get("weapon_entity")
             .filter(|v| !v.is_null())
@@ -576,6 +662,11 @@ fn row_to_detail(
                     markup_percent: stored_markup(props, markup_key),
                     is_limited: is_limited(entity),
                     damage_enhancers: 0,
+                    efficiency_pct: entity
+                        .get("economy")
+                        .and_then(|economy| economy.get("efficiency"))
+                        .and_then(Value::as_f64)
+                        .into(),
                 })),
                 None => Ok(None),
             }
@@ -604,6 +695,11 @@ fn row_to_detail(
                 markup_percent: stored_markup(props, "weapon_markup"),
                 is_limited: is_limited(weapon_e),
                 damage_enhancers: enhancers,
+                efficiency_pct: weapon_e
+                    .get("economy")
+                    .and_then(|economy| economy.get("efficiency"))
+                    .and_then(Value::as_f64)
+                    .into(),
             },
             amplifier: component("amp_entity", "amp_catalog_id", "amp_markup")?.into(),
             scope: component("scope_entity", "scope_catalog_id", "scope_markup")?.into(),
@@ -617,6 +713,7 @@ fn row_to_detail(
             .into(),
             cost_breakdown: breakdown_lines(&cost_result)?,
             total_cost_per_use: cost_result["totalCostPerUse"].as_f64().unwrap_or(0.0),
+            expected_return: equipment_expected_return(props, enhancers, looters)?.into(),
             healing_profile: None.into(),
             lifesteal_percent: lifesteal_for_props(props, game_data).into(),
         });
@@ -634,6 +731,7 @@ fn row_to_detail(
                 markup_percent: 100.0,
                 is_limited: false,
                 damage_enhancers: 0,
+                efficiency_pct: None.into(),
             },
             amplifier: None.into(),
             scope: None.into(),
@@ -641,6 +739,7 @@ fn row_to_detail(
             implant: None.into(),
             cost_breakdown: Vec::new(),
             total_cost_per_use: 0.0,
+            expected_return: None.into(),
             healing_profile: None.into(),
             lifesteal_percent: None.into(),
         });
@@ -712,6 +811,7 @@ fn row_to_detail(
             markup_percent: markup_pct,
             is_limited: is_limited(tool_e),
             damage_enhancers: 0,
+            efficiency_pct: None.into(),
         },
         amplifier: None.into(),
         scope: None.into(),
@@ -725,11 +825,47 @@ fn row_to_detail(
         .into(),
         cost_breakdown: breakdown,
         total_cost_per_use: cost,
+        expected_return: None.into(),
         healing_profile: (item_type == "healing")
             .then(|| healing_profile_dto(props))
             .into(),
         lifesteal_percent: None.into(),
     })
+}
+
+fn equipment_expected_return(
+    props: &Value,
+    enhancers: i64,
+    looters: HuntingLooterLevels,
+) -> Result<Option<EquipmentExpectedReturn>, ApiError> {
+    let evidence: OffensiveLoadoutEvidence =
+        expected_hunting::evidence_from_equipment_props(props, Some(enhancers), looters);
+    if evidence.components.is_empty() {
+        return Ok(None);
+    }
+    let premium: f64 = evidence
+        .components
+        .iter()
+        .filter(|component| component.efficiency_pct.is_some())
+        .map(|component| component.consumed_premium_per_use)
+        .sum();
+    let result = expected_hunting::evaluate(&evidence)
+        .map_err(ApiError::internal("equipment expected return"))?;
+    Ok(Some(EquipmentExpectedReturn {
+        model_version: result.model_version,
+        looter_source: result.looter_source.into(),
+        looter_level: result.looter_level,
+        weighted_efficiency_pct: result.weighted_efficiency_pct.into(),
+        offensive_tt_recovery: result.offensive_tt_recovery.into(),
+        expected_tt_rate: result.expected_tt_rate.into(),
+        effective_efficiency: result.effective_efficiency.map(Into::into).into(),
+        break_even_loot_markup: result.break_even_loot_markup.into(),
+        modelled_raw_tt_per_use: result.modelled_raw_tt * 100.0,
+        eligible_offensive_cost_per_use: result.eligible_offensive_cost * 100.0,
+        consumed_premium_per_use: premium * 100.0,
+        coverage: result.coverage,
+        incomplete: result.incomplete,
+    }))
 }
 
 /// The stored props built for an add/update request.
@@ -869,6 +1005,16 @@ impl Api {
 
     /// The expanded detail for a stored entry.
     pub async fn equipment_detail(&self, item_id: i64) -> Result<EquipmentDetail, ApiError> {
+        self.equipment_detail_with_looters(item_id, None).await
+    }
+
+    /// Internal batch seam for callers that already derived the exact three
+    /// hunting looters. Avoids repeating the character calculation per row.
+    pub(crate) async fn equipment_detail_with_looters(
+        &self,
+        item_id: i64,
+        supplied_looters: Option<HuntingLooterLevels>,
+    ) -> Result<EquipmentDetail, ApiError> {
         let row = self
             .db
             .equipment_detail_row(item_id)
@@ -881,6 +1027,31 @@ impl Api {
         };
         let props = serde_json::from_str::<Value>(&raw_props)
             .map_err(ApiError::internal("stored equipment props parse"))?;
+        let looters = if item_type == "weapon" {
+            if let Some(looters) = supplied_looters {
+                looters
+            } else {
+                let professions = self.character_professions().await?;
+                let level = |name: &str| {
+                    professions
+                        .iter()
+                        .find(|profession| profession.name == name)
+                        .map(|profession| profession.level)
+                        .unwrap_or(0.0)
+                };
+                HuntingLooterLevels {
+                    animal: level("Animal Looter"),
+                    mutant: level("Mutant Looter"),
+                    robot: level("Robot Looter"),
+                }
+            }
+        } else {
+            HuntingLooterLevels {
+                animal: 0.0,
+                mutant: 0.0,
+                robot: 0.0,
+            }
+        };
         row_to_detail(
             id,
             &name,
@@ -888,6 +1059,7 @@ impl Api {
             catalog_id.as_deref(),
             &props,
             &self.game_data,
+            looters,
         )
     }
 

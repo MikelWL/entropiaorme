@@ -49,6 +49,7 @@ export type ActivityTradeDraft = {
 export type OpportunityKind = 'broad' | 'niche' | 'thin' | 'recycle';
 export type ConfidenceTier = 'liquid' | 'middling' | 'illiquid';
 export type ConfidenceMode = 'liquid' | 'liquidMiddling' | 'all';
+export type MarkupBasis = 'market' | 'nanocube' | 'shrapnel_conversion';
 
 const TIER_RANK: Record<ConfidenceTier, number> = { liquid: 3, middling: 2, illiquid: 1 };
 const MODE_THRESHOLD: Record<ConfidenceMode, number> = { liquid: 3, liquidMiddling: 2, all: 1 };
@@ -77,6 +78,14 @@ const NICHE_MIN_PREMIUM = 1;
 /** Nanocube markup fallback (percent) when the market feed carries no
  * nanocube observation. */
 export const NANOCUBE_FALLBACK_MARKUP = 100.6;
+/** Shrapnel's deterministic conversion into Universal Ammo. This is a
+ * projected valuation until the player records the conversion; only then
+ * does its 1% gain cross into realised accounting. */
+export const SHRAPNEL_CONVERSION_MARKUP = 101;
+
+export function isShrapnel(itemName: string): boolean {
+	return itemName.trim().toLocaleLowerCase() === 'shrapnel';
+}
 
 /** The canonical item stock recycles into, at 1:1 TT. */
 /** The resolved horizon's TT turnover normalised to a weekly rate, so
@@ -206,6 +215,26 @@ export function effectiveMarkup(
 	};
 }
 
+/** Resolve the valuation route shared by activity projections and Inventory.
+ * Shrapnel deliberately ignores market confidence because its ordinary exit
+ * is the game's deterministic 101% ammo conversion, not a speculative sale. */
+export function effectiveItemMarkup(
+	itemName: string,
+	opportunity: MarketOpportunity | null,
+	nanocubeMarkupPct: number,
+	mode: ConfidenceMode,
+): { markupPct: number; basis: MarkupBasis } | null {
+	if (isShrapnel(itemName)) {
+		return { markupPct: SHRAPNEL_CONVERSION_MARKUP, basis: 'shrapnel_conversion' };
+	}
+	if (!opportunity) return null;
+	const applied = effectiveMarkup(opportunity, nanocubeMarkupPct, mode);
+	return {
+		markupPct: applied.markupPct,
+		basis: applied.floored ? 'nanocube' : 'market',
+	};
+}
+
 // ── Section derivation ─────────────────────────────────────────────────
 
 const TIER_LABEL: Record<HarvestYieldTier, string> = {
@@ -225,6 +254,7 @@ export type TreeCuttingItem = {
 	markupHorizon: string | null;
 	tier: ConfidenceTier;
 	effectiveMarkupPct: number;
+	markupBasis: MarkupBasis;
 	floored: boolean;
 	salesPed: number | null;
 	weeklySalesPed: number | null;
@@ -300,6 +330,7 @@ export type TreeCuttingStock = {
 	markupHorizon: string | null;
 	tier: ConfidenceTier | null;
 	effectiveMarkupPct: number | null;
+	markupBasis: MarkupBasis | null;
 	floored: boolean;
 	salesPed: number | null;
 	weeklySalesPed: number | null;
@@ -328,7 +359,8 @@ export function projectLoot(
 		const m = marketByItem.get(item.itemName);
 		const opportunity = marketOpportunity(m, nanocube);
 		const tier = opportunityTier(opportunity);
-		const applied = effectiveMarkup(opportunity, nanocube, confidenceMode);
+		const applied = effectiveItemMarkup(item.itemName, opportunity, nanocube, confidenceMode);
+		if (!applied) throw new Error(`Missing valuation route for ${item.itemName}`);
 		marketProjected += (item.valuePed * applied.markupPct) / 100;
 		return {
 			name: item.itemName,
@@ -340,7 +372,8 @@ export function projectLoot(
 			markupHorizon: opportunity.horizon,
 			tier,
 			effectiveMarkupPct: applied.markupPct,
-			floored: applied.floored,
+			markupBasis: applied.basis,
+			floored: applied.basis === 'nanocube',
 			salesPed: opportunity.salesPed,
 			weeklySalesPed: opportunity.weeklySalesPed,
 		};

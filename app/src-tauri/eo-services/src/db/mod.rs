@@ -1337,9 +1337,10 @@ mod tests {
         // reversal, and cooldown tables with 3 indexes, plus 2 provenance
         // indexes on the rebuilt movement ledger + healing attribution's 3
         // activation, effect-window, and output tables with 3 session indexes
-        // = 79 tables, 101 indexes, 10 triggers.
-        assert_eq!(count("table").await, 79);
-        assert_eq!(count("index").await, 101);
+        // + expected-hunting's offensive-evidence rollup table and 2 indexes
+        // = 80 tables, 103 indexes, 10 triggers.
+        assert_eq!(count("table").await, 80);
+        assert_eq!(count("index").await, 103);
         assert_eq!(count("trigger").await, 10);
 
         let version = db
@@ -1815,10 +1816,11 @@ mod tests {
         // migration's 2 tables and 5 indexes + canonical quest rewards'
         // 3 tables and 5 attribution and provenance indexes + healing
         // attribution's 3 activation, effect-window, and output tables with
-        // 3 session indexes (only SQLite's own bookkeeping is excluded; the
+        // 3 session indexes + expected-hunting's offensive-evidence rollup
+        // table and 2 indexes (only SQLite's own bookkeeping is excluded; the
         // conformance comparison filters the ledger externally as its one
         // deliberate difference).
-        assert_eq!(master.len(), 191);
+        assert_eq!(master.len(), 194);
         let mut sorted = master.clone();
         sorted.sort();
         assert_eq!(master, sorted, "ordered by (type, name)");

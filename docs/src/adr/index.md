@@ -35,3 +35,4 @@ Several of the earlier records predate two later structural decisions: the colla
 | [ADR-0025](0025-central-market-data-service.md) | A central market-data service on AWS serverless: token-authenticated ingest, scheduled aggregation, versioned snapshot distribution |
 | [ADR-0026](0026-canonical-quest-reward-accounting.md) | Canonical quest reward accounting and session-owned quest rosters |
 | [ADR-0027](0027-intent-led-healing-attribution.md) | Intent-led healing attribution with durable output evidence |
+| [ADR-0028](0028-versioned-expected-hunting-economics.md) | Versioned expected-hunting economics over immutable offensive evidence |

@@ -7,6 +7,22 @@ import HuntingSessionActivities from './HuntingSessionActivities.svelte';
 import type { HuntingActivitySection } from './huntingModel.svelte';
 import { marketOpportunity } from './treeCuttingModel.svelte';
 
+const expectedEconomics = {
+	modelVersion: 'community_v1',
+	looterSource: 'three_looter_mean',
+	looterLevel: 50,
+	expectedLootTt: 94,
+	modelledRawTt: 100,
+	eligibleOffensiveCost: 100,
+	offensiveTtRecovery: 0.94,
+	expectedTtRate: 0.94,
+	effectiveEfficiency: { status: 'within_model_range' as const, efficiencyPct: 57.14 },
+	breakEvenLootMarkup: 1 / 0.94,
+	coverage: 1,
+	incomplete: false,
+	missingBasisPhases: 0,
+};
+
 function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActivitySection {
 	return {
 		kind: 'quest',
@@ -14,6 +30,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		confirmedRewardPed: 15,
 		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
@@ -25,6 +42,9 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		key: 'quest:daily-1',
 		isUnscoped: false,
 		muProjectedReturns: 104,
+		lootMarkupFactor: null,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		items: [
 			{
 				name: 'Animal Muscle Oil',
@@ -35,6 +55,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 				ownMarkupPct: 120,
 				markupHorizon: 'week',
 				effectiveMarkupPct: 120,
+				markupBasis: 'market',
 				floored: false,
 				tier: 'liquid',
 				salesPed: 5000,
@@ -68,21 +89,23 @@ describe('HuntingSessionActivities', () => {
 		expect(activityName.className).toContain('break-words');
 		expect(activityName.className).not.toContain('truncate');
 		const grid = screen.getByTestId('activity-economic-grid');
-		expect(grid.className).toContain('grid-cols-4');
+		expect(grid.className).toContain('economic-horizon');
 		for (const label of [
-			'Reward TT',
 			'TT Net',
 			'MU Net',
 			'Realised Net',
-			'Reward MU',
 			'TT Rate',
 			'MU Rate',
 			'Realised Rate',
 		]) {
 			expect(within(grid).getByText(label)).not.toBeNull();
 		}
-		expect(within(grid).getByText('+15.00')).not.toBeNull();
-		expect(within(grid).getByText('18.00')).not.toBeNull();
+		const reward = screen.getByTestId('activity-reward-context');
+		expect(within(reward).getByText('Completion reward')).not.toBeNull();
+		expect(within(reward).getByText('Reward TT')).not.toBeNull();
+		expect(within(reward).getByText('Reward MU')).not.toBeNull();
+		expect(within(reward).getByText('+15.00')).not.toBeNull();
+		expect(within(reward).getByText('18.00')).not.toBeNull();
 		expect(within(grid).queryByText('Cycled')).toBeNull();
 		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
 		expect(within(grid).getByText('+5.00').className).toContain('text-positive');
@@ -152,6 +175,32 @@ describe('HuntingSessionActivities', () => {
 		const nets = screen.getAllByText('+5.00');
 		expect(nets).toHaveLength(2);
 		expect(nets.filter((value) => value.classList.contains('text-positive'))).toHaveLength(1);
+	});
+
+	it('shows neutral activity-level expected economics from ordinary loot only', () => {
+		render(HuntingSessionActivities, {
+			props: {
+				activities: [
+					activity({
+						expected: expectedEconomics,
+						lootMarkupFactor: 1.3,
+						expectedTtRate: 0.94,
+						expectedMarketRate: 1.222,
+					}),
+				],
+				marketAvailable: true,
+			},
+		});
+
+		const strip = screen.getByTestId('activity-expected-economics');
+		for (const label of ['Effective Efficiency', 'Loot MU', 'Expected Return', 'Expected + MU']) {
+			expect(within(strip).getByText(label)).not.toBeNull();
+		}
+		for (const value of ['57.1%', '130.0%', '94.0%', '122.2%']) {
+			const displayed = within(strip).getByText(value);
+			expect(displayed.className).not.toContain('text-positive');
+			expect(displayed.className).not.toContain('text-negative');
+		}
 	});
 
 	it('shows a separated zero-TT item reward without calling it ordinary loot', () => {

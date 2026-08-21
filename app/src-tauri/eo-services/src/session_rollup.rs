@@ -5,13 +5,16 @@
 //!
 //! ## The model
 //!
-//! An ended session's events aggregate to four cell sets no activity
+//! An ended session's events aggregate to five cell sets no activity
 //! consumer folds finer than: kill cells by `(context, species, maturity)`
 //! (`session_kill_rollups`), active loot cells by `(species, shrapnel,
 //! item)` (`session_loot_rollups`, species pre-folded to the empty string
 //! for shrapnel rows exactly as the position reads fold it), loot-
 //! composition cells by context (`session_context_loot_rollups`), and
-//! skill-gain cells by context (`session_pes_rollups`). The raw tables
+//! skill-gain cells by context (`session_pes_rollups`). Model-neutral
+//! offensive evidence settles by `(context, species, evidence fingerprint)` in
+//! `session_offensive_evidence_rollups`, so Community Model replay remains
+//! independent of lifetime raw kill history. The raw tables
 //! grow with total play history; the cells stay proportional to sessions,
 //! species, and items, so a reader folding cells does O(cells) work
 //! however long the history gets.
@@ -31,7 +34,7 @@ use crate::db::DbError;
 
 /// Bump when a cell's meaning changes: below-version sessions are served
 /// raw and heal on the next read.
-pub const ROLLUP_VERSION: i64 = 2;
+pub const ROLLUP_VERSION: i64 = 4;
 
 /// Drop one session's cells and marker. The session reads raw from this
 /// commit on; the delete path wants exactly that, and [`recompute_session`]
@@ -48,6 +51,7 @@ pub fn drop_session(conn: &rusqlite::Connection, session_id: &str) -> Result<(),
         "session_loot_rollups",
         "session_context_loot_rollups",
         "session_pes_rollups",
+        "session_offensive_evidence_rollups",
     ] {
         conn.execute(
             &format!("DELETE FROM {table} WHERE session_id = ?"),
@@ -125,6 +129,26 @@ pub fn recompute_session(conn: &rusqlite::Connection, session_id: &str) -> Resul
         rusqlite::params![session_id],
     )?;
     conn.execute(
+        "INSERT INTO session_offensive_evidence_rollups \
+             (session_id, mob_species, evidence_fingerprint, expected_economics_json, \
+              shots_fired, missing_candidate_raw_tt, missing_basis_phases, context_id) \
+         SELECT k.session_id, COALESCE(k.mob_species, ''), ts.evidence_fingerprint, \
+                ts.expected_economics_json, \
+                SUM(CASE WHEN ts.shots_fired > 0 THEN ts.shots_fired ELSE 0 END), \
+                SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                              AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                         THEN ts.shots_fired * ts.cost_per_shot ELSE 0 END), \
+                SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                              AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                         THEN 1 ELSE 0 END), \
+                k.context_id \
+         FROM kills k CROSS JOIN kill_tool_stats ts \
+         WHERE k.session_id = ?1 AND ts.kill_id = k.id \
+         GROUP BY k.session_id, k.context_id, 2, ts.evidence_fingerprint, \
+                  ts.expected_economics_json",
+        rusqlite::params![session_id],
+    )?;
+    conn.execute(
         "INSERT INTO session_rollup_meta (session_id, rollup_version) VALUES (?, ?)",
         rusqlite::params![session_id, ROLLUP_VERSION],
     )?;
@@ -142,7 +166,8 @@ pub fn rebuild(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
          DELETE FROM session_kill_rollups; \
          DELETE FROM session_loot_rollups; \
          DELETE FROM session_context_loot_rollups; \
-         DELETE FROM session_pes_rollups;",
+         DELETE FROM session_pes_rollups; \
+         DELETE FROM session_offensive_evidence_rollups;",
     )?;
     heal(conn)
 }
@@ -244,6 +269,92 @@ pub(crate) fn effective_hunting_loot_cells(
     Ok(cells)
 }
 
+/// One model-neutral offensive-evidence cell. Settled sessions come from the
+/// maintained projection; only explicitly unsettled sessions consult raw tool
+/// phases, scoped through their session id. Keeping the original evidence JSON
+/// makes the projection independent of the Community Model version that later
+/// evaluates it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EffectiveOffensiveEvidenceCell {
+    pub session_id: String,
+    pub context_id: Option<i64>,
+    pub mob_species: String,
+    pub expected_economics_json: Option<String>,
+    pub shots_fired: i64,
+    pub missing_candidate_raw_tt: f64,
+    pub missing_basis_phases: i64,
+}
+
+const SETTLED_OFFENSIVE_EVIDENCE_SQL: &str =
+    "SELECT r.session_id, r.context_id, r.mob_species, r.expected_economics_json, \
+            r.shots_fired, r.missing_candidate_raw_tt, r.missing_basis_phases \
+     FROM session_offensive_evidence_rollups r \
+     JOIN session_rollup_meta m ON m.session_id = r.session_id \
+          AND m.rollup_version >= ?2 \
+     JOIN tracking_sessions s ON s.id = r.session_id \
+     WHERE (?1 IS NULL OR s.started_at >= ?1)";
+
+const UNSETTLED_OFFENSIVE_EVIDENCE_SQL: &str =
+    "SELECT k.context_id, COALESCE(k.mob_species, ''), ts.expected_economics_json, \
+            SUM(CASE WHEN ts.shots_fired > 0 THEN ts.shots_fired ELSE 0 END), \
+            SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                          AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                     THEN ts.shots_fired * ts.cost_per_shot ELSE 0 END), \
+            SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                          AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                     THEN 1 ELSE 0 END) \
+     FROM tracking_sessions s CROSS JOIN kills k CROSS JOIN kill_tool_stats ts \
+     WHERE s.id = ?1 AND k.session_id = s.id AND ts.kill_id = k.id \
+       AND (?2 IS NULL OR s.started_at >= ?2) \
+     GROUP BY k.context_id, 2, ts.evidence_fingerprint, ts.expected_economics_json";
+
+/// Read model-neutral offensive evidence inside the optional period boundary.
+/// A fully settled request prepares no statement against `kills` or
+/// `kill_tool_stats`; the raw leg exists only for the live or invalidated edge.
+pub(crate) fn effective_offensive_evidence_cells(
+    conn: &rusqlite::Connection,
+    epoch_start: Option<f64>,
+) -> rusqlite::Result<Vec<EffectiveOffensiveEvidenceCell>> {
+    let mut cells = Vec::new();
+    {
+        let mut stmt = conn.prepare(SETTLED_OFFENSIVE_EVIDENCE_SQL)?;
+        let mut rows = stmt.query(rusqlite::params![epoch_start, ROLLUP_VERSION])?;
+        while let Some(row) = rows.next()? {
+            cells.push(EffectiveOffensiveEvidenceCell {
+                session_id: row.get(0)?,
+                context_id: row.get(1)?,
+                mob_species: row.get(2)?,
+                expected_economics_json: row.get(3)?,
+                shots_fired: row.get::<_, i64>(4).unwrap_or(0),
+                missing_candidate_raw_tt: row.get::<_, f64>(5).unwrap_or(0.0),
+                missing_basis_phases: row.get::<_, i64>(6).unwrap_or(0),
+            });
+        }
+    }
+
+    let unsettled = unsettled_sessions(conn)?;
+    if unsettled.is_empty() {
+        return Ok(cells);
+    }
+
+    let mut stmt = conn.prepare(UNSETTLED_OFFENSIVE_EVIDENCE_SQL)?;
+    for session_id in unsettled {
+        let mut rows = stmt.query(rusqlite::params![session_id, epoch_start])?;
+        while let Some(row) = rows.next()? {
+            cells.push(EffectiveOffensiveEvidenceCell {
+                session_id: session_id.clone(),
+                context_id: row.get(0)?,
+                mob_species: row.get(1)?,
+                expected_economics_json: row.get(2)?,
+                shots_fired: row.get::<_, i64>(3).unwrap_or(0),
+                missing_candidate_raw_tt: row.get::<_, f64>(4).unwrap_or(0.0),
+                missing_basis_phases: row.get::<_, i64>(5).unwrap_or(0),
+            });
+        }
+    }
+    Ok(cells)
+}
+
 /// Bring the rollups current: settle every ended session still served
 /// raw. The first call after the migration backfills the whole history;
 /// steady-state calls find nothing to do beyond the marker scan. Callers
@@ -295,6 +406,7 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         "session_loot_rollups",
         "session_context_loot_rollups",
         "session_pes_rollups",
+        "session_offensive_evidence_rollups",
     ] {
         tx.execute(
             &format!(
@@ -353,6 +465,26 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
         [],
     )?;
     tx.execute(
+        "INSERT INTO session_offensive_evidence_rollups \
+             (session_id, mob_species, evidence_fingerprint, expected_economics_json, \
+              shots_fired, missing_candidate_raw_tt, missing_basis_phases, context_id) \
+         SELECT p.id, COALESCE(k.mob_species, ''), ts.evidence_fingerprint, \
+                ts.expected_economics_json, \
+                SUM(CASE WHEN ts.shots_fired > 0 THEN ts.shots_fired ELSE 0 END), \
+                SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                              AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                         THEN ts.shots_fired * ts.cost_per_shot ELSE 0 END), \
+                SUM(CASE WHEN ts.expected_economics_json IS NULL \
+                              AND ts.shots_fired > 0 AND ts.cost_per_shot > 0 \
+                         THEN 1 ELSE 0 END), \
+                k.context_id \
+         FROM pending_settlement p CROSS JOIN kills k CROSS JOIN kill_tool_stats ts \
+         WHERE k.session_id = p.id AND ts.kill_id = k.id \
+         GROUP BY p.id, k.context_id, 2, ts.evidence_fingerprint, \
+                  ts.expected_economics_json",
+        [],
+    )?;
+    tx.execute(
         "INSERT INTO session_rollup_meta (session_id, rollup_version) \
          SELECT id, ?1 FROM pending_settlement",
         rusqlite::params![ROLLUP_VERSION],
@@ -378,6 +510,11 @@ pub fn heal(conn: &mut rusqlite::Connection) -> Result<(), DbError> {
     )?;
     tx.execute(
         "DELETE FROM session_pes_rollups \
+         WHERE session_id NOT IN (SELECT id FROM tracking_sessions)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM session_offensive_evidence_rollups \
          WHERE session_id NOT IN (SELECT id FROM tracking_sessions)",
         [],
     )?;
@@ -432,6 +569,51 @@ mod tests {
             rusqlite::params![session],
         )
         .expect("gain");
+    }
+
+    fn seed_tool_phase(
+        conn: &rusqlite::Connection,
+        kill_id: &str,
+        tool_name: &str,
+        shots: i64,
+        cost_per_shot: f64,
+        evidence: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO kill_tool_stats \
+             (kill_id, tool_name, shots_fired, cost_per_shot, \
+              expected_economics_json, evidence_fingerprint) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                kill_id,
+                tool_name,
+                shots,
+                cost_per_shot,
+                evidence,
+                evidence.unwrap_or("")
+            ],
+        )
+        .expect("tool phase");
+    }
+
+    fn stamp_kill_context(
+        conn: &rusqlite::Connection,
+        kill_id: &str,
+        session_id: &str,
+        created_at: f64,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO session_contexts(session_id, created_at) VALUES (?, ?)",
+            rusqlite::params![session_id, created_at],
+        )
+        .expect("context");
+        let context_id = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE kills SET context_id = ? WHERE id = ?",
+            rusqlite::params![context_id, kill_id],
+        )
+        .expect("context stamp");
+        context_id
     }
 
     #[tokio::test]
@@ -585,6 +767,32 @@ mod tests {
             .collect()
     }
 
+    type EvidenceCellKey = (String, Option<i64>, String, Option<String>);
+    type EvidenceCellValue = (i64, i64, i64);
+
+    fn evidence_cell_map(
+        cells: Vec<EffectiveOffensiveEvidenceCell>,
+    ) -> BTreeMap<EvidenceCellKey, EvidenceCellValue> {
+        cells
+            .into_iter()
+            .map(|cell| {
+                (
+                    (
+                        cell.session_id,
+                        cell.context_id,
+                        cell.mob_species,
+                        cell.expected_economics_json,
+                    ),
+                    (
+                        cell.shots_fired,
+                        (cell.missing_candidate_raw_tt * 10_000.0).round() as i64,
+                        cell.missing_basis_phases,
+                    ),
+                )
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn effective_loot_cells_match_raw_and_settled_with_a_live_edge() {
         let (_dir, db) = open_db().await;
@@ -652,6 +860,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn offensive_evidence_cells_match_raw_and_settled_with_a_live_edge() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(conn, "ended", true);
+            seed_session(conn, "live", false);
+            seed_kill(conn, "ended-kill", "ended", "Atrox");
+            seed_kill(conn, "live-kill", "live", "Daikiba");
+            seed_tool_phase(
+                conn,
+                "ended-kill",
+                "Settled Rifle",
+                10,
+                0.04,
+                Some("{\"basis\":\"settled\"}"),
+            );
+            seed_tool_phase(conn, "live-kill", "Legacy Rifle", 4, 0.05, None);
+
+            let raw = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            heal(conn)?;
+            let mixed = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            assert_eq!(raw, mixed);
+
+            conn.execute(
+                "UPDATE kill_tool_stats SET shots_fired = 99 WHERE kill_id = 'ended-kill'",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE kill_tool_stats SET shots_fired = 8 WHERE kill_id = 'live-kill'",
+                [],
+            )?;
+            let after_raw_edits =
+                evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            assert_eq!(
+                after_raw_edits[&(
+                    "ended".to_string(),
+                    None,
+                    "Atrox".to_string(),
+                    Some("{\"basis\":\"settled\"}".to_string()),
+                )]
+                    .0,
+                10
+            );
+            assert_eq!(
+                after_raw_edits[&("live".to_string(), None, "Daikiba".to_string(), None)],
+                (8, 4_000, 1)
+            );
+
+            recompute_session(conn, "ended")?;
+            let recomputed = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            assert_eq!(
+                recomputed[&(
+                    "ended".to_string(),
+                    None,
+                    "Atrox".to_string(),
+                    Some("{\"basis\":\"settled\"}".to_string()),
+                )]
+                    .0,
+                99
+            );
+            Ok(())
+        })
+        .await
+        .expect("writer");
+    }
+
+    #[tokio::test]
+    async fn offensive_evidence_cells_preserve_activity_context_grain() {
+        let (_dir, db) = open_db().await;
+        db.with_writer(|conn| {
+            seed_session(conn, "ended", true);
+            seed_kill(conn, "kill-a", "ended", "Atrox");
+            seed_kill(conn, "kill-b", "ended", "Atrox");
+            let context_a = stamp_kill_context(conn, "kill-a", "ended", 1500.0);
+            let context_b = stamp_kill_context(conn, "kill-b", "ended", 2500.0);
+            seed_tool_phase(conn, "kill-a", "Shared Rifle", 10, 0.04, Some("evidence"));
+            seed_tool_phase(conn, "kill-b", "Shared Rifle", 20, 0.04, Some("evidence"));
+
+            let raw = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            heal(conn)?;
+            let settled = evidence_cell_map(effective_offensive_evidence_cells(conn, None)?);
+            assert_eq!(raw, settled);
+            assert_eq!(
+                settled[&(
+                    "ended".to_string(),
+                    Some(context_a),
+                    "Atrox".to_string(),
+                    Some("evidence".to_string()),
+                )]
+                    .0,
+                10
+            );
+            assert_eq!(
+                settled[&(
+                    "ended".to_string(),
+                    Some(context_b),
+                    "Atrox".to_string(),
+                    Some("evidence".to_string()),
+                )]
+                    .0,
+                20
+            );
+            Ok(())
+        })
+        .await
+        .expect("writer");
+    }
+
+    #[tokio::test]
     async fn effective_loot_query_plans_are_projection_bounded_and_session_scoped() {
         let (_dir, db) = open_db().await;
         db.with_writer(|conn| {
@@ -659,6 +975,15 @@ mod tests {
             seed_session(conn, "live", false);
             seed_kill(conn, "ended-kill", "ended", "Atrox");
             seed_kill(conn, "live-kill", "live", "Daikiba");
+            seed_tool_phase(
+                conn,
+                "ended-kill",
+                "Settled Rifle",
+                10,
+                0.04,
+                Some("{\"basis\":\"settled\"}"),
+            );
+            seed_tool_phase(conn, "live-kill", "Legacy Rifle", 4, 0.05, None);
             heal(conn)?;
 
             let plan = |sql: &str, params: &[&dyn rusqlite::ToSql]| {
@@ -694,6 +1019,33 @@ mod tests {
             assert!(raw
                 .iter()
                 .all(|step| !step.contains("SCAN k") && !step.contains("SCAN li")));
+
+            let settled_evidence = plan(
+                SETTLED_OFFENSIVE_EVIDENCE_SQL,
+                &[&Option::<f64>::None, &ROLLUP_VERSION],
+            )?;
+            assert!(settled_evidence
+                .iter()
+                .any(|step| step.contains("SCAN r") || step.contains("SEARCH r")));
+            assert!(settled_evidence.iter().all(|step| {
+                !step.contains("kill_tool_stats")
+                    && !step.contains("SCAN k")
+                    && !step.contains("SCAN ts")
+            }));
+
+            let raw_evidence = plan(
+                UNSETTLED_OFFENSIVE_EVIDENCE_SQL,
+                &[&live_id, &Option::<f64>::None],
+            )?;
+            assert!(raw_evidence
+                .iter()
+                .any(|step| step.contains("idx_kill_session")));
+            assert!(raw_evidence
+                .iter()
+                .any(|step| step.contains("idx_kill_tool_stats_covering")));
+            assert!(raw_evidence
+                .iter()
+                .all(|step| !step.contains("SCAN k") && !step.contains("SCAN ts")));
             Ok(())
         })
         .await
@@ -714,6 +1066,17 @@ mod tests {
         assert!(!positions.contains("FROM kills"));
         assert!(positions.contains("EffectiveHuntingLootCell"));
 
+        let expected = analytics
+            .split_once("fn hunting_expected_aggregates(")
+            .expect("expected reader")
+            .1
+            .split_once("#[allow(clippy::too_many_lines)]")
+            .expect("expected reader end")
+            .0;
+        assert!(!expected.contains("kill_tool_stats"));
+        assert!(!expected.contains("FROM kills"));
+        assert!(expected.contains("effective_offensive_evidence_cells"));
+
         let market = include_str!("market_service.rs")
             .split_once("#[cfg(test)]")
             .expect("market production/test boundary")
@@ -727,5 +1090,7 @@ mod tests {
             .0;
         assert!(boundary.contains("FROM tracking_sessions s CROSS JOIN kills k"));
         assert!(boundary.contains("WHERE s.id = ?1 AND k.session_id = s.id"));
+        assert!(boundary.contains("session_offensive_evidence_rollups"));
+        assert!(boundary.contains("AND ts.kill_id = k.id"));
     }
 }

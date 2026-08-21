@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
 	AnalyticsHuntingActivity,
+	ExpectedHuntingEconomics,
 	HuntingActivityComparison,
 	HuntingDefinitionComparison,
 	HuntingSpeciesComparison,
@@ -18,6 +19,25 @@ import * as api from '$lib/api';
 
 const mocked = vi.mocked(api);
 
+function expectedEconomics(over: Partial<ExpectedHuntingEconomics> = {}): ExpectedHuntingEconomics {
+	return {
+		modelVersion: 'community_v1',
+		looterSource: 'three_looter_mean',
+		looterLevel: 50,
+		expectedLootTt: 940,
+		modelledRawTt: 1000,
+		eligibleOffensiveCost: 1000,
+		offensiveTtRecovery: 0.94,
+		expectedTtRate: 0.94,
+		effectiveEfficiency: { status: 'within_model_range', efficiencyPct: 64.29 },
+		breakEvenLootMarkup: 1 / 0.94,
+		coverage: 1,
+		incomplete: false,
+		missingBasisPhases: 0,
+		...over,
+	};
+}
+
 function required<T>(value: T | null | undefined, label: string): T {
 	if (value == null) throw new Error(`Expected ${label}`);
 	return value;
@@ -31,6 +51,7 @@ function definition(over: Partial<HuntingDefinitionComparison> = {}): HuntingDef
 		cycled: 1200,
 		returns: 1080,
 		lootRate: 0.9,
+		expected: null,
 		lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 400, valuePed: 120 }],
 		activities: [],
 		...over,
@@ -43,6 +64,7 @@ function species(over: Partial<HuntingSpeciesComparison> = {}): HuntingSpeciesCo
 		cycled: 900,
 		returns: 810,
 		lootRate: 0.9,
+		expected: null,
 		lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 400, valuePed: 120 }],
 		...over,
 	};
@@ -55,6 +77,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		confirmedRewardPed: 15,
 		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
@@ -69,7 +92,7 @@ function sessionActivity(over: Partial<HuntingActivityComparison> = {}): Hunting
 
 function activity(over: Partial<AnalyticsHuntingActivity> = {}): AnalyticsHuntingActivity {
 	return {
-		overall: { cycled: 1500, returns: 1350, lootRate: 0.9 },
+		overall: { cycled: 1500, returns: 1350, lootRate: 0.9, expected: null },
 		definitions: [
 			definition(),
 			definition({ definitionId: null, name: 'Unassigned', cycled: 300, returns: 270 }),
@@ -137,6 +160,51 @@ describe('createHuntingModel', () => {
 		);
 		expect(unassigned.key).toBe('unassigned');
 		expect(unassigned.realisedMarkup).toBe(0);
+	});
+
+	it('keeps 100%-anchored loot MU separate and composes it with expected return', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				overall: {
+					cycled: 1500,
+					returns: 1350,
+					lootRate: 0.9,
+					expected: expectedEconomics(),
+				},
+				definitions: [definition({ expected: expectedEconomics() })],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const session = required(model.sessionSections[0], 'modelled session');
+		expect(session.lootMarkupFactor).toBeCloseTo(1.3, 6);
+		expect(session.expectedTtRate).toBe(0.94);
+		expect(session.expectedMarketRate).toBeCloseTo(1.222, 6);
+
+		const overall = required(model.overall, 'modelled overall');
+		expect(overall.lootMarkupFactor).toBeCloseTo(1.3, 6);
+		expect(overall.expectedMarketRate).toBeCloseTo(1.222, 6);
+	});
+
+	it('projects expected economics at activity grain without folding quest rewards into loot MU', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						activities: [sessionActivity({ expected: expectedEconomics() })],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const row = required(model.sessionSections[0].activities[0], 'modelled activity');
+		expect(row.lootMarkupFactor).toBeCloseTo(1.3, 6);
+		expect(row.expectedTtRate).toBe(0.94);
+		expect(row.expectedMarketRate).toBeCloseTo(1.222, 6);
+		expect(row.rewardMuPed).toBeCloseTo(19.5, 6);
 	});
 
 	it('adds confirmed rewards once to activity, session, and Overall realised outcomes', async () => {

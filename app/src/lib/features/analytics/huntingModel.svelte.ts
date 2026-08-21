@@ -48,6 +48,9 @@ export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'>
 	 * or excluded item market data contributes TT at 100%, never a proxy. */
 	rewardMuPed: number | null;
 	muProjectedReturns: number | null;
+	lootMarkupFactor: number | null;
+	expectedTtRate: number | null;
+	expectedMarketRate: number | null;
 	items: TreeCuttingItem[];
 	variants: HuntingActivitySection[];
 };
@@ -59,6 +62,9 @@ export type HuntingSessionSection = Omit<HuntingDefinitionComparison, 'activitie
 	realisedMarkup: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
+	lootMarkupFactor: number | null;
+	expectedTtRate: number | null;
+	expectedMarketRate: number | null;
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
@@ -81,6 +87,9 @@ export type HuntingTargetSection = HuntingSpeciesComparison & {
 	realisedMarkup: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
+	lootMarkupFactor: number | null;
+	expectedTtRate: number | null;
+	expectedMarketRate: number | null;
 	realisedReturns: number;
 	realisedRate: number;
 	items: TreeCuttingItem[];
@@ -93,6 +102,10 @@ export type HuntingOverallLine = {
 	lootRate: number;
 	muProjectedReturns: number | null;
 	muRate: number | null;
+	lootMarkupFactor: number | null;
+	expectedTtRate: number | null;
+	expectedMarketRate: number | null;
+	expected: HuntingActivityData['overall']['expected'];
 	realisedMarkup: number;
 	realisedReturns: number;
 	realisedRate: number;
@@ -113,6 +126,23 @@ export function createHuntingModel() {
 	let selectedSessionKey = $state<string | null>(null);
 
 	let loadEpoch = 0;
+
+	function projectedEconomics(
+		compositionTt: number,
+		marketValue: number | null,
+		expectedTtRate: number | null,
+	) {
+		const lootMarkupFactor =
+			compositionTt > 0 && marketValue !== null ? marketValue / compositionTt : null;
+		return {
+			lootMarkupFactor,
+			expectedTtRate,
+			expectedMarketRate:
+				expectedTtRate !== null && lootMarkupFactor !== null
+					? expectedTtRate * lootMarkupFactor
+					: null,
+		};
+	}
 
 	async function loadData(period: string = 'all') {
 		const epoch = ++loadEpoch;
@@ -176,12 +206,18 @@ export function createHuntingModel() {
 				confidenceMode,
 			);
 			const rewardMuPed = projectRewardItems(row.rewardItems, market, marketByItem, confidenceMode);
+			const projected = projectedEconomics(
+				row.lootItems.reduce((sum, item) => sum + item.valuePed, 0),
+				projection.muProjectedReturns,
+				row.expected?.expectedTtRate ?? null,
+			);
 			return {
 				...row,
 				key,
 				isUnscoped: row.kind === 'ambient',
 				rewardMuPed,
 				muProjectedReturns: projection.muProjectedReturns,
+				...projected,
 				items: projection.items,
 				variants: row.variants.map((variant, variantIndex) =>
 					activitySection(variant, key, variantIndex),
@@ -205,6 +241,11 @@ export function createHuntingModel() {
 				0,
 			);
 			const realisedReturns = row.returns + confirmedRewardPed + realisedMarkup;
+			const projected = projectedEconomics(
+				row.lootItems.reduce((sum, item) => sum + item.valuePed, 0),
+				projection.muProjectedReturns,
+				row.expected?.expectedTtRate ?? null,
+			);
 			return {
 				...row,
 				key: row.definitionId === null ? 'unassigned' : `definition:${row.definitionId}`,
@@ -213,6 +254,7 @@ export function createHuntingModel() {
 				realisedMarkup,
 				muProjectedReturns: projection.muProjectedReturns,
 				muRate: projection.muRate,
+				...projected,
 				realisedReturns,
 				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
 				items: projection.items,
@@ -269,6 +311,11 @@ export function createHuntingModel() {
 			);
 			const realisedMarkup = realisedBySpecies.get(row.mobSpecies) ?? 0;
 			const realisedReturns = row.returns + realisedMarkup;
+			const projected = projectedEconomics(
+				row.lootItems.reduce((sum, item) => sum + item.valuePed, 0),
+				projection.muProjectedReturns,
+				row.expected?.expectedTtRate ?? null,
+			);
 			return {
 				...row,
 				key: isUnclassified ? 'unclassified' : `species:${row.mobSpecies}`,
@@ -277,6 +324,7 @@ export function createHuntingModel() {
 				realisedMarkup,
 				muProjectedReturns: projection.muProjectedReturns,
 				muRate: projection.muRate,
+				...projected,
 				realisedReturns,
 				realisedRate: row.cycled > 0 ? realisedReturns / row.cycled : 0,
 				items: projection.items,
@@ -297,6 +345,14 @@ export function createHuntingModel() {
 			: null;
 		const cycled = data.overall.cycled;
 		const muRate = muProjectedReturns !== null && cycled > 0 ? muProjectedReturns / cycled : null;
+		const projected = projectedEconomics(
+			targetSections.reduce(
+				(sum, section) => sum + section.items.reduce((itemSum, item) => itemSum + item.ttValue, 0),
+				0,
+			),
+			muProjectedReturns,
+			data.overall.expected?.expectedTtRate ?? null,
+		);
 		// Realised markup sums over EVERY species with recognised stock outcomes, not
 		// only those hunted in the selected period: the money exists either
 		// way, and the remainder is disclosed rather than silently dropped.
@@ -314,6 +370,8 @@ export function createHuntingModel() {
 			lootRate: data.overall.lootRate,
 			muProjectedReturns,
 			muRate,
+			...projected,
+			expected: data.overall.expected,
 			realisedMarkup,
 			realisedReturns,
 			realisedRate: cycled > 0 ? realisedReturns / cycled : 0,

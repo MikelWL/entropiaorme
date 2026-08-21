@@ -1,9 +1,7 @@
 /**
- * Break-even-tab view model: every library weapon's modelled break-even
- * markup against each of the player's looter professions. The figures
- * are modelled estimates (community returns model, roughly a one
- * percentage point error bar), computed backend-side; this model only
- * loads and shapes them for the table.
+ * Break-even-tab view model over configured loadouts. Component weighting,
+ * limited-item premium drag, and the exact-three looter fallback are all
+ * computed backend-side; this model only orders the readout.
  */
 
 import type { MarketBreakEven } from '$lib/api';
@@ -35,13 +33,13 @@ export function createBreakEvenModel() {
 
 	const looters = $derived(data?.looters ?? []);
 
-	// Weapons the catalogue knows first (they carry cells), unknown-
-	// efficiency weapons last, each group by ascending best break-even.
+	// Complete loadouts first, closest break-even requirement first. Missing
+	// Efficiency remains visible at the end rather than acquiring a zero.
 	const weapons = $derived.by(() => {
 		const rows = [...(data?.weapons ?? [])];
-		const best = (cells: { breakEvenMarkupPct: number }[]) =>
-			cells.length ? Math.min(...cells.map((c) => c.breakEvenMarkupPct)) : Infinity;
-		return rows.sort((a, b) => best(a.cells) - best(b.cells));
+		return rows.sort(
+			(a, b) => (a.breakEvenLootMarkupPct ?? Infinity) - (b.breakEvenLootMarkupPct ?? Infinity),
+		);
 	});
 
 	return {

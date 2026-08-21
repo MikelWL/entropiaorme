@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
+use crate::expected_hunting::HuntingLooterLevels;
 use crate::harvest_yield::HarvestYieldTier;
 
 /// An equipment profile from the library lookup, when the tool is
@@ -69,6 +70,16 @@ pub trait EquipmentLibrary: Send + Sync {
     /// guardrail is enabled and at least one board class names a tool the
     /// library knows.
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools>;
+
+    /// Believed-current hunting-looter levels, snapshotted when a session
+    /// starts. The exact three-profession set is part of the model contract.
+    fn hunting_looter_levels(&self) -> HuntingLooterLevels {
+        HuntingLooterLevels {
+            animal: 0.0,
+            mutant: 0.0,
+            robot: 0.0,
+        }
+    }
 }
 
 /// The session-capture configuration seam: the live settings the
@@ -137,6 +148,14 @@ impl EquipmentLibrary for InertEquipment {
     fn resolve_harvest_guardrail(&self) -> Option<HarvestGuardrailTools> {
         None
     }
+
+    fn hunting_looter_levels(&self) -> HuntingLooterLevels {
+        HuntingLooterLevels {
+            animal: 0.0,
+            mutant: 0.0,
+            robot: 0.0,
+        }
+    }
 }
 
 /// The inert configuration fallbacks: no declared facets, manual mob
@@ -180,6 +199,14 @@ mod tests {
         assert_eq!(equipment.cost_per_shot("Opalo"), 0.0);
         assert_eq!(equipment.resolve_trifecta(), None);
         assert_eq!(equipment.resolve_harvest_guardrail(), None);
+        assert_eq!(
+            equipment.hunting_looter_levels(),
+            HuntingLooterLevels {
+                animal: 0.0,
+                mutant: 0.0,
+                robot: 0.0,
+            }
+        );
     }
 
     #[test]

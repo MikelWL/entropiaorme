@@ -65,6 +65,32 @@ export const equipmentSurface: GuideSurface = {
 			},
 		},
 		{
+			id: 'expected-return',
+			anchor: () => anchor('expected-return-2'),
+			prose: {
+				title: 'Expected Return',
+				body: [
+					{
+						kind: 'p',
+						text: 'Expand a weapon to see each component’s own Efficiency, its long-run expected offensive return, and the loot markup that would break even under the community model.',
+					},
+					{
+						kind: 'p',
+						text: 'Effective Efficiency translates limited-item markup into the Efficiency of an economically equivalent unlimited setup. Healing, armour, harvesting, and other unmodelled costs stay outside this estimate; the information buttons explain both boundaries.',
+					},
+				],
+			},
+			async play({ demoApi, wait }) {
+				const api = demoApi as Partial<EquipmentDemoApi>;
+				api.setActiveTab?.('library');
+				api.expandRow?.('2');
+				await wait(500);
+			},
+			resetDemo() {
+				equipApi().collapseRow?.();
+			},
+		},
+		{
 			id: 'trifecta-selectors',
 			anchor: () => anchor('trifecta-selectors'),
 			prose: {

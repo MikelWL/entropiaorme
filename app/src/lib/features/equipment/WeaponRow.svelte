@@ -1,7 +1,10 @@
 <script lang="ts">
-	import { Badge, Button, DataTable } from '$lib/components';
+	import { Badge, Button, DataTable, StatDisplay } from '$lib/components';
+	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import type { Equipment } from '$lib/types';
+	import { NO_DATA, formatPercent } from '$lib/utils/format';
 	import { enrichmentColor, enrichmentLabel, formatPec } from './display';
+	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
 	import type { LibraryModel } from './libraryModel.svelte';
 
 	let { model, item }: { model: LibraryModel; item: Equipment } = $props();
@@ -40,7 +43,38 @@
 			effectiveCostPec: line.effectiveCostPec,
 		})),
 	);
+	const effectiveEfficiencyValue = $derived.by(() => {
+		const effective = detail?.expectedReturn?.effectiveEfficiency;
+		if (!effective) return NO_DATA;
+		switch (effective.status) {
+			case 'within_model_range':
+				return effective.efficiencyPct === null
+					? NO_DATA
+					: `${effective.efficiencyPct.toFixed(1)}%`;
+			case 'below_model_range':
+				return 'Below model range';
+			case 'above_model_range':
+				return 'Above model range';
+		}
+	});
 </script>
+
+{#snippet expectedReturnTip()}
+	<ExpectedReturnInfoTip
+		looterLevel={detail?.expectedReturn?.looterLevel}
+		coverage={detail?.expectedReturn?.coverage}
+		incomplete={detail?.expectedReturn?.incomplete}
+	/>
+{/snippet}
+
+{#snippet effectiveEfficiencyTip()}
+		<EffectiveEfficiencyInfoTip
+			effectiveEfficiency={detail?.expectedReturn?.effectiveEfficiency ?? null}
+			weightedEfficiencyPct={detail?.expectedReturn?.weightedEfficiencyPct ?? null}
+			consumedPremiumLabel={formatPec((detail?.expectedReturn?.consumedPremiumPerUse ?? 0) * 100)}
+			looterLevel={detail?.expectedReturn?.looterLevel ?? 0}
+		/>
+{/snippet}
 
 <!-- Equipment row -->
 <button
@@ -151,6 +185,41 @@
 				</div>
 			</div>
 
+			{#if detail.expectedReturn}
+				{@const expected = detail.expectedReturn}
+				<div
+					class="grid grid-cols-3 gap-5 border-y border-border/35 py-3 mb-4"
+					data-guide-anchor="expected-return-{item.id}"
+				>
+					<StatDisplay
+						label="Expected Return"
+						value={expected.expectedTtRate !== null ? formatPercent(expected.expectedTtRate) : NO_DATA}
+						valueClass={expected.expectedTtRate !== null ? 'text-text' : 'text-text-tertiary'}
+						emphasis="secondary"
+						labelSuffix={expectedReturnTip}
+					/>
+					<StatDisplay
+						label="Break-even loot MU"
+						value={expected.breakEvenLootMarkup !== null ? formatPercent(expected.breakEvenLootMarkup) : NO_DATA}
+						valueClass="text-text"
+						emphasis="secondary"
+					/>
+					<StatDisplay
+						label="Effective Efficiency"
+						value={effectiveEfficiencyValue}
+						valueClass={expected.effectiveEfficiency !== null ? 'text-text' : 'text-text-tertiary'}
+						emphasis="secondary"
+						labelSuffix={effectiveEfficiencyTip}
+					/>
+				</div>
+				<p class="-mt-2 mb-4 text-[11px] leading-relaxed text-text-tertiary">
+					Community model v1 · three-looter mean {expected.looterLevel.toFixed(1)}
+					{#if expected.incomplete}
+						· partial Efficiency coverage ({formatPercent(expected.coverage)})
+					{/if}
+				</p>
+			{/if}
+
 			<!-- Component list -->
 			<h3 class="eyebrow mb-2">
 				Components
@@ -161,6 +230,7 @@
 						{detail.weapon.name}
 					</span>
 					<span class="text-text-secondary text-xs tabular-nums">
+						{detail.weapon.efficiencyPct !== null ? `Efficiency ${detail.weapon.efficiencyPct.toFixed(1)}% · ` : 'Efficiency unknown · '}
 						Decay {formatPec(detail.weapon.decay)} · Ammo {formatPec(detail.weapon.ammoBurn)} PEC
 					</span>
 				</div>
@@ -178,6 +248,7 @@
 							{detail.amplifier.name}
 						</span>
 						<span class="text-text-secondary text-xs tabular-nums">
+							{detail.amplifier.efficiencyPct !== null ? `Efficiency ${detail.amplifier.efficiencyPct.toFixed(1)}% · ` : 'Efficiency unknown · '}
 							Decay {formatPec(detail.amplifier.decay)} · Ammo
 							{formatPec(detail.amplifier.ammoBurn)} PEC
 						</span>

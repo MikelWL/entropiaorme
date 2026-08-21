@@ -34,6 +34,13 @@ parse, and commits it.
   It deliberately does not constrain the parcel by traded volume. The ranking
   reads the accounting tables directly; the reverse direction is forbidden
   (see the boundary below).
+- The break-even readout evaluates each configured weapon loadout through the
+  shared `expected_hunting` model. Weapon and amplifier Efficiency remain
+  separate component streams, limited-item premium affects economic cost but
+  not loot-bearing TT, and the current fallback uses the labelled mean of
+  exactly Animal, Mutant, and Robot Looter. Its result is the 100%-anchored
+  loot markup that the modelled offensive slice would need to recover its
+  eligible cost, not a whole-activity promise.
 - The Import tab also accepts a manual absolute PED-per-unit observation for
   zero-TT and unit-priced items. These append to
   `market_unit_price_observations`; reward projection multiplies the observed

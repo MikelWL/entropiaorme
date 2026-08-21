@@ -11,28 +11,28 @@ import * as api from '$lib/api';
 const mocked = vi.mocked(api);
 
 function payload(): MarketBreakEven {
-	const cell = (looterName: string, breakEvenMarkupPct: number) => ({
-		looterName,
-		ttReturnPct: 100 / (1 + breakEvenMarkupPct / 100),
-		breakEvenMarkupPct,
+	const loadout = (name: string, breakEvenLootMarkupPct: number | null) => ({
+		name,
+		amplifierName: null,
+		weightedEfficiencyPct: breakEvenLootMarkupPct === null ? null : 70,
+		offensiveTtRecoveryPct: breakEvenLootMarkupPct === null ? null : 95,
+		expectedTtReturnPct: breakEvenLootMarkupPct === null ? null : 94,
+		breakEvenLootMarkupPct,
+		looterLevel: breakEvenLootMarkupPct === null ? null : 37.2,
+		coverage: breakEvenLootMarkupPct === null ? null : 1,
+		incomplete: breakEvenLootMarkupPct === null,
+		modelVersion: breakEvenLootMarkupPct === null ? null : 'community_v1',
 	});
 	return {
 		looters: [
 			{ name: 'Animal Looter', level: 37.2 },
 			{ name: 'Mutant Looter', level: 12.0 },
+			{ name: 'Robot Looter', level: 24.5 },
 		],
 		weapons: [
-			{ name: 'Unknown Blade', efficiencyPct: null, cells: [] },
-			{
-				name: 'Low Efficiency Gun',
-				efficiencyPct: 55.0,
-				cells: [cell('Animal Looter', 8.2), cell('Mutant Looter', 10.1)],
-			},
-			{
-				name: 'High Efficiency Gun',
-				efficiencyPct: 88.0,
-				cells: [cell('Animal Looter', 5.6), cell('Mutant Looter', 7.4)],
-			},
+			loadout('Unknown Blade', null),
+			loadout('Low Efficiency Gun', 110.1),
+			loadout('High Efficiency Gun', 105.6),
 		],
 	};
 }
@@ -47,7 +47,11 @@ describe('createBreakEvenModel', () => {
 		const model = createBreakEvenModel();
 		await model.loadData();
 
-		expect(model.looters.map((l) => l.name)).toEqual(['Animal Looter', 'Mutant Looter']);
+		expect(model.looters.map((l) => l.name)).toEqual([
+			'Animal Looter',
+			'Mutant Looter',
+			'Robot Looter',
+		]);
 		expect(model.weapons.map((w) => w.name)).toEqual([
 			'High Efficiency Gun',
 			'Low Efficiency Gun',

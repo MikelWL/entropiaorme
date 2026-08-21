@@ -423,6 +423,27 @@ pub struct HuntingOverall {
     pub loot_rate: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    pub expected: Option<ExpectedHuntingAggregate>,
+}
+
+/// Offensive-only community-model aggregate over immutable tool phases.
+/// Every value remains informational and separate from realised accounting.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedHuntingAggregate {
+    pub model_version: String,
+    pub looter_source: String,
+    pub looter_level: f64,
+    pub expected_loot_tt: f64,
+    pub modelled_raw_tt: f64,
+    pub eligible_offensive_cost: f64,
+    pub offensive_tt_recovery: f64,
+    pub expected_tt_rate: f64,
+    pub effective_efficiency: crate::expected_hunting::EffectiveEfficiency,
+    pub break_even_loot_markup: f64,
+    pub coverage: f64,
+    pub incomplete: bool,
+    pub missing_basis_phases: i64,
 }
 
 /// One session definition's aggregate over its hunted instances.
@@ -444,6 +465,7 @@ pub struct HuntingDefinitionRow {
     pub loot_rate: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    pub expected: Option<ExpectedHuntingAggregate>,
     pub activities: Vec<HuntingSignatureRow>,
     pub mobs: Vec<HuntingMobShareRow>,
     pub instance_rows: Vec<HuntingInstanceRow>,
@@ -463,10 +485,19 @@ pub struct HuntingSignatureRow {
     pub returns: f64,
     pub pes: f64,
     pub pes_per100_ped: f64,
+    /// Offensive-only expected economics over the immutable phases stamped
+    /// with this exact activity context. Family rows aggregate their variants;
+    /// joint signatures remain indivisible.
+    pub expected: Option<ExpectedHuntingAggregate>,
     /// Confirmed reward TT recorded separately from ordinary loot.
     pub confirmed_reward_ped: f64,
     /// Net markup realised when reward stock was later sold or converted.
     pub realised_reward_markup: f64,
+    /// Net markup realised when ordinary loot from this exact context was
+    /// later sold or converted. Internal accounting input for the API's
+    /// existing realised-return total, not a separate public statistic.
+    #[serde(skip)]
+    pub realised_loot_markup: f64,
     /// Actual reward items observed at completion. Their current market
     /// projection is resolved outside the accounting service.
     pub reward_items: Vec<HarvestLootItemRow>,
@@ -511,6 +542,7 @@ pub struct HuntingSpeciesRow {
     pub pes: Option<f64>,
     pub pes_per100_ped: Option<f64>,
     pub pes_sessions: i64,
+    pub expected: Option<ExpectedHuntingAggregate>,
     pub maturities: Vec<HuntingMaturityRow>,
     /// Item composition of the species' loot, largest TT first. Enhancer
     /// shrapnel returns are enhancer accounting, not mob loot, and are
@@ -2124,9 +2156,11 @@ struct SignatureAgg {
     duration_hours: f64,
     confirmed_reward_ped: f64,
     realised_reward_markup: f64,
+    realised_loot_markup: f64,
     reward_kinds: std::collections::BTreeSet<String>,
     reward_items: std::collections::BTreeMap<String, (i64, f64)>,
     loot_items: std::collections::BTreeMap<String, (i64, f64)>,
+    expected: ExpectedHuntingAccumulator,
     reward_unverified: bool,
     /// The distinct interval-id tuples seen, i.e. the focused stretches.
     runs: std::collections::BTreeSet<Vec<i64>>,
@@ -2371,6 +2405,158 @@ fn hunting_sessions(
     Ok((sessions, grain, pes_grain))
 }
 
+#[derive(Clone, Default)]
+struct ExpectedHuntingAccumulator {
+    expected_loot_tt: f64,
+    modelled_raw_tt: f64,
+    eligible_cost: f64,
+    candidate_raw_tt: f64,
+    looter_weight: f64,
+    incomplete: bool,
+    missing_basis_phases: i64,
+}
+
+impl ExpectedHuntingAccumulator {
+    fn add(&mut self, evidence: &crate::expected_hunting::OffensiveLoadoutEvidence, shots: i64) {
+        if shots <= 0 {
+            return;
+        }
+        let uses = shots as f64;
+        let candidate: f64 = evidence
+            .components
+            .iter()
+            .map(|component| component.raw_tt_per_use.max(0.0))
+            .sum::<f64>()
+            * uses;
+        let Ok(result) = crate::expected_hunting::evaluate(evidence) else {
+            self.candidate_raw_tt += candidate;
+            self.incomplete = true;
+            return;
+        };
+        self.expected_loot_tt += result.expected_loot_tt * uses;
+        self.modelled_raw_tt += result.modelled_raw_tt * uses;
+        self.eligible_cost += result.eligible_offensive_cost * uses;
+        self.candidate_raw_tt += candidate;
+        self.looter_weight += result.looter_level * result.modelled_raw_tt * uses;
+        self.incomplete |= result.incomplete;
+    }
+
+    fn mark_missing(&mut self, candidate_raw_tt: f64, missing_basis_phases: i64) {
+        if candidate_raw_tt > 0.0 && missing_basis_phases > 0 {
+            self.candidate_raw_tt += candidate_raw_tt;
+            self.missing_basis_phases += missing_basis_phases;
+            self.incomplete = true;
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.expected_loot_tt += other.expected_loot_tt;
+        self.modelled_raw_tt += other.modelled_raw_tt;
+        self.eligible_cost += other.eligible_cost;
+        self.candidate_raw_tt += other.candidate_raw_tt;
+        self.looter_weight += other.looter_weight;
+        self.incomplete |= other.incomplete;
+        self.missing_basis_phases += other.missing_basis_phases;
+    }
+
+    fn finish(&self) -> Option<ExpectedHuntingAggregate> {
+        if self.modelled_raw_tt <= 0.0 || self.eligible_cost <= 0.0 {
+            return None;
+        }
+        let round = |value: f64, places| eo_wire::normalizer::round_half_even(value, places);
+        let tt_recovery = self.expected_loot_tt / self.modelled_raw_tt;
+        let tt_rate = self.expected_loot_tt / self.eligible_cost;
+        let looter_level = self.looter_weight / self.modelled_raw_tt;
+        let effective_efficiency =
+            crate::expected_hunting::effective_efficiency_v1(tt_rate, looter_level).ok()?;
+        Some(ExpectedHuntingAggregate {
+            model_version: crate::expected_hunting::COMMUNITY_MODEL_V1.to_string(),
+            looter_source: "three_looter_mean".to_string(),
+            looter_level: round(looter_level, 2),
+            expected_loot_tt: round(self.expected_loot_tt, 4),
+            modelled_raw_tt: round(self.modelled_raw_tt, 4),
+            eligible_offensive_cost: round(self.eligible_cost, 4),
+            offensive_tt_recovery: round(tt_recovery, 6),
+            expected_tt_rate: round(tt_rate, 6),
+            effective_efficiency,
+            break_even_loot_markup: round(1.0 / tt_rate, 6),
+            coverage: round(
+                if self.candidate_raw_tt > 0.0 {
+                    self.modelled_raw_tt / self.candidate_raw_tt
+                } else {
+                    0.0
+                },
+                4,
+            ),
+            incomplete: self.incomplete,
+            missing_basis_phases: self.missing_basis_phases,
+        })
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn hunting_expected_aggregates(
+    conn: &rusqlite::Connection,
+    epoch_start: Option<f64>,
+    sessions: &std::collections::HashMap<String, HuntingSessionAgg>,
+) -> Result<
+    (
+        Option<ExpectedHuntingAggregate>,
+        std::collections::HashMap<Option<i64>, ExpectedHuntingAggregate>,
+        std::collections::HashMap<String, ExpectedHuntingAggregate>,
+        std::collections::HashMap<(String, Option<i64>), ExpectedHuntingAccumulator>,
+    ),
+    DbError,
+> {
+    use std::collections::HashMap;
+
+    let mut overall = ExpectedHuntingAccumulator::default();
+    let mut definitions: HashMap<Option<i64>, ExpectedHuntingAccumulator> = HashMap::new();
+    let mut species: HashMap<String, ExpectedHuntingAccumulator> = HashMap::new();
+    let mut contexts: HashMap<(String, Option<i64>), ExpectedHuntingAccumulator> = HashMap::new();
+    let cells = crate::session_rollup::effective_offensive_evidence_cells(conn, epoch_start)?;
+    for cell in cells {
+        let Some(session) = sessions.get(&cell.session_id) else {
+            continue;
+        };
+        let definition = definitions.entry(session.definition_id).or_default();
+        let target = species.entry(cell.mob_species).or_default();
+        let context = contexts
+            .entry((cell.session_id.clone(), cell.context_id))
+            .or_default();
+        if let Some(encoded) = cell.expected_economics_json {
+            let evidence =
+                serde_json::from_str::<crate::expected_hunting::OffensiveLoadoutEvidence>(&encoded)
+                    .map_err(|source| DbError::Decode {
+                        context: "kill tool expected economics decode",
+                        source,
+                    })?;
+            overall.add(&evidence, cell.shots_fired);
+            definition.add(&evidence, cell.shots_fired);
+            target.add(&evidence, cell.shots_fired);
+            context.add(&evidence, cell.shots_fired);
+        } else {
+            overall.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            definition.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            target.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+            context.mark_missing(cell.missing_candidate_raw_tt, cell.missing_basis_phases);
+        }
+    }
+
+    Ok((
+        overall.finish(),
+        definitions
+            .into_iter()
+            .filter_map(|(key, value)| value.finish().map(|value| (key, value)))
+            .collect(),
+        species
+            .into_iter()
+            .filter_map(|(key, value)| value.finish().map(|value| (key, value)))
+            .collect(),
+        contexts,
+    ))
+}
+
 #[allow(clippy::too_many_lines)]
 fn hunting_activity_read(
     conn: &rusqlite::Connection,
@@ -2379,6 +2565,8 @@ fn hunting_activity_read(
     use std::collections::{BTreeMap, HashMap};
 
     let (sessions, kill_grain, pes_grain) = hunting_sessions(conn, epoch_start)?;
+    let (overall_expected, mut definition_expected, mut species_expected, mut context_expected) =
+        hunting_expected_aggregates(conn, epoch_start, &sessions)?;
     let round2 = |value: f64| eo_wire::normalizer::round_half_even(value, 2);
     let round4 = |value: f64| eo_wire::normalizer::round_half_even(value, 4);
     let rate = |returns: f64, cycled: f64| {
@@ -2412,6 +2600,7 @@ fn hunting_activity_read(
             loot_rate: rate(loot_tt, cycled),
             pes: round4(pes),
             pes_per100_ped: pes_per100(pes, cycled),
+            expected: overall_expected,
         }
     };
 
@@ -2576,6 +2765,7 @@ fn hunting_activity_read(
                 pes: dominated.map(|(pes, _, _)| round4(*pes)),
                 pes_per100_ped: dominated.map(|(pes, cycled, _)| pes_per100(*pes, *cycled)),
                 pes_sessions: dominated.map(|(_, _, count)| *count).unwrap_or(0),
+                expected: species_expected.remove(&species),
                 mob_species: species,
                 kills,
                 cycled: round2(cycled),
@@ -2881,11 +3071,12 @@ fn hunting_activity_read(
         }
     }
 
-    // A later sale realises only markup beyond the reward's TT principal.
-    // Project that gain back through the immutable quest context carried by
-    // each consumed stock movement. Quantity is the allocation basis so a
-    // zero-TT voucher remains attributable.
+    // A later stock outcome realises only markup beyond the item's TT
+    // principal. Project that gain back through the immutable activity
+    // context carried by each consumed movement. Quantity is the allocation
+    // basis so a zero-TT reward voucher remains attributable.
     let mut context_realised_reward_markup: HashMap<i64, f64> = HashMap::new();
+    let mut context_realised_loot_markup: HashMap<i64, f64> = HashMap::new();
     for realised in realised_stock_outcomes(conn)? {
         if realised.outcome.activity_net_markup.abs() <= STOCK_EPSILON {
             continue;
@@ -2908,16 +3099,23 @@ fn hunting_activity_read(
             continue;
         }
         for (source_kind, context_id, quantity) in contributions {
-            if source_kind != "quest" {
-                continue;
-            }
             let Some(context_id) = context_id else {
                 continue;
             };
-            *context_realised_reward_markup
-                .entry(context_id)
-                .or_default() +=
+            let attributed_markup =
                 realised.outcome.activity_net_markup * quantity / attributed_quantity;
+            match source_kind.as_str() {
+                "hunt" => {
+                    *context_realised_loot_markup.entry(context_id).or_default() +=
+                        attributed_markup;
+                }
+                "quest" => {
+                    *context_realised_reward_markup
+                        .entry(context_id)
+                        .or_default() += attributed_markup;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2961,6 +3159,11 @@ fn hunting_activity_read(
                 .or_default()
                 .entry(key)
                 .or_default();
+            if let Some(expected) =
+                context_expected.remove(&(session_id.clone(), Some(*context_id)))
+            {
+                agg.expected.merge(&expected);
+            }
             if let Some((kills, cycled, loot)) = context_kills.get(context_id) {
                 agg.kills += kills;
                 agg.cycled += cycled;
@@ -2974,6 +3177,10 @@ fn hunting_activity_read(
                 agg.reward_kinds.extend(kinds.iter().cloned());
             }
             agg.realised_reward_markup += context_realised_reward_markup
+                .get(context_id)
+                .copied()
+                .unwrap_or(0.0);
+            agg.realised_loot_markup += context_realised_loot_markup
                 .get(context_id)
                 .copied()
                 .unwrap_or(0.0);
@@ -3013,6 +3220,9 @@ fn hunting_activity_read(
             .or_default()
             .entry(Vec::new())
             .or_default();
+        if let Some(expected) = context_expected.remove(&(id.clone(), None)) {
+            ambient.expected.merge(&expected);
+        }
         if let Some((kills, cycled, loot)) = kills {
             ambient.kills += kills;
             ambient.cycled += cycled;
@@ -3127,6 +3337,7 @@ fn hunting_activity_read(
                 loot_rate: rate(loot_tt, cycled),
                 pes: round4(pes),
                 pes_per100_ped: pes_per100(pes, cycled),
+                expected: definition_expected.remove(&definition_id),
                 activities,
                 mobs,
                 instance_rows,
@@ -3229,8 +3440,10 @@ fn assemble_signatures(
             } else {
                 0.0
             },
+            expected: agg.expected.finish(),
             confirmed_reward_ped: round2(agg.confirmed_reward_ped),
             realised_reward_markup: round2(agg.realised_reward_markup),
+            realised_loot_markup: round2(agg.realised_loot_markup),
             reward_items: loot_rows(&agg.reward_items),
             reward_status: status,
             loot_items: loot_rows(&agg.loot_items),
@@ -3239,6 +3452,8 @@ fn assemble_signatures(
     };
 
     let mut families: std::collections::BTreeMap<i64, Vec<HuntingSignatureRow>> =
+        std::collections::BTreeMap::new();
+    let mut family_expected: std::collections::BTreeMap<i64, ExpectedHuntingAccumulator> =
         std::collections::BTreeMap::new();
     let mut rows: Vec<HuntingSignatureRow> = Vec::new();
     let mut ambient: Option<HuntingSignatureRow> = None;
@@ -3268,7 +3483,13 @@ fn assemble_signatures(
                 let facts = quest_facts.get(quest_id);
                 let row = base_row("quest", member_label(&key[0]), agg);
                 match facts.and_then(|facts| facts.family_id) {
-                    Some(family_id) => families.entry(family_id).or_default().push(row),
+                    Some(family_id) => {
+                        family_expected
+                            .entry(family_id)
+                            .or_default()
+                            .merge(&agg.expected);
+                        families.entry(family_id).or_default().push(row);
+                    }
                     None => rows.push(row),
                 }
             }
@@ -3345,8 +3566,12 @@ fn assemble_signatures(
             } else {
                 0.0
             },
+            expected: family_expected
+                .remove(&family_id)
+                .and_then(|expected| expected.finish()),
             confirmed_reward_ped: round2(variants.iter().map(|v| v.confirmed_reward_ped).sum()),
             realised_reward_markup: round2(variants.iter().map(|v| v.realised_reward_markup).sum()),
+            realised_loot_markup: round2(variants.iter().map(|v| v.realised_loot_markup).sum()),
             reward_items: loot_rows(&family_reward_items),
             reward_status: family_reward_status,
             loot_items: loot_rows(&family_items),
@@ -3654,6 +3879,7 @@ fn insert_movement(
     ref_id: Option<&str>,
     provenance: Option<stock_allocation::StockProvenance<'_>>,
     session_definition_id: Option<i64>,
+    activity_context_id: Option<i64>,
     tool_name: Option<&str>,
     quantity: f64,
     tt_value: f64,
@@ -3677,7 +3903,8 @@ fn insert_movement(
         Some(StockProvenance::Hunt(species)) => species,
         _ => None,
     };
-    let (quest_reward_item_id, quest_run_id, quest_id, activity_context_id) = match provenance {
+    let (quest_reward_item_id, quest_run_id, quest_id, quest_activity_context_id) = match provenance
+    {
         Some(StockProvenance::Quest {
             reward_item_id,
             quest_run_id,
@@ -3691,6 +3918,7 @@ fn insert_movement(
         ),
         _ => (None, None, None, None),
     };
+    let activity_context_id = activity_context_id.or(quest_activity_context_id);
     conn.execute(
         "INSERT INTO stock_movements ( \
              item_name, movement_kind, ref_id, source_kind, source_event_id, \
@@ -3753,6 +3981,7 @@ fn record_opening_balance(
         item_name,
         "opening_balance",
         Some(ref_id),
+        None,
         None,
         None,
         None,
@@ -3975,6 +4204,10 @@ struct PositionKey {
     /// Hunting's user-designated context; absent for harvesting and
     /// genuinely unassigned or pre-context hunted stock.
     definition_id: Option<i64>,
+    /// Hunting's exact declared activity context. This remains separate from
+    /// the definition so realised stock outcomes can reach the sub-activity
+    /// breakdown without making that attribution a target-species guess.
+    activity_context_id: Option<i64>,
     /// The producing tool; empty when unknown.
     tool: String,
     /// Present only for confirmed quest-reward stock.
@@ -4011,48 +4244,83 @@ fn movement_activity_kind(source_kind: &str, tier: Option<&str>, species: Option
 /// species total stays exact while no historical definition claim is invented
 /// for the realised sale itself.
 fn absorb_legacy_hunt_outflows(by_source: &mut std::collections::BTreeMap<PositionKey, f64>) {
-    let species: std::collections::BTreeSet<String> = by_source
-        .keys()
-        .filter(|key| !key.species.is_empty())
-        .map(|key| key.species.clone())
-        .collect();
-    for species in species {
-        let unknown_key = PositionKey {
-            source_kind: "hunt".to_string(),
-            tier: String::new(),
-            species: species.clone(),
-            definition_id: None,
-            tool: String::new(),
-            quest: None,
-        };
-        let unknown = by_source.get(&unknown_key).copied().unwrap_or(0.0);
-        if unknown >= -STOCK_EPSILON {
-            continue;
+    fn absorb(
+        by_source: &mut std::collections::BTreeMap<PositionKey, f64>,
+        broad_key: &PositionKey,
+        candidates: Vec<PositionKey>,
+    ) {
+        let broad = by_source.get(broad_key).copied().unwrap_or(0.0);
+        if broad >= -STOCK_EPSILON {
+            return;
         }
-        let definition_keys: Vec<PositionKey> = by_source
-            .iter()
-            .filter(|(key, quantity)| {
-                key.source_kind == "hunt"
-                    && key.species == species
-                    && key.definition_id.is_some()
-                    && **quantity > STOCK_EPSILON
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        let available: f64 = definition_keys
-            .iter()
-            .filter_map(|key| by_source.get(key))
-            .sum();
+        let available: f64 = candidates.iter().filter_map(|key| by_source.get(key)).sum();
         if available <= STOCK_EPSILON {
-            continue;
+            return;
         }
-        let remaining = (available + unknown).max(0.0);
-        for key in definition_keys {
+        let remaining = (available + broad).max(0.0);
+        for key in candidates {
             if let Some(quantity) = by_source.get_mut(&key) {
                 *quantity *= remaining / available;
             }
         }
-        by_source.insert(unknown_key, 0.0);
+        by_source.insert(broad_key.clone(), 0.0);
+    }
+
+    // Rows written before exact activity provenance can already carry a
+    // session definition. Consume any residual at that broader grain across
+    // the context-specific stock in the same definition.
+    let definition_keys: Vec<PositionKey> = by_source
+        .iter()
+        .filter(|(key, quantity)| {
+            key.source_kind == "hunt"
+                && !key.species.is_empty()
+                && key.definition_id.is_some()
+                && key.activity_context_id.is_none()
+                && **quantity < -STOCK_EPSILON
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for broad_key in definition_keys {
+        let candidates = by_source
+            .iter()
+            .filter(|(key, quantity)| {
+                key.source_kind == "hunt"
+                    && key.species == broad_key.species
+                    && key.definition_id == broad_key.definition_id
+                    && key.activity_context_id.is_some()
+                    && **quantity > STOCK_EPSILON
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        absorb(by_source, &broad_key, candidates);
+    }
+
+    // Older rows may have neither definition nor context. Spread only their
+    // residual across the more specific stock of the same species, retaining
+    // the species total without inventing a historical activity claim.
+    let unattributed_keys: Vec<PositionKey> = by_source
+        .iter()
+        .filter(|(key, quantity)| {
+            key.source_kind == "hunt"
+                && !key.species.is_empty()
+                && key.definition_id.is_none()
+                && key.activity_context_id.is_none()
+                && **quantity < -STOCK_EPSILON
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for broad_key in unattributed_keys {
+        let candidates = by_source
+            .iter()
+            .filter(|(key, quantity)| {
+                key.source_kind == "hunt"
+                    && key.species == broad_key.species
+                    && (key.definition_id.is_some() || key.activity_context_id.is_some())
+                    && **quantity > STOCK_EPSILON
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        absorb(by_source, &broad_key, candidates);
     }
 }
 
@@ -4094,6 +4362,7 @@ fn item_positions(
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: None,
                 })
@@ -4108,13 +4377,13 @@ fn item_positions(
         let mut stmt = conn.prepare(
             "SELECT CASE WHEN li.is_enhancer_shrapnel = 0 THEN COALESCE(k.mob_species, '') \
                     ELSE '' END AS species, \
-                    li.is_enhancer_shrapnel, s.definition_id, \
+                    li.is_enhancer_shrapnel, s.definition_id, k.context_id, \
                     SUM(li.quantity), SUM(li.value_ped) \
              FROM kill_loot_items AS li \
              JOIN kills AS k ON k.id = li.kill_id \
              JOIN tracking_sessions AS s ON s.id = k.session_id \
              WHERE li.item_name = ? AND li.deactivated_at IS NULL \
-             GROUP BY species, li.is_enhancer_shrapnel, s.definition_id",
+             GROUP BY species, li.is_enhancer_shrapnel, s.definition_id, k.context_id",
         )?;
         let rows = stmt
             .query_map(rusqlite::params![item_name], |row| {
@@ -4122,12 +4391,13 @@ fn item_positions(
                     row.get::<_, String>(0)?,
                     row.get::<_, bool>(1)?,
                     row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, f64>(3)?,
+                    row.get::<_, Option<i64>>(3)?,
                     row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for (species, is_shrapnel, definition_id, quantity, tt_value) in rows {
+        for (species, is_shrapnel, definition_id, context_id, quantity, tt_value) in rows {
             base_qty += quantity;
             base_tt += tt_value;
             *by_source
@@ -4136,6 +4406,7 @@ fn item_positions(
                     tier: String::new(),
                     species,
                     definition_id,
+                    activity_context_id: (!is_shrapnel).then_some(context_id).flatten(),
                     tool: String::new(),
                     quest: None,
                 })
@@ -4192,6 +4463,7 @@ fn item_positions(
                     tier: String::new(),
                     species: String::new(),
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: Some(QuestPositionKey {
                         reward_item_id,
@@ -4260,6 +4532,11 @@ fn item_positions(
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
+                    activity_context_id: if source_kind == "hunt" {
+                        context_id
+                    } else {
+                        None
+                    },
                     tool: tool.unwrap_or_default(),
                     quest: match (reward_item_id, run_id, quest_id) {
                         (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
@@ -4342,6 +4619,7 @@ fn all_item_positions(
                     tier: tier.unwrap_or_default(),
                     species: String::new(),
                     definition_id: None,
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: None,
                 })
@@ -4368,6 +4646,7 @@ fn all_item_positions(
                     tier: String::new(),
                     species,
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: None,
                 })
@@ -4421,6 +4700,7 @@ fn all_item_positions(
                     tier: String::new(),
                     species: String::new(),
                     definition_id,
+                    activity_context_id: None,
                     tool: String::new(),
                     quest: Some(QuestPositionKey {
                         reward_item_id,
@@ -4471,6 +4751,11 @@ fn all_item_positions(
                     tier: tier.unwrap_or_default(),
                     species: species.unwrap_or_default(),
                     definition_id,
+                    // The batch inventory read uses session-grain projected
+                    // loot, so collapse hunted movement contexts back to that
+                    // same grain. Write paths use `item_positions`, which
+                    // retains the exact context for future attribution.
+                    activity_context_id: None,
                     tool: tool.unwrap_or_default(),
                     quest: match (reward_item_id, run_id, quest_id) {
                         (Some(reward_item_id), Some(quest_run_id), Some(quest_id)) => {
@@ -4539,6 +4824,7 @@ fn as_source_positions(
             // Keep the session-definition key on every Hunting position;
             // optional target evidence never gates the deliberate axis.
             session_definition_id: key.definition_id,
+            activity_context_id: key.activity_context_id,
             tool_name: (!key.tool.is_empty()).then_some(key.tool.as_str()),
             quantity: *quantity,
         })
@@ -5134,6 +5420,7 @@ impl AnalyticsService {
                         Some(&id_c),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -5614,6 +5901,7 @@ impl AnalyticsService {
                             Some(&listing_id),
                             provenance,
                             definition_id,
+                            context_id,
                             tool.as_deref(),
                             -quantity,
                             -tt_value,
@@ -5771,6 +6059,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -5790,6 +6079,7 @@ impl AnalyticsService {
                             Some(&id),
                             allocation.provenance,
                             allocation.session_definition_id,
+                            allocation.activity_context_id,
                             allocation.tool_name,
                             allocation_output_tt / target_unit_tt,
                             allocation_output_tt,
@@ -5882,6 +6172,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -5977,6 +6268,7 @@ impl AnalyticsService {
                         Some(&id),
                         allocation.provenance,
                         allocation.session_definition_id,
+                        allocation.activity_context_id,
                         allocation.tool_name,
                         -allocation.quantity,
                         -allocation.tt_value,
@@ -10307,6 +10599,209 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hunting_expected_return_replays_captured_evidence_and_discloses_legacy_gaps() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
+        };
+
+        let (_dir, service) = write_service().await;
+        seed_hunting_scenario(&service).await;
+        let evidence = OffensiveLoadoutEvidence {
+            components: vec![
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Weapon,
+                    catalog_id: Some("weapon-1".into()),
+                    name: "Test Rifle".into(),
+                    efficiency_pct: Some(90.0),
+                    raw_tt_per_use: 0.03,
+                    consumed_premium_per_use: 0.0,
+                },
+                OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Amplifier,
+                    catalog_id: Some("amp-1".into()),
+                    name: "Test Amplifier".into(),
+                    efficiency_pct: Some(60.0),
+                    raw_tt_per_use: 0.01,
+                    consumed_premium_per_use: 0.002,
+                },
+            ],
+            looters: HuntingLooterLevels {
+                animal: 30.0,
+                mutant: 60.0,
+                robot: 90.0,
+            },
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        let encoded = serde_json::to_string(&evidence).unwrap();
+        service
+            .db
+            .with_writer(move |conn| {
+                conn.execute(
+                    "INSERT INTO kill_tool_stats \
+                     (kill_id, tool_name, shots_fired, cost_per_shot, \
+                      expected_economics_json, evidence_fingerprint) \
+                     VALUES ('k1', 'Test Rifle', 10, 0.042, ?1, ?1)",
+                    rusqlite::params![encoded],
+                )?;
+                conn.execute(
+                    "INSERT INTO kill_tool_stats \
+                     (kill_id, tool_name, shots_fired, cost_per_shot) \
+                     VALUES ('k2', 'Legacy Rifle', 4, 0.05)",
+                    [],
+                )?;
+                crate::session_rollup::recompute_session(conn, "hunt-a")?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let data = service.hunting_activity("all").await.unwrap();
+        let expected = data.overall.expected.expect("captured model basis");
+        assert_eq!(expected.model_version, "community_v1");
+        assert_eq!(expected.looter_source, "three_looter_mean");
+        assert_eq!(expected.looter_level, 60.0);
+        assert_eq!(expected.expected_loot_tt, 0.3839);
+        assert_eq!(expected.modelled_raw_tt, 0.4);
+        assert_eq!(expected.eligible_offensive_cost, 0.42);
+        assert_eq!(expected.offensive_tt_recovery, 0.95975);
+        assert_eq!(expected.expected_tt_rate, 0.914048);
+        assert_eq!(
+            expected.effective_efficiency,
+            crate::expected_hunting::EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 17.21,
+            }
+        );
+        assert_eq!(expected.break_even_loot_markup, 1.094035);
+        assert_eq!(expected.coverage, 0.6667);
+        assert!(expected.incomplete);
+        assert_eq!(expected.missing_basis_phases, 1);
+
+        let aris = data.definitions[0]
+            .expected
+            .as_ref()
+            .expect("definition model basis");
+        let atrox = data.species[0]
+            .expected
+            .as_ref()
+            .expect("species model basis");
+        assert_eq!(aris, atrox);
+        assert_eq!(aris, &expected);
+
+        let family = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("quest family");
+        assert_eq!(family.expected.as_ref(), Some(&expected));
+        assert_eq!(family.variants[0].expected.as_ref(), Some(&expected));
+        let ambient = data.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "ambient")
+            .expect("ambient remainder");
+        assert!(ambient.expected.is_none());
+    }
+
+    #[test]
+    fn aggregate_effective_efficiency_weights_mixed_loadouts_by_their_economics() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
+        };
+
+        let evidence =
+            |name: &str, efficiency_pct: f64, raw_tt: f64, premium: f64| OffensiveLoadoutEvidence {
+                components: vec![OffensiveComponentEvidence {
+                    kind: OffensiveComponentKind::Weapon,
+                    catalog_id: None,
+                    name: name.to_string(),
+                    efficiency_pct: Some(efficiency_pct),
+                    raw_tt_per_use: raw_tt,
+                    consumed_premium_per_use: premium,
+                }],
+                looters: HuntingLooterLevels {
+                    animal: 50.0,
+                    mutant: 50.0,
+                    robot: 50.0,
+                },
+                looter_source: LooterSource::ThreeLooterMean,
+            };
+        let mut aggregate = ExpectedHuntingAccumulator::default();
+        aggregate.add(&evidence("High-efficiency rifle", 90.0, 0.03, 0.0), 10);
+        aggregate.add(&evidence("Limited finisher", 70.0, 0.01, 0.0002), 20);
+
+        let result = aggregate.finish().expect("modelled mixed loadouts");
+        assert_eq!(result.modelled_raw_tt, 0.5);
+        assert_eq!(result.eligible_offensive_cost, 0.504);
+        assert_eq!(result.expected_tt_rate, 0.944841);
+        assert_eq!(
+            result.effective_efficiency,
+            crate::expected_hunting::EffectiveEfficiency::WithinModelRange {
+                efficiency_pct: 71.2,
+            }
+        );
+    }
+
+    #[test]
+    fn failed_expected_evaluation_still_narrows_coverage() {
+        use crate::expected_hunting::{
+            HuntingLooterLevels, LooterSource, OffensiveComponentEvidence, OffensiveComponentKind,
+            OffensiveLoadoutEvidence,
+        };
+
+        let evidence = OffensiveLoadoutEvidence {
+            components: vec![OffensiveComponentEvidence {
+                kind: OffensiveComponentKind::Weapon,
+                catalog_id: None,
+                name: "Invalid evidence".to_string(),
+                efficiency_pct: Some(f64::NAN),
+                raw_tt_per_use: 0.02,
+                consumed_premium_per_use: 0.0,
+            }],
+            looters: HuntingLooterLevels {
+                animal: 50.0,
+                mutant: 50.0,
+                robot: 50.0,
+            },
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        let mut aggregate = ExpectedHuntingAccumulator::default();
+        aggregate.add(&evidence, 5);
+
+        assert_eq!(aggregate.candidate_raw_tt, 0.1);
+        assert_eq!(aggregate.modelled_raw_tt, 0.0);
+        assert!(aggregate.incomplete);
+    }
+
+    #[test]
+    fn legacy_definition_outflows_absorb_context_specific_hunt_stock() {
+        let key = |definition_id, activity_context_id| PositionKey {
+            source_kind: "hunt".to_string(),
+            tier: String::new(),
+            species: "Atrox".to_string(),
+            definition_id,
+            activity_context_id,
+            tool: String::new(),
+            quest: None,
+        };
+        let legacy = key(Some(7), None);
+        let context_a = key(Some(7), Some(70));
+        let context_b = key(Some(7), Some(71));
+        let mut positions = std::collections::BTreeMap::from([
+            (legacy.clone(), -50.0),
+            (context_a.clone(), 40.0),
+            (context_b.clone(), 60.0),
+        ]);
+
+        absorb_legacy_hunt_outflows(&mut positions);
+
+        assert_eq!(positions[&legacy], 0.0);
+        assert!((positions[&context_a] - 20.0).abs() < 1e-9);
+        assert!((positions[&context_b] - 30.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
     async fn hunting_activity_uses_the_latest_reward_review_outcome() {
         let (_dir, service) = write_service().await;
         seed_hunting_scenario(&service).await;
@@ -10787,6 +11282,14 @@ mod tests {
         // unattributed. Only the non-enhancer half reaches Hunting realised.
         let realised = service.realised_markup_by_species().await.unwrap();
         assert!((realised[0].net_markup - 0.05).abs() < 1e-9);
+        let activity = service.hunting_activity("all").await.unwrap();
+        let family = activity.definitions[0]
+            .activities
+            .iter()
+            .find(|row| row.kind == "quest_family")
+            .expect("activity carrying the converted loot");
+        assert!((family.realised_loot_markup - 0.05).abs() < 1e-9);
+        assert!(family.realised_reward_markup.abs() < 1e-9);
 
         let conversion = service
             .activity_history(Profession::Hunting)

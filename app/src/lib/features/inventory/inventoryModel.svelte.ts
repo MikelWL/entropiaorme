@@ -43,7 +43,7 @@ import type {
 } from '$lib/features/analytics/treeCuttingModel.svelte';
 import {
 	type ConfidenceMode,
-	effectiveMarkup,
+	effectiveItemMarkup,
 	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
 	opportunityTier,
@@ -77,7 +77,7 @@ function stockRow(
 	const marketItem = market?.items.find((item) => item.itemName === row.itemName);
 	const nanocubeMarkup = market?.nanocubeMarkupPct ?? NANOCUBE_FALLBACK_MARKUP;
 	const opportunity = market ? marketOpportunity(marketItem, nanocubeMarkup) : null;
-	const applied = opportunity ? effectiveMarkup(opportunity, nanocubeMarkup, confidenceMode) : null;
+	const applied = effectiveItemMarkup(row.itemName, opportunity, nanocubeMarkup, confidenceMode);
 	const premium = marketItem?.markupPct ? marketItem.markupPct / 100 - 1 : 0;
 	const recommendedPacketTt =
 		packetGrossMarkupPed !== null && premium > 0
@@ -98,7 +98,8 @@ function stockRow(
 		markupHorizon: marketItem?.horizon ?? null,
 		tier: opportunity ? opportunityTier(opportunity) : null,
 		effectiveMarkupPct: applied?.markupPct ?? null,
-		floored: applied?.floored ?? false,
+		markupBasis: applied?.basis ?? null,
+		floored: applied?.basis === 'nanocube',
 		salesPed: marketItem?.salesPed ?? null,
 		weeklySalesPed:
 			marketItem?.readings.find((reading) => reading.horizon === 'week')?.salesPed ?? null,

@@ -273,6 +273,26 @@ pub(super) static MIGRATIONS: &[Migration] = &[
         description: "healing attribution",
         sql: include_str!("../../migrations/0047_healing_attribution.sql"),
     },
+    Migration {
+        version: 48,
+        description: "expected hunting evidence",
+        sql: include_str!("../../migrations/0048_expected_hunting_evidence.sql"),
+    },
+    Migration {
+        version: 49,
+        description: "expected hunting phase identity",
+        sql: include_str!("../../migrations/0049_expected_hunting_phase_identity.sql"),
+    },
+    Migration {
+        version: 50,
+        description: "session offensive evidence rollups",
+        sql: include_str!("../../migrations/0050_session_offensive_evidence_rollups.sql"),
+    },
+    Migration {
+        version: 51,
+        description: "context offensive evidence",
+        sql: include_str!("../../migrations/0051_context_offensive_evidence.sql"),
+    },
 ];
 
 // Applied migrations are immutable. These hashes are a deliberate second
@@ -328,6 +348,10 @@ const FROZEN_CHECKSUMS: &[&str] = &[
     "E8E3894C6919916669DE0DF626D0453C26BDD3119FF5B2D3D3734D61B3735DD756670210259CC529E37B25840F0B3CAD",
     "831DF480850CCB94220B7AF4A55D47507935331BFCBCD73DA0B27ED30181E96064E5D13D08380A5FD349B151B6844D97",
     "499090EBAE8875A10C6863090B07196C95DDDAB807FDC36CE66B80F8E399C4C9A9F5543150B40D5877A234CCD75F83C5",
+    "628FA04BB2B2AF03ED46B934704BFBF4475229C711F1C44E2FE7CFF1B98A61E90B70FE36C3CE5A76616253B814E76160",
+    "8111C0C5CD587A8D59CFC38068C2E0F0553DFFB8D63C72F51956591CDFF8AA05F0DCD18F12DF9C920B997F4A3A2FA383",
+    "57D24D21E6A64E85F9616AA6D359120C1F191B3817886C6AE90D5E2062BD933405F178119AD29DAF474E5CA059DEBBFF",
+    "49B3ABDBA79E1310C89EB54C3182BEB332883A97C6229453C11F5867768146A9D65D8EAFBC4501775D4F01D1AF133A71",
 ];
 
 /// The ledger table, exactly as the previous runner created it (and as
@@ -510,6 +534,30 @@ mod tests {
                 migration.version
             );
         }
+    }
+
+    #[test]
+    fn expected_hunting_phase_identity_preserves_equal_cost_loadouts() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        run(&mut connection).expect("fresh chain applies");
+        connection
+            .execute_batch(
+                "INSERT INTO tracking_sessions(id, started_at, is_active) \
+                 VALUES('session', 1.0, 0); \
+                 INSERT INTO kills(id, session_id, mob_name, timestamp) \
+                 VALUES('kill', 'session', 'Atrox', 2.0); \
+                 INSERT INTO kill_tool_stats \
+                 (kill_id, tool_name, shots_fired, cost_per_shot, \
+                  expected_economics_json, evidence_fingerprint) \
+                 VALUES \
+                 ('kill', 'Rifle', 2, 0.05, '{\"phase\":1}', 'phase-1'), \
+                 ('kill', 'Rifle', 3, 0.05, '{\"phase\":2}', 'phase-2');",
+            )
+            .expect("distinct phases insert");
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM kill_tool_stats", [], |row| row.get(0))
+            .expect("phase count");
+        assert_eq!(count, 2);
     }
 
     #[test]

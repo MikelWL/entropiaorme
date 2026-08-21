@@ -1,8 +1,11 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
-	import StatDisplay from '$lib/components/StatDisplay.svelte';
-	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
+	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
+	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
+	import { NO_DATA, formatPed } from '$lib/utils/format';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
+	import EconomicOutcomeHorizon from './EconomicOutcomeHorizon.svelte';
+	import ExpectedEconomicsEquation from './ExpectedEconomicsEquation.svelte';
 	import HuntingActivityPicker from './HuntingActivityPicker.svelte';
 	import type { HuntingActivitySection } from './huntingModel.svelte';
 
@@ -32,12 +35,24 @@
 			null,
 	);
 
-	const signedPed = (value: number) => `${value >= 0 ? '+' : ''}${formatPed(value)}`;
-	const netTone = (value: number) => (value >= 0 ? 'text-positive' : 'text-negative');
 	const muRate = (activity: HuntingActivitySection) =>
 		activity.muProjectedReturns !== null && activity.cycled > 0
 			? activity.muProjectedReturns / activity.cycled
 			: null;
+	const effectiveEfficiencyValue = (activity: HuntingActivitySection) => {
+		const effective = activity.expected?.effectiveEfficiency;
+		if (!effective) return NO_DATA;
+		switch (effective.status) {
+			case 'within_model_range':
+				return effective.efficiencyPct !== null
+					? `${effective.efficiencyPct.toFixed(1)}%`
+					: NO_DATA;
+			case 'below_model_range':
+				return 'Below model range';
+			case 'above_model_range':
+				return 'Above model range';
+		}
+	};
 	const kindLabel = (activity: HuntingActivitySection) => {
 		switch (activity.kind) {
 			case 'quest_family':
@@ -110,10 +125,10 @@
 
 {#snippet realisedTip()}
 	<InfoTip label="What realised figures are">
-		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed quest reward TT</p>
+		<p class="text-xs font-semibold leading-relaxed text-text">Loot TT plus confirmed economic outcomes</p>
 		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			Confirmed reward TT is added exactly once. Later realised markup from stock rewards returns to
-			the immutable activity ownership recorded at completion.
+			Confirmed reward TT is added exactly once. Later realised markup from ordinary loot and stock
+			rewards returns through its immutable activity provenance.
 		</p>
 	</InfoTip>
 {/snippet}
@@ -126,6 +141,24 @@
 			without usable market data stays at TT. Realised figures continue to use confirmed value only.
 		</p>
 	</InfoTip>
+{/snippet}
+
+{#snippet expectedReturnTip()}
+	<ExpectedReturnInfoTip
+		looterLevel={selected?.expected?.looterLevel}
+		coverage={selected?.expected?.coverage}
+		incomplete={selected?.expected?.incomplete}
+	/>
+{/snippet}
+
+{#snippet effectiveEfficiencyTip()}
+	<EffectiveEfficiencyInfoTip
+		effectiveEfficiency={selected?.expected?.effectiveEfficiency ?? null}
+		looterLevel={selected?.expected?.looterLevel}
+		coverage={selected?.expected?.coverage}
+		incomplete={selected?.expected?.incomplete}
+		scope="activity"
+	/>
 {/snippet}
 
 {#if selected}
@@ -146,75 +179,56 @@
 				This evidence was recorded without a declared quest or segment. It remains in the session total but cannot support a repeatable activity comparison.
 			</p>
 		{:else}
-			<div
-				class="mt-5 grid grid-cols-4 items-start gap-x-6 gap-y-4"
-				data-testid="activity-economic-grid"
-			>
-				<StatDisplay
-					label="Reward TT"
-					value={rewardValue(selected)}
-					unit={['fixed_liquid', 'item'].includes(selected.rewardStatus) ? 'PED' : ''}
-					labelSuffix={rewardTip}
+			<div class="mt-6">
+				<EconomicOutcomeHorizon
+					cycled={selected.cycled}
+					ttNet={selected.returns - selected.cycled}
+					ttRate={selected.lootRate}
+					muNet={selected.muProjectedReturns !== null
+						? selected.muProjectedReturns - selected.cycled
+						: null}
+					muRate={muRate(selected)}
+					realisedNet={selected.rewardStatus === 'unverified'
+						? null
+						: selected.rewardedReturns - selected.cycled}
+					realisedRate={selected.rewardStatus === 'unverified' ? null : selected.rewardedRate}
+					muTip={estimateTip}
+					realisedTip={realisedTip}
+					testid="activity-economic-grid"
 				/>
-				<StatDisplay
-					label="TT Net"
-					value={signedPed(selected.returns - selected.cycled)}
-					unit="PED"
-				/>
-				<StatDisplay
-					label="MU Net"
-					value={selected.muProjectedReturns !== null
-						? signedPed(selected.muProjectedReturns - selected.cycled)
-						: NO_DATA}
-					unit={selected.muProjectedReturns !== null ? 'PED' : ''}
-					labelSuffix={estimateTip}
-				/>
-				<StatDisplay
-					label="Realised Net"
-					value={selected.rewardStatus === 'unverified'
-						? NO_DATA
-						: signedPed(selected.rewardedReturns - selected.cycled)}
-					valueClass={selected.rewardStatus === 'unverified'
-						? 'text-text-tertiary'
-						: netTone(selected.rewardedReturns - selected.cycled)}
-					unit={selected.rewardStatus === 'unverified' ? '' : 'PED'}
-					labelSuffix={realisedTip}
-				/>
-
-				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-reward-mu">
-					<StatDisplay
-						label="Reward MU"
-						value={selected.rewardMuPed !== null ? formatPed(selected.rewardMuPed) : NO_DATA}
-						unit={selected.rewardMuPed !== null ? 'PED' : ''}
-						valueClass={selected.rewardMuPed !== null ? 'text-text' : 'text-text-tertiary'}
-						labelSuffix={rewardMuTip}
-						emphasis="secondary"
-					/>
-				</div>
-				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-tt-rate">
-					<StatDisplay label="TT Rate" value={formatPercent(selected.lootRate)} valueClass="text-text" emphasis="secondary" />
-				</div>
-				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-mu-rate">
-					<StatDisplay
-						label="MU Rate"
-						value={muRate(selected) !== null ? formatPercent(muRate(selected) ?? 0) : NO_DATA}
-						valueClass={muRate(selected) !== null ? 'text-text' : 'text-text-tertiary'}
-						emphasis="secondary"
-					/>
-				</div>
-				<div class="border-t border-border/35 pt-3" data-testid="activity-subordinate-realised-rate">
-					<StatDisplay
-						label="Realised Rate"
-						value={selected.rewardStatus === 'unverified'
-							? NO_DATA
-							: formatPercent(selected.rewardedRate)}
-						valueClass={selected.rewardStatus === 'unverified'
-							? 'text-text-tertiary'
-							: netTone(selected.rewardedRate - 1)}
-						emphasis="secondary"
-					/>
-				</div>
 			</div>
+
+			{#if selected.rewardStatus !== 'none'}
+				<div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 pl-1 text-xs text-text-tertiary" data-testid="activity-reward-context">
+					<span class="eyebrow">Completion reward</span>
+					<span class="flex items-baseline gap-1.5">
+						<span>Reward TT</span>
+						<strong class="font-medium tabular-nums text-text-secondary">{rewardValue(selected)}</strong>
+						{#if ['fixed_liquid', 'item'].includes(selected.rewardStatus)}<span>PED</span>{/if}
+						{@render rewardTip()}
+					</span>
+					<span class="h-3 w-px bg-border-bright" aria-hidden="true"></span>
+					<span class="flex items-baseline gap-1.5" data-testid="activity-subordinate-reward-mu">
+						<span>Reward MU</span>
+						<strong class={selected.rewardMuPed !== null ? 'font-medium tabular-nums text-text-secondary' : 'font-medium tabular-nums text-text-tertiary'}>
+							{selected.rewardMuPed !== null ? formatPed(selected.rewardMuPed) : NO_DATA}
+						</strong>
+						{#if selected.rewardMuPed !== null}<span>PED</span>{/if}
+						{@render rewardMuTip()}
+					</span>
+				</div>
+			{/if}
+
+			<ExpectedEconomicsEquation
+				effectiveEfficiency={effectiveEfficiencyValue(selected)}
+				lootMarkupFactor={selected.lootMarkupFactor}
+				expectedTtRate={selected.expectedTtRate}
+				expectedMarketRate={selected.expectedMarketRate}
+				efficiencyTip={effectiveEfficiencyTip}
+				estimateTip={estimateTip}
+				expectedTip={expectedReturnTip}
+				testid="activity-expected-economics"
+			/>
 
 			<ActivityLootComposition
 				items={selected.items}

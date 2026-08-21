@@ -12,6 +12,10 @@ use super::intervals::{
 };
 use crate::bus_events::{BusEvent, SessionLifecyclePayload};
 use crate::db::DbError;
+use crate::expected_hunting::{
+    evaluate as evaluate_expected_hunting, HuntingLooterLevels, LooterSource,
+    OffensiveComponentEvidence, OffensiveComponentKind, OffensiveLoadoutEvidence,
+};
 use crate::mob_lookup_service::python_whitespace;
 use crate::ped::Ped;
 use crate::protection::{active_selection, ProtectionSelection};
@@ -95,6 +99,9 @@ pub(super) struct ActiveSession {
     /// evidence regime.
     pub(super) harvest_press_floor: usize,
     pub(super) weapons: WeaponRuntime,
+    /// Believed-current Animal, Mutant, and Robot Looter levels captured at
+    /// session start so later calibration cannot rewrite this evidence.
+    pub(super) hunting_looters: HuntingLooterLevels,
 }
 
 impl ActiveSession {
@@ -118,6 +125,11 @@ impl ActiveSession {
             guardrail_warning_emitted: false,
             harvest_press_floor: 0,
             weapons: WeaponRuntime::default(),
+            hunting_looters: HuntingLooterLevels {
+                animal: 0.0,
+                mutant: 0.0,
+                robot: 0.0,
+            },
         }
     }
 
@@ -167,6 +179,9 @@ pub(super) struct SessionAggregate {
     pub(super) max_damage: f64,
     pub(super) live_weapon_damage: f64,
     pub(super) weapon_cost: Ped,
+    pub(super) expected_tt_rate: Option<f64>,
+    pub(super) expected_return_coverage: Option<f64>,
+    pub(super) expected_return_model: Option<String>,
     pub(super) globals_count: i64,
     pub(super) hofs_count: i64,
     pub(super) latest_kill_loot: Option<Ped>,
@@ -218,6 +233,45 @@ impl TrackerActor {
         weapon_cost += active.accumulator.weapon_cost();
         enhancer_cost += active.accumulator.enhancer_cost;
         let heal_cost = active.heal_cost;
+
+        // Flatten every immutable tool phase at the TT it actually cycled.
+        // Equipment changes create distinct phases, while the three hunting
+        // looters remain the session-start snapshot.
+        let mut expected_evidence = OffensiveLoadoutEvidence {
+            components: Vec::new(),
+            looters: active.hunting_looters,
+            looter_source: LooterSource::ThreeLooterMean,
+        };
+        for stats in kills
+            .iter()
+            .flat_map(|kill| kill.tool_stats.iter().map(|(_, stats)| stats))
+            .chain(active.accumulator.tool_stats.iter().map(|(_, stats)| stats))
+        {
+            let Some(evidence) = stats.expected_economics.as_ref() else {
+                if stats.shots_fired > 0 && stats.cost_per_shot.is_positive() {
+                    expected_evidence
+                        .components
+                        .push(OffensiveComponentEvidence {
+                            kind: OffensiveComponentKind::Weapon,
+                            catalog_id: None,
+                            name: stats.tool_name.clone(),
+                            efficiency_pct: None,
+                            raw_tt_per_use: stats.cost_per_shot.value() * stats.shots_fired as f64,
+                            consumed_premium_per_use: 0.0,
+                        });
+                }
+                continue;
+            };
+            for component in &evidence.components {
+                let mut component = component.clone();
+                component.raw_tt_per_use *= stats.shots_fired.max(0) as f64;
+                component.consumed_premium_per_use *= stats.shots_fired.max(0) as f64;
+                expected_evidence.components.push(component);
+            }
+        }
+        let expected_result = (!expected_evidence.components.is_empty())
+            .then(|| evaluate_expected_hunting(&expected_evidence).ok())
+            .flatten();
 
         // Harvesting joins the session economy: swing decay is cycled
         // spend, wood TT is liquid loot (no new accounting class).
@@ -356,6 +410,11 @@ impl TrackerActor {
                 .fold(0.0, f64::max),
             live_weapon_damage,
             weapon_cost,
+            expected_tt_rate: expected_result
+                .as_ref()
+                .and_then(|result| result.expected_tt_rate),
+            expected_return_coverage: expected_result.as_ref().map(|result| result.coverage),
+            expected_return_model: expected_result.map(|result| result.model_version),
             globals_count: kills.iter().filter(|kill| kill.is_global).count() as i64,
             hofs_count: kills.iter().filter(|kill| kill.is_hof).count() as i64,
             latest_kill_loot: kills.last().map(|kill| kill.loot_total_ped),
@@ -770,6 +829,7 @@ impl TrackerActor {
         // state by construction. (The equipped heal tool
         // deliberately persists; it lives outside the typestate.)
         let mut active = ActiveSession::new(session.clone(), facets);
+        active.hunting_looters = self.providers.equipment.hunting_looter_levels();
 
         if trifecta_mode {
             Self::load_trifecta_weapon_profiles(
@@ -1120,6 +1180,9 @@ impl HuntTracker {
             damage_dealt_total: round_half_even(aggregated.damage_total, 1),
             weapon_damage_dealt: round_half_even(aggregated.live_weapon_damage, 1),
             weapon_cost: aggregated.weapon_cost.round_half_even(6).value(),
+            expected_tt_rate: aggregated.expected_tt_rate,
+            expected_return_coverage: aggregated.expected_return_coverage,
+            expected_return_model: aggregated.expected_return_model,
             shots_fired_total: aggregated.shots_total,
             critical_hits_total: aggregated.crits_total,
             max_damage: round_half_even(aggregated.max_damage, 1),

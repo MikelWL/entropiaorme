@@ -29,6 +29,7 @@
 	]);
 	const COL_NAME = 'min-w-0 flex-[1_1_8rem]';
 	const COL_CYCLED = 'min-w-0 flex-[0_1_4rem]';
+	const COL_LOOT_MU = 'min-w-0 flex-[0_1_4.5rem]';
 	const COL_MU = 'min-w-0 flex-[0_1_4.5rem]';
 	const COL_REALISED = 'min-w-0 flex-[0_1_7.5rem]';
 	const rateTone = (value: number) => (value >= 1 ? 'text-positive' : 'text-negative');
@@ -50,7 +51,7 @@
 	align="left"
 	initialFocus="first-input"
 	overlayOverflow="hidden"
-	panelClass="w-[min(38rem,calc(100vw-1rem))] p-0"
+	panelClass="w-[min(44rem,calc(100vw-1rem))] p-0"
 	class="min-w-0"
 >
 	{#snippet trigger({ open, toggle, keydown })}
@@ -106,6 +107,7 @@
 						<button type="button" class="eyebrow {COL_CYCLED} flex cursor-pointer items-center justify-end gap-1 text-right hover:text-text" aria-label={sortDescription('cycled', 'Cycled')} onclick={() => table.setSort('cycled')}>
 							Cycled {#if table.sortKey === 'cycled'}<span class="text-accent">{sortArrow('cycled')}</span>{/if}
 						</button>
+						<span class="eyebrow {COL_LOOT_MU} text-right">Loot MU</span>
 						<button type="button" class="eyebrow {COL_MU} flex cursor-pointer items-center justify-end gap-1 text-right hover:text-text" aria-label={sortDescription('muRate', 'MU Rate')} onclick={() => table.setSort('muRate')}>
 							MU Rate {#if table.sortKey === 'muRate'}<span class="text-accent">{sortArrow('muRate')}</span>{/if}
 						</button>
@@ -130,6 +132,7 @@
 						>
 							<span class="{COL_NAME} min-w-0 truncate text-sm font-medium tracking-tight {selected === null ? 'text-accent' : 'text-text'}">Overall</span>
 							<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">{formatPed(overall.cycled)}</span>
+							<span class="{COL_LOOT_MU} truncate text-right text-xs tabular-nums text-text">{overall.lootMarkupFactor !== null ? formatPercent(overall.lootMarkupFactor) : NO_DATA}</span>
 							<span class="{COL_MU} truncate text-right text-xs tabular-nums text-text">{overall.muRate !== null ? formatPercent(overall.muRate) : NO_DATA}</span>
 							<span class="{COL_REALISED} truncate text-right text-xs tabular-nums font-medium {rateTone(overall.realisedRate)}">{formatPercent(overall.realisedRate)}</span>
 						</button>{/if}
@@ -158,10 +161,12 @@
 								{#if section.isUnassigned}
 									<span class="sr-only">Session metrics not applicable</span>
 									<span class={COL_CYCLED} aria-hidden="true"></span>
+									<span class={COL_LOOT_MU} aria-hidden="true"></span>
 									<span class={COL_MU} aria-hidden="true"></span>
 									<span class={COL_REALISED} aria-hidden="true"></span>
 								{:else}
 									<span class="{COL_CYCLED} truncate text-right text-xs tabular-nums text-text">{formatPed(section.cycled)}</span>
+									<span class="{COL_LOOT_MU} truncate text-right text-xs tabular-nums text-text">{section.lootMarkupFactor !== null ? formatPercent(section.lootMarkupFactor) : NO_DATA}</span>
 									<span class="{COL_MU} truncate text-right text-xs tabular-nums text-text">{section.muRate !== null ? formatPercent(section.muRate) : NO_DATA}</span>
 									<span class="{COL_REALISED} truncate text-right text-xs tabular-nums font-medium {rateTone(section.realisedRate)}">{formatPercent(section.realisedRate)}</span>
 								{/if}

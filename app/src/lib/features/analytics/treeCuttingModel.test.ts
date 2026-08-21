@@ -12,6 +12,7 @@ import {
 	marketOpportunity,
 	NANOCUBE_FALLBACK_MARKUP,
 	opportunityTier,
+	projectLoot,
 	treeCuttingActivityName,
 	weeklyEquivalentVolume,
 } from './treeCuttingModel.svelte';
@@ -197,6 +198,27 @@ describe('marketOpportunity', () => {
 		});
 		expect(unsupportedWeekly.kind).toBe('recycle');
 		expect(opportunityTier(unsupportedWeekly)).toBe('illiquid');
+	});
+
+	it('values Shrapnel at its fixed 101% conversion route regardless of market confidence', () => {
+		const observed = obs('Shrapnel', 100.9, 'week', 20_000);
+		const feed: MarketHarvestData = { nanocubeMarkupPct: 100.6, items: [observed] };
+		const projection = projectLoot(
+			[loot('Shrapnel', 10_000, 10)],
+			10,
+			feed,
+			new Map([['Shrapnel', observed]]),
+			'liquid',
+		);
+
+		expect(projection.items[0]).toMatchObject({
+			ownMarkupPct: 100.9,
+			effectiveMarkupPct: 101,
+			markupBasis: 'shrapnel_conversion',
+			floored: false,
+		});
+		expect(projection.muProjectedReturns).toBeCloseTo(10.1, 8);
+		expect(projection.muRate).toBeCloseTo(1.01, 8);
 	});
 });
 

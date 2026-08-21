@@ -48,6 +48,7 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 			markupPercent: 100,
 			isLimited: false,
 			damageEnhancers: 0,
+			efficiencyPct: 55,
 		},
 		amplifier: null,
 		scope: null,
@@ -55,6 +56,7 @@ function detail(overrides: Partial<EquipmentDetail> = {}): EquipmentDetail {
 		implant: null,
 		costBreakdown: [],
 		totalCostPerUse: 2.05,
+		expectedReturn: null,
 		healingProfile: null,
 		lifestealPercent: null,
 		...overrides,
@@ -244,6 +246,7 @@ describe('openEditModal', () => {
 					markupPercent: 140,
 					isLimited: true,
 					damageEnhancers: 2,
+					efficiencyPct: 70,
 				},
 				amplifier: {
 					catalogId: 'a104',
@@ -253,6 +256,7 @@ describe('openEditModal', () => {
 					markupPercent: 100,
 					isLimited: false,
 					damageEnhancers: 0,
+					efficiencyPct: 60,
 				},
 				scope: {
 					catalogId: 'scope-1',
@@ -262,6 +266,7 @@ describe('openEditModal', () => {
 					markupPercent: 120,
 					isLimited: true,
 					damageEnhancers: 0,
+					efficiencyPct: 50,
 				},
 			}),
 		);

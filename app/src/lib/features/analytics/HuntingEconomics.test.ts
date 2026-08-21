@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
+import type { ExpectedHuntingEconomics } from '$lib/api';
 import { createTableModel, type TableModel } from '$lib/view/tableModel.svelte';
 import HuntingPrimaryView from './HuntingPrimaryView.svelte';
 import HuntingSessions from './HuntingSessions.svelte';
@@ -22,11 +23,28 @@ const item = {
 	ownMarkupPct: 130,
 	markupHorizon: 'week',
 	effectiveMarkupPct: 130,
+	markupBasis: 'market' as const,
 	floored: false,
 	tier: 'liquid' as const,
 	salesPed: 5000,
 	weeklySalesPed: 5000,
 	recommendedPacketTt: 32.67,
+};
+
+const expectedEconomics: ExpectedHuntingEconomics = {
+	modelVersion: 'community_v1',
+	looterSource: 'three_looter_mean',
+	looterLevel: 55,
+	expectedLootTt: 94,
+	modelledRawTt: 100,
+	eligibleOffensiveCost: 100,
+	offensiveTtRecovery: 0.94,
+	expectedTtRate: 0.94,
+	effectiveEfficiency: { status: 'within_model_range', efficiencyPct: 59.29 },
+	breakEvenLootMarkup: 1 / 0.94,
+	coverage: 1,
+	incomplete: false,
+	missingBasisPhases: 0,
 };
 
 function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSessionSection {
@@ -37,6 +55,7 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		lootItems: [],
 		activities: [],
 		key: 'definition:7',
@@ -45,6 +64,9 @@ function session(overrides: Partial<HuntingSessionSection> = {}): HuntingSession
 		realisedMarkup: 15,
 		muProjectedReturns: 106,
 		muRate: 1.06,
+		lootMarkupFactor: 106 / 90,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		realisedReturns: 105,
 		realisedRate: 1.05,
 		items: [item],
@@ -59,6 +81,10 @@ function overall(overrides: Partial<HuntingOverallLine> = {}): HuntingOverallLin
 		lootRate: 0.9,
 		muProjectedReturns: 190.8,
 		muRate: 1.06,
+		lootMarkupFactor: 190.8 / 162,
+		expectedTtRate: null,
+		expectedMarketRate: null,
+		expected: null,
 		realisedMarkup: 27,
 		realisedReturns: 189,
 		realisedRate: 1.05,
@@ -88,6 +114,7 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		cycled: 100,
 		returns: 90,
 		lootRate: 0.9,
+		expected: null,
 		confirmedRewardPed: 0,
 		realisedRewardMarkup: 0,
 		rewardItems: [],
@@ -99,6 +126,9 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		key: 'quest:daily-hunting-1',
 		isUnscoped: false,
 		muProjectedReturns: 106,
+		lootMarkupFactor: 106 / 90,
+		expectedTtRate: null,
+		expectedMarketRate: null,
 		items: [item],
 		variants: [],
 		...overrides,
@@ -106,6 +136,38 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 }
 
 describe('Hunting economic comparisons', () => {
+	it('presents quiet long-run rates with the offensive-only disclosure at point of use', async () => {
+		const row = session({
+			expected: expectedEconomics,
+			expectedTtRate: 0.94,
+			expectedMarketRate: 0.94 * (106 / 90),
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [row],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingPrimaryView, { props: primaryProps(table, row) });
+
+		const strip = screen.getByTestId('hunting-expected-economics');
+		expect(within(strip).queryByText('Long-run planning')).toBeNull();
+		expect(within(strip).getByText('Effective Efficiency')).not.toBeNull();
+		expect(within(strip).getByText('59.3%')).not.toBeNull();
+		expect(within(strip).getByText('94.0%')).not.toBeNull();
+		expect(within(strip).getByText('117.8%')).not.toBeNull();
+		expect(within(strip).getByText('110.7%')).not.toBeNull();
+		const disclosures = within(strip).getAllByLabelText('What Expected Return includes');
+		expect(disclosures).toHaveLength(2);
+		await fireEvent.click(disclosures[0]);
+		expect(screen.getAllByText('Offensive spend only')).toHaveLength(2);
+		expect(screen.getAllByText(/Healing, armour, harvesting/)).toHaveLength(2);
+		const effectiveDisclosure = within(strip).getByLabelText('What Effective Efficiency means');
+		await fireEvent.click(effectiveDisclosure);
+		expect(screen.getByText('Unlimited economic equivalent')).not.toBeNull();
+		expect(screen.getByText(/weighted by raw TT/)).not.toBeNull();
+		expect(screen.getByText('59.3% effective Efficiency')).not.toBeNull();
+		expect(screen.queryByText(/partial historical basis/)).toBeNull();
+	});
+
 	it('keeps the long-stock search compact and visually discloses overflow', async () => {
 		const stock = Array.from({ length: 9 }, (_, index) => ({
 			itemName: `Hunting loot ${index + 1}`,
@@ -118,6 +180,7 @@ describe('Hunting economic comparisons', () => {
 			markupHorizon: null,
 			tier: 'illiquid' as const,
 			effectiveMarkupPct: 100.6,
+			markupBasis: 'nanocube' as const,
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
@@ -167,6 +230,7 @@ describe('Hunting economic comparisons', () => {
 			markupHorizon: null,
 			tier: 'illiquid' as const,
 			effectiveMarkupPct: 100.6,
+			markupBasis: 'nanocube' as const,
 			floored: true,
 			salesPed: null,
 			weeklySalesPed: null,
@@ -248,9 +312,12 @@ describe('Hunting economic comparisons', () => {
 		const trigger = screen.getByLabelText('Switch hunting view (currently ARIS Dailies)');
 		expect(trigger.className).not.toContain('border');
 		expect(screen.getByTitle('ARIS Dailies').className).toContain('text-text');
-		expect(screen.getByTestId('activity-economic-headline').className).toContain(
-			'grid-cols-[minmax(10rem,1.35fr)_repeat(3,minmax(0,1fr))]',
-		);
+		const headline = screen.getByTestId('activity-economic-headline');
+		expect(headline.className).toContain('economic-horizon');
+		expect(screen.getByText('Session view')).not.toBeNull();
+		expect(
+			within(headline).queryByLabelText('Switch hunting view (currently ARIS Dailies)'),
+		).toBeNull();
 		expect(screen.getByTestId('economic-subordinate-cycled').textContent).toContain('100.00');
 		const ttRate = within(screen.getByTestId('economic-subordinate-tt-rate')).getByText('90.0%');
 		const muRate = within(screen.getByTestId('economic-subordinate-mu-rate')).getByText('106.0%');

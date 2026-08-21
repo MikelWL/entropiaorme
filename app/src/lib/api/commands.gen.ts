@@ -696,6 +696,8 @@ export interface EquipmentComponent {
 	markupPercent: number;
 	isLimited: boolean;
 	damageEnhancers: number;
+	/** The component's in-game Efficiency. Null means the bundled catalogue does not carry enough evidence to model this stream. */
+	efficiencyPct: number | null;
 }
 
 /**
@@ -712,8 +714,39 @@ export interface EquipmentDetail {
 	implant: AbsorberComponent | null;
 	costBreakdown: CostBreakdownLine[];
 	totalCostPerUse: number;
+	expectedReturn: EquipmentExpectedReturn | null;
 	healingProfile: HealingProfileDto | null;
 	lifestealPercent: number | null;
+}
+
+export interface EquipmentEffectiveEfficiency {
+	status: EquipmentEffectiveEfficiencyStatus;
+	efficiencyPct: number | null;
+}
+
+/**
+ * Unlimited-item Efficiency equivalent of the setup's premium-adjusted
+ * expected return under the selected community model and looter basis.
+ */
+export type EquipmentEffectiveEfficiencyStatus = 'within_model_range' | 'below_model_range' | 'above_model_range';
+
+/**
+ * Community-model economics for the supported offensive slice of one use.
+ */
+export interface EquipmentExpectedReturn {
+	modelVersion: string;
+	looterSource: ExpectedLooterSource;
+	looterLevel: number;
+	weightedEfficiencyPct: number | null;
+	offensiveTtRecovery: number | null;
+	expectedTtRate: number | null;
+	effectiveEfficiency: EquipmentEffectiveEfficiency | null;
+	breakEvenLootMarkup: number | null;
+	modelledRawTtPerUse: number;
+	eligibleOffensiveCostPerUse: number;
+	consumedPremiumPerUse: number;
+	coverage: number;
+	incomplete: boolean;
 }
 
 /**
@@ -818,6 +851,27 @@ export interface ExcludedSkill {
 	weight: number;
 	reason: string;
 }
+
+/**
+ * Offensive-only Community Model v1 result over captured component evidence.
+ */
+export interface ExpectedHuntingEconomics {
+	modelVersion: string;
+	looterSource: string;
+	looterLevel: number;
+	expectedLootTt: number;
+	modelledRawTt: number;
+	eligibleOffensiveCost: number;
+	offensiveTtRecovery: number;
+	expectedTtRate: number;
+	effectiveEfficiency: EquipmentEffectiveEfficiency;
+	breakEvenLootMarkup: number;
+	coverage: number;
+	incomplete: boolean;
+	missingBasisPhases: number;
+}
+
+export type ExpectedLooterSource = 'animal' | 'mutant' | 'robot' | 'three_looter_mean';
 
 /**
  * The game-connection block: the configured chat-log path, whether it
@@ -1015,10 +1069,12 @@ export interface HuntingActivityComparison {
 	cycled: number;
 	returns: number;
 	lootRate: number;
+	expected: ExpectedHuntingEconomics | null;
 	confirmedRewardPed: number;
 	realisedRewardMarkup: number;
 	/** Actual reward items observed at completion. Their markup stays a current market projection and never enters realised accounting. */
 	rewardItems: HarvestLootItem[];
+	/** Historical wire name for total realised returns at this activity grain: ordinary loot TT, confirmed reward TT, and later confirmed markup from both ordinary loot and reward stock. */
 	rewardedReturns: number;
 	rewardedRate: number;
 	rewardStatus: HuntingRewardStatus;
@@ -1035,6 +1091,7 @@ export interface HuntingActivityOverall {
 	cycled: number;
 	returns: number;
 	lootRate: number;
+	expected: ExpectedHuntingEconomics | null;
 }
 
 /**
@@ -1048,6 +1105,7 @@ export interface HuntingDefinitionComparison {
 	cycled: number;
 	returns: number;
 	lootRate: number;
+	expected: ExpectedHuntingEconomics | null;
 	lootItems: HarvestLootItem[];
 	activities: HuntingActivityComparison[];
 }
@@ -1068,6 +1126,7 @@ export interface HuntingSpeciesComparison {
 	cycled: number;
 	returns: number;
 	lootRate: number;
+	expected: ExpectedHuntingEconomics | null;
 	lootItems: HarvestLootItem[];
 }
 
@@ -1408,24 +1467,12 @@ export interface MarketAuctionPacketThreshold {
 }
 
 /**
- * The break-even readout: the player's looter professions and every
- * library weapon's modelled break-even markup against each of them.
+ * The break-even readout: the player's exact three hunting-looter
+ * professions and every library weapon's modelled offensive economics.
  */
 export interface MarketBreakEven {
 	looters: MarketLooterLevel[];
 	weapons: MarketWeaponBreakEven[];
-}
-
-/**
- * One (weapon, looter) break-even cell: the modelled TT-return rate
- * and the overall loot markup that loadout needs to break even. Both
- * figures are MODELLED ESTIMATES (community returns model, roughly a
- * one-percentage-point error bar), never measured rates.
- */
-export interface MarketBreakEvenCell {
-	looterName: string;
-	ttReturnPct: number;
-	breakEvenMarkupPct: number;
 }
 
 /**
@@ -1613,14 +1660,20 @@ export interface MarketUnitPriceResult {
 }
 
 /**
- * One library weapon's break-even row: its catalogue efficiency (null
- * when the bundled catalogue does not carry the weapon) and the cells
- * across the player's looter professions.
+ * One configured loadout's offensive-only expected return and break-even
+ * loot markup under Community Model v1.
  */
 export interface MarketWeaponBreakEven {
 	name: string;
-	efficiencyPct: number | null;
-	cells: MarketBreakEvenCell[];
+	amplifierName: string | null;
+	weightedEfficiencyPct: number | null;
+	offensiveTtRecoveryPct: number | null;
+	expectedTtReturnPct: number | null;
+	breakEvenLootMarkupPct: number | null;
+	looterLevel: number | null;
+	coverage: number | null;
+	incomplete: boolean;
+	modelVersion: string | null;
 }
 
 /**
@@ -2998,6 +3051,9 @@ export interface TrackingSnapshot {
 	damageDealtTotal?: number | null;
 	weaponDamageDealt?: number | null;
 	weaponCost?: number | null;
+	expectedTtRate?: number | null;
+	expectedReturnCoverage?: number | null;
+	expectedReturnModel?: string | null;
 	shotsFiredTotal?: number | null;
 	criticalHitsTotal?: number | null;
 	maxDamage?: number | null;

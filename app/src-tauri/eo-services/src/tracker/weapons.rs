@@ -8,6 +8,9 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use crate::cost_engine::cost_per_shot_from_props;
+use crate::expected_hunting::{
+    evidence_from_equipment_props, HuntingLooterLevels, OffensiveLoadoutEvidence,
+};
 use crate::ped::Ped;
 use crate::tool_inference::DamageAttributor;
 
@@ -297,6 +300,21 @@ impl TrackerActor {
             .static_cost_cache
             .insert(tool_name.to_string(), cost);
         cost
+    }
+
+    /// Resolve the immutable supported offensive streams for the current
+    /// activation. The stored props, active enhancer count, and session-start
+    /// looter snapshot are sufficient to reproduce this evidence later.
+    pub(super) fn expected_evidence_for_tool(
+        providers: &Providers,
+        weapons: &mut WeaponRuntime,
+        tool_name: &str,
+        looters: HuntingLooterLevels,
+    ) -> Option<OffensiveLoadoutEvidence> {
+        let state = Self::ensure_weapon_state(providers, weapons, tool_name)?;
+        let evidence =
+            evidence_from_equipment_props(&state.props, Some(state.active_slots()), looters);
+        (!evidence.components.is_empty()).then_some(evidence)
     }
 }
 

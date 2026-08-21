@@ -151,7 +151,7 @@ export const analyticsSurface: GuideSurface = {
 					},
 					{
 						kind: 'p',
-						text: 'Each row answers the same economic questions. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
+						text: 'Each row answers the same economic questions. Effective Efficiency reduces the captured mix of weapons, amplifiers, and limited markup to its unlimited economic equivalent; Loot MU isolates the 100%-anchored value of the observed loot composition; Expected Return then shows the community model independently of session variance. The information buttons disclose the offensive-only boundary and partial historical coverage. Activity details also show whether a separately confirmed quest reward changed the outcome, while payouts already present in loot are never added twice.',
 					},
 					{
 						kind: 'p',

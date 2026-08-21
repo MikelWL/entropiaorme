@@ -91,7 +91,10 @@ loot-clump identity, and bounded review evidence), and
 stock provenance and effort attribution, append-only reward corrections, and
 the quest-item daily-rollup family), and
 `0047_healing_attribution.sql` (paid healing activations, restoration-effect
-windows, and classified healing-output evidence). The
+windows, and classified healing-output evidence),
+`0048_expected_hunting_evidence.sql` (model-neutral offensive evidence on each
+kill tool phase), and `0049_expected_hunting_phase_identity.sql` (distinct
+same-name, same-cost phases when their captured loadout evidence differs). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -795,7 +798,7 @@ analytics queries can read the total directly.
 #### `kill_tool_stats`
 
 Per-tool combat statistics within a single kill. The
-`(kill_id, tool_name, cost_per_shot)` triple is unique.
+`(kill_id, tool_name, cost_per_shot, evidence_fingerprint)` tuple is unique.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -806,9 +809,11 @@ Per-tool combat statistics within a single kill. The
 | `damage_dealt` | REAL | Defaults to 0. |
 | `critical_hits` | INTEGER | Defaults to 0. |
 | `cost_per_shot` | REAL | Defaults to 0. |
+| `expected_economics_json` | TEXT | Optional model-neutral weapon/amplifier evidence captured for this offensive phase (migration `0048`): catalogue identity, raw TT per use, consumed limited-item premium, component Efficiency, the three session-start hunting-looter levels, and their selected source. Null marks legacy or unsupported evidence rather than zero Efficiency. |
+| `evidence_fingerprint` | TEXT | Not null; defaults to `''` (migration `0049`). The serialised evidence for current rows, used only as phase identity so economically distinct loadouts cannot collapse when name and cost happen to match. |
 
-A `UNIQUE(kill_id, tool_name, cost_per_shot)` constraint keeps one row per
-tool-and-cost combination per kill. A covering index
+A `UNIQUE(kill_id, tool_name, cost_per_shot, evidence_fingerprint)` constraint
+keeps one row per distinct tool, cost, and evidence combination per kill. A covering index
 `idx_kill_tool_stats_covering(kill_id, cost_per_shot, shots_fired, tool_name)`
 (migration `0002`) carries `shots_fired` and `tool_name` alongside the join key,
 so the weapon-cost aggregate resolves from the index without a per-row table
@@ -912,10 +917,13 @@ activity's TT return.
   source kind carries Hunting independently of its optional observed species;
   harvesting tier/tool and Hunting species/session definition remain
   downstream analytical dimensions through transformations and into realised
-  outcomes. Quest stock additionally carries reward-item, durable-run, quest,
-  activity-context, and session-definition identity. Missing mob evidence
-  therefore limits target detail without suppressing stock or activity
-  attribution.
+  outcomes. Hunting loot also retains the exact declared activity context when
+  one was captured, so a later sale or conversion can attribute realised
+  markup to that activity rather than only to the session or species. Quest
+  stock additionally carries reward-item, durable-run, quest,
+  activity-context, and session-definition identity. Missing mob or context
+  evidence therefore limits target detail without suppressing stock or broader
+  activity attribution.
 
 Every outcome can be undone as a correction while retaining its lifecycle row
 marked as undone. A conversion undo is refused if later movements have already
@@ -1231,9 +1239,9 @@ tables and every day is re-verified once after it completes.
 | `id` | INTEGER | Primary key; constrained to the single row `1`. |
 | `rolled_through` | TEXT | Not null; the inclusive ISO day the rollups are current through. |
 
-#### `session_kill_rollups`, `session_loot_rollups`, `session_context_loot_rollups`, `session_pes_rollups`
+#### `session_kill_rollups`, `session_loot_rollups`, `session_context_loot_rollups`, `session_pes_rollups`, `session_offensive_evidence_rollups`
 
-Per-session activity rollups (migrations `0026` and `0029`;
+Per-session activity rollups (migrations `0026`, `0029`, `0050`, and `0051`;
 `eo-services/src/session_rollup.rs`),
 the session-grain sibling of the daily projection: the read model behind the
 Hunting analytics aggregate, the stock position arithmetic's hunted arm, the
@@ -1241,19 +1249,24 @@ hunting market item universe, and the Market Mobs composition. An ended session'
 at the finest grain any of those consumers folds (kill cells by context,
 species, and maturity; active loot cells by species, shrapnel flag, and item,
 with the species pre-folded to the empty string for shrapnel rows; item
-composition by activity context; skill-gain cells by context), so readers do
-O(cells) work however long the raw history grows. Like the daily rollups this
-is a rebuildable projection: cells write
+composition by activity context; skill-gain cells by context; model-neutral
+offensive evidence by activity context, species, and evidence fingerprint), so readers do
+O(cells) work however long the raw history grows. Expected-return cells retain
+the captured evidence JSON rather than a computed model output, which lets a
+later Community Model version replay historical inputs without returning to
+lifetime kill facts. Like the daily rollups this is a rebuildable projection: cells write
 eagerly in the mutating transaction (session stop, orphan recovery, the loot
 edit flip, session delete) and heal lazily before an activity read.
 
-`session_rollup.rs` owns the typed effective hunted-loot boundary shared by
-these consumers. A fully settled read selects only `session_loot_rollups` and
-does not prepare statements against `kills` or `kill_loot_items`. When a live,
-invalidated, or below-version session exists, the same boundary adds raw cells
-for that named session through the session and kill indexes. The activity
-context projection remains separate because its ownership grain is finer than
-species and item composition.
+`session_rollup.rs` owns the typed effective hunted-loot and offensive-evidence
+boundaries shared by these consumers. A fully settled read selects only the
+projection tables and does not prepare statements against `kills`,
+`kill_loot_items`, or `kill_tool_stats`. When a live, invalidated, or
+below-version session exists, the same boundaries add raw cells for that named
+session through the session and kill indexes. The context stamp lets the same
+offensive-evidence cells serve Overall, definition, species, and exact
+activity-signature folds without returning to lifetime kill facts or inventing
+a split inside a joint activity.
 
 | Table | Cell key | Sums |
 | --- | --- | --- |
@@ -1261,6 +1274,7 @@ species and item composition.
 | `session_loot_rollups` | `session_id`, `mob_species`, `is_enhancer_shrapnel`, `item_name` (active rows only) | `quantity`, `value_ped` |
 | `session_context_loot_rollups` | `session_id`, `context_id` (nullable), `item_name` (active non-enhancer-shrapnel rows only) | `quantity`, `value_ped` |
 | `session_pes_rollups` | `session_id`, `context_id` (nullable) | `pes` |
+| `session_offensive_evidence_rollups` | `session_id`, `context_id` (nullable), `mob_species`, `evidence_fingerprint`; nullable `expected_economics_json` retains model-neutral captured evidence | `shots_fired`; `missing_candidate_raw_tt` and `missing_basis_phases` cover every null-evidence phase, including legacy and unsupported evidence |
 
 #### `session_rollup_meta`
 
@@ -1307,7 +1321,11 @@ migrations (`0002_analytical_indexes.sql`,
 `0040_quest_reward_reviews.sql`, `0041_ARIS_unresolved_rewards.sql`,
 `0042_quest_run_ownership.sql`, `0043_protection_accounting.sql`,
 `0044_deferred_protection_costs.sql`, `0045_manual_quest_hand_in.sql`,
-`0046_quest_reward_lifecycle.sql`, `0047_healing_attribution.sql`); the runner
+`0046_quest_reward_lifecycle.sql`, `0047_healing_attribution.sql`,
+`0048_expected_hunting_evidence.sql`,
+`0049_expected_hunting_phase_identity.sql`,
+`0050_session_offensive_evidence_rollups.sql`,
+`0051_context_offensive_evidence.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never
@@ -1389,4 +1407,9 @@ The bundled snapshot files are:
 
 This JSON snapshot is the read-only, in-memory source of truth for game facts.
 It is a maintained static asset that ships with the build and holds no
-user-authored data.
+user-authored data. In particular, `weapons.json` and
+`weapon_amplifiers.json` carry each catalogue entity's `economy.efficiency`,
+`economy.max_tt`, and `economy.min_tt`. Equipment and expected-hunting reads
+resolve game facts from the bundled catalogue without a runtime Nexus request;
+maximum TT, minimum TT, and per-use decay also provide the source basis for a
+derived limited-item lifetime when an economic explanation needs it.

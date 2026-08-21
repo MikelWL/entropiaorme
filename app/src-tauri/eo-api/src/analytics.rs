@@ -224,6 +224,26 @@ pub struct HuntingActivityOverall {
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
+    pub expected: Nullable<ExpectedHuntingEconomics>,
+}
+
+/// Offensive-only Community Model v1 result over captured component evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedHuntingEconomics {
+    pub model_version: String,
+    pub looter_source: String,
+    pub looter_level: f64,
+    pub expected_loot_tt: f64,
+    pub modelled_raw_tt: f64,
+    pub eligible_offensive_cost: f64,
+    pub offensive_tt_recovery: f64,
+    pub expected_tt_rate: f64,
+    pub effective_efficiency: crate::equipment::EquipmentEffectiveEfficiency,
+    pub break_even_loot_markup: f64,
+    pub coverage: f64,
+    pub incomplete: bool,
+    pub missing_basis_phases: i64,
 }
 
 /// One session definition's aggregate over its hunted instances; the
@@ -237,6 +257,7 @@ pub struct HuntingDefinitionComparison {
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
+    pub expected: Nullable<ExpectedHuntingEconomics>,
     pub loot_items: Vec<HarvestLootItem>,
     pub activities: Vec<HuntingActivityComparison>,
 }
@@ -300,11 +321,15 @@ pub struct HuntingActivityComparison {
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
+    pub expected: Nullable<ExpectedHuntingEconomics>,
     pub confirmed_reward_ped: f64,
     pub realised_reward_markup: f64,
     /// Actual reward items observed at completion. Their markup stays a
     /// current market projection and never enters realised accounting.
     pub reward_items: Vec<HarvestLootItem>,
+    /// Historical wire name for total realised returns at this activity
+    /// grain: ordinary loot TT, confirmed reward TT, and later confirmed
+    /// markup from both ordinary loot and reward stock.
     pub rewarded_returns: f64,
     pub rewarded_rate: f64,
     pub reward_status: HuntingRewardStatus,
@@ -321,6 +346,7 @@ pub struct HuntingSpeciesComparison {
     pub cycled: f64,
     pub returns: f64,
     pub loot_rate: f64,
+    pub expected: Nullable<ExpectedHuntingEconomics>,
     pub loot_items: Vec<HarvestLootItem>,
 }
 
@@ -1623,8 +1649,28 @@ pub(crate) fn hunting_activity_dto(
             value_ped: row.value_ped,
         }
     }
+    fn expected(row: eo_services::analytics::ExpectedHuntingAggregate) -> ExpectedHuntingEconomics {
+        ExpectedHuntingEconomics {
+            model_version: row.model_version,
+            looter_source: row.looter_source,
+            looter_level: row.looter_level,
+            expected_loot_tt: row.expected_loot_tt,
+            modelled_raw_tt: row.modelled_raw_tt,
+            eligible_offensive_cost: row.eligible_offensive_cost,
+            offensive_tt_recovery: row.offensive_tt_recovery,
+            expected_tt_rate: row.expected_tt_rate,
+            effective_efficiency: row.effective_efficiency.into(),
+            break_even_loot_markup: row.break_even_loot_markup,
+            coverage: row.coverage,
+            incomplete: row.incomplete,
+            missing_basis_phases: row.missing_basis_phases,
+        }
+    }
     fn activity(row: eo_services::analytics::HuntingSignatureRow) -> HuntingActivityComparison {
-        let rewarded_returns = row.returns + row.confirmed_reward_ped + row.realised_reward_markup;
+        let realised_returns = row.returns
+            + row.confirmed_reward_ped
+            + row.realised_loot_markup
+            + row.realised_reward_markup;
         HuntingActivityComparison {
             kind: HuntingActivityKind::classify(&row.kind),
             label: row.label,
@@ -1635,12 +1681,13 @@ pub(crate) fn hunting_activity_dto(
             } else {
                 0.0
             },
+            expected: row.expected.map(expected).into(),
             confirmed_reward_ped: row.confirmed_reward_ped,
             realised_reward_markup: row.realised_reward_markup,
             reward_items: row.reward_items.into_iter().map(loot_item).collect(),
-            rewarded_returns,
+            rewarded_returns: realised_returns,
             rewarded_rate: if row.cycled > 0.0 {
-                round_half_even(rewarded_returns / row.cycled, 4)
+                round_half_even(realised_returns / row.cycled, 4)
             } else {
                 0.0
             },
@@ -1654,6 +1701,7 @@ pub(crate) fn hunting_activity_dto(
             cycled: data.overall.cycled,
             returns: data.overall.returns,
             loot_rate: data.overall.loot_rate,
+            expected: data.overall.expected.map(expected).into(),
         },
         definitions: data
             .definitions
@@ -1665,6 +1713,7 @@ pub(crate) fn hunting_activity_dto(
                 cycled: row.cycled,
                 returns: row.returns,
                 loot_rate: row.loot_rate,
+                expected: row.expected.map(expected).into(),
                 loot_items: row.loot_items.into_iter().map(loot_item).collect(),
                 activities: row.activities.into_iter().map(activity).collect(),
             })
@@ -1677,6 +1726,7 @@ pub(crate) fn hunting_activity_dto(
                 cycled: row.cycled,
                 returns: row.returns,
                 loot_rate: row.loot_rate,
+                expected: row.expected.map(expected).into(),
                 loot_items: row.loot_items.into_iter().map(loot_item).collect(),
             })
             .collect(),

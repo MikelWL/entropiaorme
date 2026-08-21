@@ -38,16 +38,26 @@
 			</div>
 		</div>
 	{:else}
-		<TreeCuttingStats
-			cycled={line.cycled}
-			returns={line.returns}
-			lootRate={line.lootRate}
-			muProjectedReturns={line.muProjectedReturns}
-			muRate={line.muRate}
-			realisedReturns={line.realisedReturns}
-			realisedRate={line.realisedRate}
-			headingControl={scopeControl}
-		/>
+		<div class="min-w-0">
+			<span class="eyebrow block text-text-tertiary">Session view</span>
+			<div class="mt-0.5">{@render scopeControl()}</div>
+		</div>
+
+		<div class="mt-6">
+			<TreeCuttingStats
+				cycled={line.cycled}
+				returns={line.returns}
+				lootRate={line.lootRate}
+				muProjectedReturns={line.muProjectedReturns}
+				muRate={line.muRate}
+				lootMarkupFactor={line.lootMarkupFactor}
+				expectedTtRate={line.expectedTtRate}
+				expectedMarketRate={line.expectedMarketRate}
+				expectedEconomics={line.expected}
+				realisedReturns={line.realisedReturns}
+				realisedRate={line.realisedRate}
+			/>
+		</div>
 
 		{#if selected}
 			<div class="mt-5">
