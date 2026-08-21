@@ -1021,6 +1021,8 @@ struct EvidenceRow {
     plate_set_id: Option<i64>,
 }
 
+type ContextEvidence = (Option<i64>, f64, i64, i64);
+
 fn create_cost_window(
     tx: &rusqlite::Transaction<'_>,
     spec: CostWindowSpec,
@@ -1062,7 +1064,7 @@ fn create_cost_window(
     }
 
     use std::collections::BTreeMap;
-    let mut contexts: BTreeMap<(String, i64), (Option<i64>, f64, i64, i64)> = BTreeMap::new();
+    let mut contexts: BTreeMap<(String, i64), ContextEvidence> = BTreeMap::new();
     for event in &candidates {
         let context_key = event.context_id.unwrap_or(-1);
         let entry = contexts
