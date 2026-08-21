@@ -167,7 +167,7 @@ describe('protection cost panel', () => {
 		await waitFor(() =>
 			expect(api.assignSessionProtectionLoadout).toHaveBeenCalledWith('s1', '10'),
 		);
-		expect(screen.getByText('Protection setup saved')).toBeTruthy();
+		expect(screen.getByText('Armour setup saved')).toBeTruthy();
 		expect(api.confirmProtectionRepair).not.toHaveBeenCalled();
 		await fireEvent.click(screen.getByText('Done'));
 		expect(onClose).toHaveBeenCalledTimes(1);
