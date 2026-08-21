@@ -1,7 +1,7 @@
 <script lang="ts">
 	import DataTable from '$lib/components/DataTable.svelte';
 	import ErrorNotice from '$lib/components/ErrorNotice.svelte';
-	import InfoTip from '$lib/components/InfoTip.svelte';
+	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import { createBreakEvenModel } from '$lib/features/market/breakEvenModel.svelte';
 	import { NO_DATA } from '$lib/utils/format';
 
@@ -20,14 +20,7 @@
 </script>
 
 {#snippet expectedReturnTip()}
-	<InfoTip label="What Expected Return includes" width="w-96">
-		<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
-		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting,
-			and other unmodelled costs are excluded because their return mechanics are not yet known.
-			This is not a whole-activity forecast.
-		</p>
-	</InfoTip>
+	<ExpectedReturnInfoTip />
 {/snippet}
 
 {#if model.error}

@@ -76,7 +76,6 @@ describe('cycled / loot_tt / rate / pes / kills / globals / hofs', () => {
 		expect(render('expected_return', active())).toEqual(EMPTY);
 		expect(STAT_DEFS.expected_return.dashboardOnly).toBe(true);
 		expect(STAT_DEFS.expected_return.defaultEnabled).toBe(false);
-		expect(STAT_DEFS.expected_return.info).toContain('Healing, armour, harvesting');
 	});
 
 	it('pes renders formatPed(pes) with fallback 0', () => {

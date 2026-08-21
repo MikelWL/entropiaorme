@@ -1,5 +1,6 @@
 <script lang="ts">
 	import InfoTip from '$lib/components/InfoTip.svelte';
+	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
 	import StatDisplay from '$lib/components/StatDisplay.svelte';
 	import type { ExpectedHuntingEconomics } from '$lib/api';
 	import { NO_DATA, formatPed, formatPercent } from '$lib/utils/format';
@@ -53,22 +54,11 @@
 {/snippet}
 
 {#snippet expectedReturnTip()}
-	<InfoTip label="What Expected Return includes" width="w-96">
-		<p class="text-xs font-semibold leading-relaxed text-text">Offensive spend only</p>
-		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			Models weapon and amplifier spend with known Efficiency. Healing, armour, harvesting,
-			and other unmodelled costs are excluded because their return mechanics are not yet known.
-			This is not a whole-activity forecast.
-		</p>
-		{#if expectedEconomics}
-			<p class="mt-2 text-[11px] leading-relaxed text-text-tertiary">
-				Community model v1 · three-looter mean {expectedEconomics.looterLevel.toFixed(1)}
-				{#if expectedEconomics.incomplete}
-					· partial historical basis
-				{/if}
-			</p>
-		{/if}
-	</InfoTip>
+	<ExpectedReturnInfoTip
+		looterLevel={expectedEconomics?.looterLevel}
+		coverage={expectedEconomics?.coverage}
+		incomplete={expectedEconomics?.incomplete}
+	/>
 {/snippet}
 
 {#snippet realisedTip()}
