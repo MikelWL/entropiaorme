@@ -105,8 +105,8 @@
 		<div>
 			<h2 class="text-sm font-medium text-text">Passive effects</h2>
 			<p class="mt-1 max-w-xl text-sm leading-6 text-text-secondary">
-				Declare persistent effects from equipped clothing or accessories. Reload speed adjusts
-				the timing used to recognise paid activations.
+				Declare persistent effects from equipped clothing or accessories. Reload speed shortens
+				the interval used to recognise paid healing-tool activations.
 			</p>
 		</div>
 		<Button size="sm" variant="secondary" onclick={addSource}>Add effect</Button>
@@ -118,7 +118,7 @@
 
 	{#if sources.length === 0}
 		<p class="py-5 text-sm text-text-tertiary">
-			No passive effects declared. Item reload timing uses its catalogue value.
+			No passive effects declared. Healing tools use their catalogue reload timing.
 		</p>
 	{:else}
 		<div class="border-t border-border/70">

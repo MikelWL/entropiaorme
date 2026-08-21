@@ -89,7 +89,7 @@ const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
-    #[error("Protection by segment is disabled for this session")]
+    #[error("Armour costs are not tracked by segment for this session")]
     ProtectionBySegmentDisabled,
     #[error("Protection selection could not be persisted")]
     Persistence,

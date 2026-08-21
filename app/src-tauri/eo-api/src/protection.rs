@@ -412,7 +412,7 @@ impl Api {
                 }
                 Err(eo_services::tracker::TrackerCommandError::ProtectionBySegmentDisabled) => {
                     return Err(ApiError::conflict(
-                        "Protection by segment is disabled for this session",
+                        "Armour costs are not tracked by segment for this session",
                     ));
                 }
                 Err(eo_services::tracker::TrackerCommandError::Persistence) => {
