@@ -62,9 +62,11 @@ The same enum also carries the four frontend-facing domain topics (`TrackingSess
 
 Healing attribution consumes two independent observations. `HotbarIntent`
 carries the user's resolved equipment intent and the time at which the input
-hook observed the key. A later compatible direct self-heal output confirms one
-paid activation. Effect, passive, and unattributed outputs remain zero-cost
-evidence. The game chat timestamp is retained as provenance, but it has only
+hook observed the key. A later compatible activation output confirms one paid
+activation: a direct output for a direct or compound profile, or the first
+matching tick for a pure over-time profile. Subsequent effect outputs, passive
+outputs, and unattributed outputs remain zero-cost evidence. The game chat
+timestamp is retained as provenance, but it has only
 whole-second precision, so local monotonic observation and input occurrence
 times decide ordering and bounded reconciliation.
 

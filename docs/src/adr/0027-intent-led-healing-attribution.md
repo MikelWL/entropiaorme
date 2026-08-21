@@ -37,15 +37,16 @@ hotbar intent and a chat output matching that tool's immutable healing profile.
   player switches back to a weapon. An output delivered before its earlier
   intent is first persisted at zero cost and can be reconciled within the same
   bounded interval.
-- Confirmation persists the activation, its direct output, and the session's
+- Confirmation persists the activation, its confirming output, and the session's
   healing-cost increment in one database transaction before adding the cost to
   live actor state. A failed evidence write cannot create an unverifiable
   charge, and crash recovery retains every committed activation.
 - A confirmed over-time or compound activation opens an effect window. Matching
-  ticks are persisted as effect outputs and never add another cost. A fresh
-  healer edge plus compatible direct output can confirm another activation when
-  the intervals overlap. After that edge ages out, the active effect receives
-  the conservative claim over a merely held healer.
+  subsequent ticks are persisted as effect outputs and never add another cost.
+  A pure over-time profile uses its first matching tick as its confirming
+  output. A fresh healer edge plus compatible direct output can confirm another
+  activation when the intervals overlap. After that edge ages out, the active
+  effect receives the conservative claim over a merely held healer.
 - Per-tool reload state is a second guard. Repeated input or output inside the
   cooldown cannot create another activation.
 - Healing outside a compatible intent is persisted as passive when correlated

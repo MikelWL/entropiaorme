@@ -627,8 +627,10 @@ cost. It is indexed by session and start time.
 session. A row can reference the activation and effect window that explain it,
 and otherwise remains classified as `passive` or `unattributed`. It records the
 local observation time separately from the game's whole-second chat timestamp,
-plus the amount and an explanatory reason. Only `direct` outputs confirm a paid
-activation; the other classes are always zero-cost evidence. It is indexed by
+plus the amount and an explanatory reason. A direct or compound profile's
+confirming output is `direct`; a pure over-time profile's first matching output
+is `effect` and confirms its activation. Subsequent `effect` outputs and every
+`passive` or `unattributed` output are zero-cost evidence. It is indexed by
 session and observation time.
 
 Foreign-key enforcement remains disabled for the application database, so
