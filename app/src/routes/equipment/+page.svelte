@@ -22,7 +22,7 @@
 
 	const tabs = $derived([
 		{ id: 'library', label: 'Library' },
-		...(inDevelopment.visible ? [{ id: 'protection', label: 'Protection' }] : []),
+		...(inDevelopment.visible ? [{ id: 'protection', label: 'Armour' }] : []),
 		{ id: 'effects', label: 'Effects' },
 		{ id: 'trifecta', label: 'Trifecta' },
 		{ id: 'hotbar', label: 'Hotbar' },

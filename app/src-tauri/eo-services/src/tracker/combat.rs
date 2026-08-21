@@ -285,6 +285,9 @@ impl TrackerActor {
         if mutated {
             active.dirty = true;
         }
+        if !active.facets.track_protection_costs {
+            defence = None;
+        }
         if let Some(defence) = defence {
             let stored = db
                 .with_writer(move |conn| {

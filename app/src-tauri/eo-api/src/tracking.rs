@@ -57,7 +57,7 @@ use crate::{Api, ApiError};
 /// The `TrackingSnapshot` response-model field order (the polymorphic
 /// dashboard hydration shape). The snake-case status trio sits among the
 /// camelCase headline numbers exactly as the model declares them.
-const SNAPSHOT_FIELDS: [&str; 50] = [
+const SNAPSHOT_FIELDS: [&str; 51] = [
     "status",
     "hotbarListenerActive",
     "weaponAttribution",
@@ -65,6 +65,7 @@ const SNAPSHOT_FIELDS: [&str; 50] = [
     "endOfSessionArmourReminderEnabled",
     "sessionName",
     "sessionDefinitionId",
+    "trackProtectionCosts",
     "trackProtectionBySegment",
     "skillBoostPercent",
     "currentMob",
@@ -518,6 +519,8 @@ pub struct TrackingSnapshot {
     /// idle. Absent when no definition is in force.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_definition_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_protection_costs: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_protection_by_segment: Option<bool>,
     /// The skill-boost facet (labelled percent), same idle/active
@@ -1514,10 +1517,13 @@ pub(crate) async fn build_snapshot_value(
         eo_services::session_definitions::resolve_selection(db, config.session_definition_id)
             .await
             .map_err(ApiError::internal("snapshot definition selection"))?;
-    let idle_definition_id = idle_selection.as_ref().map(|(id, _, _)| *id);
-    let idle_track_protection = idle_selection
+    let idle_definition_id = idle_selection.as_ref().map(|(id, _, _, _)| *id);
+    let idle_track_protection_costs = idle_selection
         .as_ref()
-        .is_none_or(|(_, _, track_protection)| *track_protection);
+        .is_none_or(|(_, _, track_costs, _)| *track_costs);
+    let idle_track_protection_by_segment = idle_selection
+        .as_ref()
+        .is_some_and(|(_, _, track_costs, track_by_segment)| *track_costs && *track_by_segment);
 
     // The Activities control's strip-level readout: whether the control
     // appears at all, how many rows a tap could start, and what is
@@ -1555,12 +1561,13 @@ pub(crate) async fn build_snapshot_value(
                 "currentActivity": current_activity,
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(Some(if config.session_name.trim().is_empty() {
-                    idle_selection.as_ref().map_or("", |(_, name, _)| name.as_str())
+                    idle_selection.as_ref().map_or("", |(_, name, _, _)| name.as_str())
                 } else {
                     config.session_name.trim()
                 })),
                 "sessionDefinitionId": definition_value(idle_definition_id),
-                "trackProtectionBySegment": idle_track_protection,
+                "trackProtectionCosts": idle_track_protection_costs,
+                "trackProtectionBySegment": idle_track_protection_by_segment,
                 "skillBoostPercent": boost_value(config.declared_skill_boost_percent),
                 "currentMob": declared_mob_label(config),
                 "activities": activities,
@@ -1654,6 +1661,7 @@ pub(crate) async fn build_snapshot_value(
                 "trifectaAttribution": trifecta_attribution,
                 "sessionName": name_value(active.session_name.as_deref()),
                 "sessionDefinitionId": definition_value(active.definition_id),
+                "trackProtectionCosts": active.track_protection_costs,
                 "trackProtectionBySegment": active.track_protection_by_segment,
                 "skillBoostPercent": boost_value(active.skill_boost_percent),
                 "currentMob": active.current_mob.clone(),

@@ -587,7 +587,8 @@ impl ProtectionService {
                 let tx = conn.transaction()?;
                 let session = tx
                     .query_row(
-                        "SELECT started_at, ended_at, track_protection_by_segment \
+                        "SELECT started_at, ended_at, track_protection_costs, \
+                                track_protection_by_segment \
                          FROM tracking_sessions WHERE id = ?1",
                         [&session_id],
                         |row| {
@@ -595,14 +596,15 @@ impl ProtectionService {
                                 row.get::<_, f64>(0)?,
                                 row.get::<_, Option<f64>>(1)?,
                                 row.get::<_, i64>(2)? != 0,
+                                row.get::<_, i64>(3)? != 0,
                             ))
                         },
                     )
                     .optional()?;
-                let Some((started_at, ended_at, tracks_segments)) = session else {
+                let Some((started_at, ended_at, tracks_costs, tracks_segments)) = session else {
                     return Ok(false);
                 };
-                if tracks_segments || ended_at.is_none() {
+                if !tracks_costs || tracks_segments || ended_at.is_none() {
                     return Ok(false);
                 }
 
@@ -709,7 +711,7 @@ impl ProtectionService {
             .await?
             .then_some(())
             .ok_or(ProtectionError::Conflict(
-                "Whole-session protection can only be assigned to a completed opted-out session before its evidence is settled",
+                "Whole-session armour can only be assigned to a completed session with armour costs enabled and segment attribution disabled, before its evidence is settled",
             ))?;
         Ok(selection)
     }
@@ -2050,6 +2052,13 @@ mod tests {
                  (session_id, damage, deflected) VALUES ('whole-session', NULL, 1)",
                 [],
             )?;
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, track_protection_costs, \
+                  track_protection_by_segment) \
+                 VALUES ('armour-disabled', 10, 20, 0, 0, 0)",
+                [],
+            )?;
             Ok(())
         })
         .await
@@ -2064,6 +2073,12 @@ mod tests {
             .assign_session_loadout("whole-session", loadout.id)
             .await
             .expect("same setup is idempotent");
+        assert!(matches!(
+            service
+                .assign_session_loadout("armour-disabled", loadout.id)
+                .await,
+            Err(ProtectionError::Conflict(_))
+        ));
 
         let outcome = service
             .confirm_repair_cost("whole-session-window", Some(set.id), None, 4.0)

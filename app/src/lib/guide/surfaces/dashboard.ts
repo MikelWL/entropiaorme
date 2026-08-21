@@ -405,7 +405,7 @@ export const dashboardSurface: GuideSurface = {
 				body: [
 					{
 						kind: 'p',
-						text: 'Cost follows the active Protection loadout. Two unlimited layers use one combined repair reading; mixed or limited layers are recorded armour first, then plates.',
+						text: 'Cost follows the active armour loadout. Two unlimited layers use one combined repair reading; mixed or limited layers are recorded armour first, then plates.',
 					},
 					{
 						kind: 'p',

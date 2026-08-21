@@ -90,10 +90,10 @@ export function protectionCostActionLabel(overview: ProtectionOverview | null): 
 		overview.loadouts.length > 0 &&
 		!overview.loadouts.some((loadout) => loadout.id === overview.activeLoadoutId)
 	) {
-		return 'Select a protection loadout first';
+		return 'Select an armour loadout first';
 	}
 	const steps = buildProtectionCostSteps(overview);
-	if (steps.length === 0) return 'No protection cost to record';
+	if (steps.length === 0) return 'No armour cost to record';
 	if (steps.length === 1 && steps[0].method === 'repair') return 'Record repair cost';
-	return `Record ${steps.length} protection ${steps.length === 1 ? 'cost' : 'costs'}`;
+	return `Record ${steps.length} armour ${steps.length === 1 ? 'cost' : 'costs'}`;
 }

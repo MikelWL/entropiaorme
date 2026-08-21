@@ -119,7 +119,7 @@
 					{@const window = model.lastOutcome.costWindow}
 					<div class="space-y-2">
 						<p class="text-sm font-medium text-text">
-							{window.status === 'booked' ? 'Protection cost allocated' : window.costKnown ? 'Measurement saved without matching evidence' : 'Prior protection cost needs correction'}
+							{window.status === 'booked' ? 'Armour cost allocated' : window.costKnown ? 'Measurement saved without matching evidence' : 'Prior armour cost needs correction'}
 						</p>
 						<div class="grid grid-cols-3 gap-4 border-y border-border/70 py-3">
 							<div><span class="eyebrow block">TT consumed</span><span class="tabular-nums text-sm text-text">{window.costKnown ? `${window.consumedTtPed?.toFixed(4)} PED` : 'Unknown'}</span></div>

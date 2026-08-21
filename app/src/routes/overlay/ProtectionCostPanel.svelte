@@ -180,7 +180,7 @@
 			}
 			mode = 'saved';
 		} catch (error) {
-			errorHint = error instanceof Error ? error.message : 'Protection cost could not be saved';
+			errorHint = error instanceof Error ? error.message : 'Armour cost could not be saved';
 		} finally {
 			saving = false;
 		}
@@ -206,7 +206,7 @@
 			stepIndex = 0;
 			setupSaved = !recordNow || currentSteps.length === 0;
 		} catch (error) {
-			errorHint = error instanceof Error ? error.message : 'Protection setup could not be saved';
+			errorHint = error instanceof Error ? error.message : 'Armour setup could not be saved';
 		} finally {
 			assigningLoadout = false;
 		}
@@ -216,7 +216,7 @@
 {#if requiresLoadoutSelection && selectedLoadoutId === null}
 	<div class="flex min-w-[390px] flex-col gap-3 text-white">
 		<div class="border-b border-white/10 pb-2.5">
-			<p class="text-xs font-semibold">Protection used</p>
+			<p class="text-xs font-semibold">Armour used</p>
 			<p class="mt-1 text-[11px] text-white/45">Choose the setup worn during this session. Its cost will stay at whole-session level.</p>
 		</div>
 		<div class="flex items-center gap-2">
@@ -227,7 +227,7 @@
 					if (event.currentTarget.value) void assignLoadout(event.currentTarget.value);
 				}}
 			>
-				<option value="">Choose protection setup</option>
+				<option value="">Choose armour setup</option>
 				{#each protection?.loadouts ?? [] as loadout (loadout.id)}
 					<option value={loadout.id}>{loadout.name}</option>
 				{/each}
@@ -239,9 +239,9 @@
 {:else if setupSaved}
 	<div class="flex min-w-[390px] items-center justify-between gap-6 text-white">
 		<div>
-			<p class="text-xs font-medium">Protection setup saved</p>
+			<p class="text-xs font-medium">Armour setup saved</p>
 			<p class="mt-1 text-[11px] text-white/45">
-				{recordNow ? 'No protection cost needs recording.' : 'You can record its measured cost later.'}
+				{recordNow ? 'No armour cost needs recording.' : 'You can record its measured cost later.'}
 			</p>
 		</div>
 		<Button size="sm" onclick={onClose}>Done</Button>
@@ -258,7 +258,7 @@
 			</div>
 			<div class="flex items-center gap-2">
 				{#if steps.length > 1}<span class="text-[10px] tabular-nums text-white/35">{stepIndex + 1} of {steps.length}</span>{/if}
-				<Button variant="ghost" size="sm" aria-label="Record protection cost later" onclick={onClose}>Later</Button>
+				<Button variant="ghost" size="sm" aria-label="Record armour cost later" onclick={onClose}>Later</Button>
 			</div>
 		</div>
 
@@ -267,7 +267,7 @@
 				<div>
 					<p class="text-xs font-medium">
 						{#if limitedOutcome?.costWindow}
-							{limitedOutcome.costWindow.status === 'booked' ? 'Protection cost allocated' : 'Measurement saved for later allocation'}
+							{limitedOutcome.costWindow.status === 'booked' ? 'Armour cost allocated' : 'Measurement saved for later allocation'}
 						{:else if limitedOutcome}
 							Baseline established
 						{:else if savedWindow}

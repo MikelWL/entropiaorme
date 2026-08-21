@@ -95,10 +95,11 @@ windows, and classified healing-output evidence),
 `0048_expected_hunting_evidence.sql` (model-neutral offensive evidence on each
 kill tool phase), `0049_expected_hunting_phase_identity.sql` (distinct
 same-name, same-cost phases when their captured loadout evidence differs),
-`0050_protection_hit_allocation.sql` (equal-hit protection allocation and the
+`0052_protection_hit_allocation.sql` (equal-hit protection allocation and the
 historical reweighting of settled evidence), and
-`0051_session_protection_policy.sql` (definition-authored, session-stamped
-segment-protection policy). The
+`0053_session_protection_policy.sql` (definition-authored, session-stamped
+segment-protection policy), and `0054_session_armour_cost_policy.sql` (the
+parent armour-cost policy and whole-session default). The
 `Db::open` path opens the write connection, configures its session pragmas,
 adopts or refuses any pre-existing schema, reconciles baseline-column drift,
 runs the embedded chain (`MIGRATIONS` in `eo-services/src/db/migrate.rs`), and
@@ -566,7 +567,8 @@ protected fallback guarantees an active choice without making historical
 | `id` | INTEGER | Primary key, autoincrement. |
 | `name` | TEXT | Not null. Active names are enforced case-insensitively by the service. |
 | `ad_hoc_segments` | INTEGER | Not null; defaults to 0. Opts the definition into naming segments during play. |
-| `track_protection_by_segment` | INTEGER | Not null; defaults to 1 (migration `0051`). Controls whether the overlay offers live protection declarations and context-grain protection attribution. |
+| `track_protection_costs` | INTEGER | Not null; defaults to 1 (migration `0054`). Controls whether the session records defensive evidence and offers armour-cost accounting at all. |
+| `track_protection_by_segment` | INTEGER | Not null; introduced by migration `0053`; authored definitions default to 0 after migration `0054`. Controls whether the overlay offers live armour declarations and context-grain cost attribution. Meaningful only when `track_protection_costs` is 1. |
 | `is_active` | INTEGER | Not null; defaults to 1. Archived definitions retain 0. |
 | `is_protected` | INTEGER | Not null; defaults to 0 (migration `0023`). Protected definitions cannot be archived. |
 | `created_at` | REAL | Not null; defaults to `unixepoch('now')`. |
@@ -610,7 +612,8 @@ facets, and an optional session-definition identity.
 | `session_name` | TEXT | Optional designated session-name stamp (migration `0018`). It remains the recorded name even if an attached definition is later renamed. |
 | `skill_boost_percent` | INTEGER | Optional positive boost declaration (migration `0018`). Null means not captured. |
 | `definition_id` | INTEGER | Optional reference to `session_definitions(id)` (migration `0022`; indexed `idx_tracking_sessions_definition`). Null is valid for legacy or deliberately unattached sessions. |
-| `track_protection_by_segment` | INTEGER | Not null; defaults to 1 (migration `0051`). Immutable policy stamped from the selected definition at session start. When 0, a post-session loadout is attached at whole-session grain instead. |
+| `track_protection_costs` | INTEGER | Not null; defaults to 1 (migration `0054`). Immutable parent policy stamped from the selected definition at session start. When 0, defensive evidence and armour-cost UI are omitted. |
+| `track_protection_by_segment` | INTEGER | Not null; defaults to 1 for historical compatibility (migration `0053`). Immutable subordinate policy stamped at session start. When 0 while armour costs remain enabled, a post-session loadout is attached at whole-session grain instead. |
 | `updated_at` | REAL | Back-filled by an `AFTER INSERT` trigger when left null. |
 
 #### Healing attribution evidence
@@ -1336,7 +1339,7 @@ migrations (`0002_analytical_indexes.sql`,
 `0049_expected_hunting_phase_identity.sql`,
 `0050_session_offensive_evidence_rollups.sql`,
 `0051_context_offensive_evidence.sql`, `0052_protection_hit_allocation.sql`,
-`0053_session_protection_policy.sql`); the runner
+`0053_session_protection_policy.sql`, `0054_session_armour_cost_policy.sql`); the runner
 records applied migrations in the `_sqlx_migrations` ledger (the table name,
 column shapes, and SHA-384 checksum accounting are inherited unchanged from
 the previous runner, so existing databases reconcile byte for byte) and never

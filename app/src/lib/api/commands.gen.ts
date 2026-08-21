@@ -2686,6 +2686,7 @@ export interface SessionDefinition {
 	id: string;
 	name: string;
 	adHocSegments: boolean;
+	trackProtectionCosts: boolean;
 	trackProtectionBySegment: boolean;
 	/** A session that cannot be archived, because tracking always needs one to run under. It renames and takes a roster like any other. */
 	isProtected: boolean;
@@ -2706,6 +2707,7 @@ export interface SessionDefinition {
 export interface SessionDefinitionInput {
 	name: string;
 	ad_hoc_segments?: boolean;
+	track_protection_costs?: boolean;
 	track_protection_by_segment?: boolean;
 	roster?: SessionRosterEntryInput[];
 }
@@ -3058,6 +3060,7 @@ export interface TrackingSnapshot {
 	sessionName?: string | null;
 	/** The selected session definition (stringified id): the active session's stamped reference when tracking, the configured selection (re-validated against an active definition) when idle. Absent when no definition is in force. */
 	sessionDefinitionId?: string | null;
+	trackProtectionCosts?: boolean | null;
 	trackProtectionBySegment?: boolean | null;
 	/** The skill-boost facet (labelled percent), same idle/active sourcing as the session name. */
 	skillBoostPercent?: number | null;

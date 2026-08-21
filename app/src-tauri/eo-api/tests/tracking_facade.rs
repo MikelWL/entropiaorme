@@ -226,7 +226,8 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
     // even with nothing configured: an unconfigured install resolves to
     // the protected default, so the readout shows what a start would
     // stamp, and the Activities block rides idle too: the seeded default
-    // rosters nothing, so it reports no surface. The lifetime block rides
+    // rosters nothing and defaults to whole-session armour costs, so it
+    // reports no activity surface. The lifetime block rides
     // idle for the same reason, reading all-zero over a definition that
     // has never been run: a family with no history still HAS a family,
     // so the flip is offered and honestly reports an empty span.
@@ -236,6 +237,7 @@ async fn the_idle_snapshot_serialises_the_dashboard_way() {
         "{\"status\":\"idle\",\"hotbarListenerActive\":false,\"weaponAttribution\":\"trifecta\",\
          \"repairOcrEnabled\":false,\"endOfSessionArmourReminderEnabled\":false,\
          \"sessionName\":\"Default Tracking\",\"sessionDefinitionId\":\"1\",\
+         \"trackProtectionCosts\":true,\"trackProtectionBySegment\":false,\
          \"activities\":{\"visible\":false,\"adHocSegments\":false,\"readyCount\":0,\
          \"active\":[]},\
          \"lifetime\":{\"instanceCount\":0,\"cycled\":0.0,\"lootTt\":0.0,\"net\":0.0,\
@@ -1654,6 +1656,7 @@ async fn the_session_list_scopes_to_one_definitions_instances() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })
@@ -1711,6 +1714,7 @@ async fn re_filing_moves_the_instance_and_restamps_its_name() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })
@@ -1767,6 +1771,7 @@ async fn re_filing_replaces_a_legacy_free_text_name() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })
@@ -1805,6 +1810,7 @@ async fn re_filing_refuses_an_active_session() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Carabok Skilling".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })
@@ -1854,6 +1860,7 @@ async fn re_filing_refuses_an_archived_definition() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })
@@ -1894,6 +1901,7 @@ async fn an_archived_definition_keeps_its_instances_reachable() {
         .session_definition_create(eo_api::session_definitions::SessionDefinitionInput {
             name: "Retired".to_string(),
             ad_hoc_segments: false,
+            track_protection_costs: true,
             track_protection_by_segment: true,
             roster: Vec::new(),
         })

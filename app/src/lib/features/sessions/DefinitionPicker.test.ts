@@ -11,6 +11,7 @@ function definition(id: string, name: string): SessionDefinition {
 		id,
 		name,
 		adHocSegments: false,
+		trackProtectionCosts: true,
 		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,

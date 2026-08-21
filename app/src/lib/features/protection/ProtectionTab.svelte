@@ -44,7 +44,7 @@
 	<div class="flex items-start justify-between gap-6">
 		<div>
 			<div class="flex items-center gap-2.5">
-				<h2 class="text-lg font-semibold text-text">Protection</h2>
+				<h2 class="text-lg font-semibold text-text">Armour</h2>
 				<InDevelopmentMark id="limited-protection" />
 			</div>
 			<p class="mt-1 text-sm text-text-secondary">Compose armour and plates once, then declare what is in use from the overlay.</p>
@@ -61,7 +61,7 @@
 	{/if}
 
 	{#if model.loading}
-		<div class="py-14 text-center text-sm text-text-tertiary animate-pulse">Loading protection...</div>
+		<div class="py-14 text-center text-sm text-text-tertiary animate-pulse">Loading armour...</div>
 	{:else}
 		<section aria-labelledby="protection-loadouts-heading">
 			<div class="flex items-baseline justify-between gap-4 mb-3">
@@ -76,7 +76,7 @@
 
 			{#if model.overview.loadouts.length === 0}
 				<div class="border-y border-border/70 py-8 text-center">
-					<p class="text-sm font-medium text-text">No protection loadouts yet</p>
+					<p class="text-sm font-medium text-text">No armour loadouts yet</p>
 					<p class="mt-1 text-xs text-text-tertiary">Add armour or plates above, then combine them into the choices you use while playing.</p>
 				</div>
 			{:else}
@@ -163,7 +163,7 @@
 		{#if model.overview.recentCostWindows.length > 0}
 			<Divider />
 			<section aria-labelledby="protection-history-heading">
-				<h3 id="protection-history-heading" class="text-sm font-semibold text-text mb-3">Recent protection costs</h3>
+				<h3 id="protection-history-heading" class="text-sm font-semibold text-text mb-3">Recent armour costs</h3>
 				<div class="divide-y divide-border/60 border-y border-border/70">
 					{#each model.overview.recentCostWindows as window (window.id)}
 						{@const set = model.overview.sets.find((candidate) => candidate.id === window.setId)}
@@ -191,13 +191,13 @@
 		{#if model.setEconomyKind === 'limited'}
 			<div><label for="protection-set-markup" class="block eyebrow mb-1.5">Average acquisition markup</label><div class="flex items-center gap-2"><Input id="protection-set-markup" bind:value={model.setMarkup} type="number" min={100} step="0.01" disabled={editingSet?.basisLocked === true} class="max-w-32" /><span class="text-sm text-text-tertiary">%</span></div><p class="mt-1.5 text-xs text-text-tertiary">Use the TT-weighted average paid across all seven pieces. This is intentionally approximate.</p></div>
 		{:else}
-			<p class="border-l-2 border-border-bright pl-3 text-xs text-text-secondary">Unlimited protection is costed from raw TT repair cost. Purchase markup remains durable capital.</p>
+			<p class="border-l-2 border-border-bright pl-3 text-xs text-text-secondary">Unlimited armour is costed from raw TT repair cost. Purchase markup remains durable capital.</p>
 		{/if}
 		<div class="flex justify-end gap-2"><Button variant="secondary" onclick={() => (model.setModalOpen = false)}>Cancel</Button><Button onclick={model.saveSet} disabled={setSaveDisabled} loading={model.saving}>{model.editingSetId ? 'Save changes' : 'Add set'}</Button></div>
 	</div>
 </Modal>
 
-<Modal bind:open={model.loadoutModalOpen} title={model.editingLoadoutId ? 'Edit protection loadout' : 'New protection loadout'}>
+<Modal bind:open={model.loadoutModalOpen} title={model.editingLoadoutId ? 'Edit armour loadout' : 'New armour loadout'}>
 	<div class="space-y-5">
 		<div><label for="protection-loadout-name" class="block eyebrow mb-1.5">Loadout name</label><Input id="protection-loadout-name" bind:value={model.loadoutName} placeholder="L armour + 5B" /></div>
 		<div class="grid grid-cols-2 gap-4">
@@ -209,11 +209,11 @@
 	</div>
 </Modal>
 
-<Modal bind:open={model.removalModalOpen} title={`Remove ${model.removalTarget?.kind === 'set' ? 'protection set' : 'loadout'}`}>
+<Modal bind:open={model.removalModalOpen} title={`Remove ${model.removalTarget?.kind === 'set' ? 'armour set' : 'loadout'}`}>
 	{#if model.removalTarget}
 		<div class="space-y-5">
 			<p class="text-sm text-text-secondary">
-				Remove <span class="font-medium text-text">{model.removalTarget.name}</span> from the available protection choices? Recorded sessions and measurements keep their historical identity.
+				Remove <span class="font-medium text-text">{model.removalTarget.name}</span> from the available armour choices? Recorded sessions and measurements keep their historical identity.
 			</p>
 			{#if model.removalTarget.kind === 'set'}
 				<p class="border-l-2 border-warning pl-3 text-xs text-text-secondary">A set can only be removed after every loadout using it has been edited or removed.</p>

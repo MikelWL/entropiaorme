@@ -140,7 +140,7 @@ describe('armour track decision prompt', () => {
 			},
 		});
 
-		expect(screen.getByText('Record protection?')).toBeTruthy();
+		expect(screen.getByText('Record armour costs?')).toBeTruthy();
 		expect(screen.queryByTitle('Stop tracking')).toBeNull();
 
 		screen.getByText('Record').click();
@@ -399,6 +399,19 @@ describe('protection declaration policy', () => {
 		});
 		expect(screen.queryByTestId('protection-facet')).toBeNull();
 	});
+
+	it('removes armour controls altogether when armour-cost tracking is disabled', () => {
+		render(OverlayStrip, {
+			props: {
+				data: liveData({ status: 'active', trackProtectionCosts: false }),
+				armourSessionId: 'session-1',
+				protection: mixedProtection,
+			},
+		});
+
+		expect(screen.queryByTestId('protection-facet')).toBeNull();
+		expect(document.querySelector('[data-guide-anchor="overlay-armour-section"]')).toBeNull();
+	});
 });
 
 describe('customisable stat pills', () => {
@@ -571,7 +584,7 @@ describe('armour cost control', () => {
 				protection: mixedProtection,
 			},
 		});
-		expect(screen.getByTitle('Record 2 protection costs')).toBeTruthy();
+		expect(screen.getByTitle('Record 2 armour costs')).toBeTruthy();
 	});
 
 	it('disables cost recording for an explicit no-protection loadout', () => {
@@ -589,7 +602,7 @@ describe('armour cost control', () => {
 				protection,
 			},
 		});
-		expect((screen.getByTitle('No protection cost to record') as HTMLButtonElement).disabled).toBe(
+		expect((screen.getByTitle('No armour cost to record') as HTMLButtonElement).disabled).toBe(
 			true,
 		);
 	});

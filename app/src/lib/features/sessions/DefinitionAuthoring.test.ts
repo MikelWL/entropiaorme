@@ -13,6 +13,7 @@ function definition(overrides: Partial<SessionDefinition> = {}): SessionDefiniti
 		id: '2',
 		name: 'Easter Mayhem 2026',
 		adHocSegments: false,
+		trackProtectionCosts: true,
 		trackProtectionBySegment: true,
 		isProtected: false,
 		isActive: true,
@@ -83,5 +84,16 @@ describe('DefinitionAuthoring lifecycle', () => {
 		render(DefinitionAuthoring, { props: { model } });
 
 		expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+	});
+
+	it('keeps segment armour costs visible but disabled under the parent opt-out', () => {
+		const { model } = modelFor(definition({ trackProtectionCosts: false }));
+		render(DefinitionAuthoring, { props: { model } });
+
+		expect(screen.getByText('Armour costs by segment')).toBeTruthy();
+		expect(
+			(screen.getByRole('switch', { name: 'Track armour costs by segment' }) as HTMLButtonElement)
+				.disabled,
+		).toBe(true);
 	});
 });

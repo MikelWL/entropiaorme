@@ -174,7 +174,7 @@
 		<div class="flex items-center gap-3 shrink-0 border-r border-white/10 pr-3">
 			{#if awaitingArmourTrackDecision && data.status === 'active'}
 				<div class="armour-prompt flex items-center gap-1.5 shrink-0">
-					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record protection?</span>
+					<span class="text-[10px] font-semibold text-amber-300 tracking-wide whitespace-nowrap">Record armour costs?</span>
 					<button
 						type="button"
 						class="armour-prompt-btn armour-prompt-yes"
@@ -504,11 +504,11 @@
 		</div>
 
 		<!-- Active protection identity and live selection. -->
-		{#if data.trackProtectionBySegment !== false && protection && protection.loadouts.length > 0}
+		{#if data.trackProtectionCosts !== false && data.trackProtectionBySegment !== false && protection && protection.loadouts.length > 0}
 			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3" data-testid="protection-facet">
-				<span class="facet-label">Protection</span>
+				<span class="facet-label">Armour</span>
 				{#if protection.loadouts.length === 1}
-					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Protection recorded from now on">
+					<div class="px-1 text-xs text-white/70 whitespace-nowrap" title="Armour recorded from now on">
 						{activeProtection?.name ?? protection.loadouts[0].name}
 					</div>
 				{:else}
@@ -533,11 +533,12 @@
 			</div>
 		{/if}
 
-		<!-- Protection cost, sequenced from the active loadout. -->
-		<div
-			class="flex flex-col shrink-0 border-l border-white/10 pl-3"
-			data-guide-anchor="overlay-armour-section"
-		>
+		<!-- Armour cost, sequenced from the active loadout. -->
+		{#if data.trackProtectionCosts !== false}
+			<div
+				class="flex flex-col shrink-0 border-l border-white/10 pl-3"
+				data-guide-anchor="overlay-armour-section"
+			>
 			<div class="flex items-center gap-2 shrink-0">
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
@@ -562,7 +563,8 @@
 					{armourCostError}
 				</div>
 			{/if}
-		</div>
+			</div>
+		{/if}
 
 		<!-- Customisable stat pills (driven by the overlay stat prefs): treated as
 			 one unit, so the section separator sits at the unit boundary, not
@@ -629,7 +631,8 @@
 			{/if}
 
 			<!-- Armour cost remains reachable post-session for end-of-session bookkeeping. -->
-			<div class="flex flex-col shrink-0 border-l border-white/10 pl-3">
+			{#if data.trackProtectionCosts !== false}
+				<div class="flex flex-col shrink-0 border-l border-white/10 pl-3">
 				<div class="flex items-center gap-2 shrink-0">
 					<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 					<button
@@ -652,7 +655,8 @@
 						{armourCostError}
 					</div>
 				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>

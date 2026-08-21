@@ -54,6 +54,7 @@ pub struct SessionFacets {
     /// validated against an ACTIVE definition at start and immutable
     /// for the session's life (it rides the name facet's selection).
     pub definition_id: Option<i64>,
+    pub track_protection_costs: bool,
     pub track_protection_by_segment: bool,
     /// The skill-boost configuration the session runs under, as the
     /// pill's labelled percentage.
@@ -194,6 +195,7 @@ pub(super) struct SessionAggregate {
     pub(super) mob_name: Option<String>,
     pub(super) session_name: Option<String>,
     pub(super) definition_id: Option<i64>,
+    pub(super) track_protection_costs: bool,
     pub(super) track_protection_by_segment: bool,
     pub(super) skill_boost_percent: Option<i64>,
     pub(super) active_activities: Vec<ActiveActivity>,
@@ -437,6 +439,7 @@ impl TrackerActor {
             mob_name: active.stamped_mob_name().map(str::to_string),
             session_name: active.facets.name.clone(),
             definition_id: active.facets.definition_id,
+            track_protection_costs: active.facets.track_protection_costs,
             track_protection_by_segment: active.facets.track_protection_by_segment,
             // Read from the interval state, not the row mirror: the row's
             // scalar cannot hold a declared zero (0019's `> 0 OR NULL`),
@@ -774,9 +777,13 @@ impl TrackerActor {
             .to_string();
         let resolved =
             crate::session_definitions::resolve_selection(&self.db, configured_selection).await?;
-        let track_protection_by_segment = resolved
+        let track_protection_costs = resolved
             .as_ref()
-            .is_none_or(|(_, _, track_protection)| *track_protection);
+            .is_none_or(|(_, _, track_costs, _)| *track_costs);
+        let track_protection_by_segment = track_protection_costs
+            && resolved
+                .as_ref()
+                .is_some_and(|(_, _, _, track_by_segment)| *track_by_segment);
         let protection = if track_protection_by_segment {
             active_selection(&self.db).await?
         } else {
@@ -785,8 +792,9 @@ impl TrackerActor {
         let facets = SessionFacets {
             name: Some(configured_name)
                 .filter(|name| !name.is_empty())
-                .or_else(|| resolved.as_ref().map(|(_, name, _)| name.clone())),
-            definition_id: resolved.as_ref().map(|(id, _, _)| *id),
+                .or_else(|| resolved.as_ref().map(|(_, name, _, _)| name.clone())),
+            definition_id: resolved.as_ref().map(|(id, _, _, _)| *id),
+            track_protection_costs,
             track_protection_by_segment,
             skill_boost_percent: declared_boost.filter(|percent| *percent > 0),
         };
@@ -824,6 +832,7 @@ impl TrackerActor {
         let insert_name = facets.name.clone();
         let insert_definition = facets.definition_id;
         let insert_boost = facets.skill_boost_percent;
+        let insert_track_protection_costs = facets.track_protection_costs;
         let insert_track_protection = facets.track_protection_by_segment;
         let opening_boost = declared_boost;
         self.db
@@ -831,14 +840,15 @@ impl TrackerActor {
                 conn.execute(
                     "INSERT INTO tracking_sessions \
                      (id, started_at, is_active, session_name, definition_id, \
-                      skill_boost_percent, track_protection_by_segment) \
-                     VALUES (?, ?, 1, ?, ?, ?, ?)",
+                      skill_boost_percent, track_protection_costs, track_protection_by_segment) \
+                     VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         insert_id,
                         start_ts,
                         insert_name,
                         insert_definition,
                         insert_boost,
+                        insert_track_protection_costs as i64,
                         insert_track_protection as i64,
                     ],
                 )?;
@@ -1224,6 +1234,7 @@ impl HuntTracker {
             current_mob: aggregated.mob_name.clone(),
             session_name: aggregated.session_name.clone(),
             definition_id: aggregated.definition_id,
+            track_protection_costs: aggregated.track_protection_costs,
             track_protection_by_segment: aggregated.track_protection_by_segment,
             skill_boost_percent: aggregated.skill_boost_percent,
             active_activities: aggregated.active_activities.clone(),

@@ -49,6 +49,7 @@ export interface TrackingLive {
 	 * session's stamped reference when tracking, the configured
 	 * selection when idle. */
 	sessionDefinitionId?: string | null;
+	trackProtectionCosts?: boolean | null;
 	trackProtectionBySegment?: boolean | null;
 	skillBoostPercent?: number | null;
 	currentMob?: string | null;

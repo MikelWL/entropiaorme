@@ -161,6 +161,7 @@
 		isSessionActive: () => data.status === 'active',
 		isBusy: () => toggling,
 		armourReminderEnabled: () =>
+			data.trackProtectionCosts !== false &&
 			data.endOfSessionArmourReminderEnabled === true &&
 			buildProtectionCostSteps(protection.overview).length > 0,
 		refresh: () => snapshot.hydrate(),
@@ -172,7 +173,9 @@
 		}),
 		stopTracking,
 		captureArmourSetupOnLater: () =>
-			data.trackProtectionBySegment === false && (protection.overview?.loadouts.length ?? 0) > 0,
+			data.trackProtectionCosts !== false &&
+			data.trackProtectionBySegment === false &&
+			(protection.overview?.loadouts.length ?? 0) > 0,
 		showArmourPopup: showPostSessionArmourPopup,
 		onPromptShown: () => {
 			void tick().then(scheduleArmourCostAnchorSync);
@@ -295,7 +298,7 @@
 		const steps = requiresLoadoutSelection ? [] : buildProtectionCostSteps(protection.overview);
 		if (!requiresLoadoutSelection && steps.length === 0) return null;
 		if (requiresLoadoutSelection && (protection.overview?.loadouts.length ?? 0) === 0) {
-			throw new Error('Create a protection setup in Equipment before recording its cost');
+			throw new Error('Create an armour setup in Equipment before recording its cost');
 		}
 
 		return {
@@ -829,6 +832,7 @@
 			sessionName: snap.sessionName,
 			sessionDefinitionId: snap.sessionDefinitionId,
 			trackProtectionBySegment: snap.trackProtectionBySegment,
+			trackProtectionCosts: snap.trackProtectionCosts,
 			skillBoostPercent: snap.skillBoostPercent,
 			currentMob: snap.currentMob,
 			currentTool: snap.currentTool,

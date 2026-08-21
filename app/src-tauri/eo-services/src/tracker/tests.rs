@@ -5537,6 +5537,46 @@ fn a_whole_session_protection_definition_stamps_and_surfaces_its_policy() {
 }
 
 #[test]
+fn an_armour_cost_opt_out_stamps_policy_and_records_no_defence_evidence() {
+    let rig = rig();
+    rig.execute(
+        "INSERT INTO session_definitions \
+         (id, name, track_protection_costs, track_protection_by_segment) \
+         VALUES (7, 'Offensive costs only', 0, 0)",
+    );
+    let tracker = rig.tracker(Providers {
+        config: Arc::new(ScriptedConfig {
+            session_definition_id: Some(7),
+            ..Default::default()
+        }),
+        ..Providers::default()
+    });
+
+    let session = rig.wait(tracker.start_session()).unwrap();
+    let active = rig.wait(tracker.snapshot()).unwrap().active.unwrap();
+    assert!(!active.track_protection_costs);
+    assert!(!active.track_protection_by_segment);
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT track_protection_costs FROM tracking_sessions WHERE id = ?",
+            &[&session.id],
+        ),
+        0
+    );
+
+    rig.bus.publish(&BusEvent::Combat(CombatPayload::Deflect {
+        timestamp: "2026-01-01T00:00:01".into(),
+    }));
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM protection_defence_events WHERE session_id = ?",
+            &[&session.id],
+        ),
+        0
+    );
+}
+
+#[test]
 fn a_stale_definition_selection_falls_through_to_the_default_and_keeps_the_name() {
     let rig = rig();
     // A definition selected and then archived while idle: the inactive

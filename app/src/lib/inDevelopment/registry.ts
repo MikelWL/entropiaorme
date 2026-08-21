@@ -25,7 +25,7 @@ export const IN_DEVELOPMENT_SURFACES: readonly InDevelopmentSurface[] = [
 	{
 		id: 'limited-protection',
 		summary:
-			'Protection cost tracking is available, but recorded readings and allocations cannot yet be corrected and archived setups cannot be restored.',
+			'Armour cost tracking is available, but recorded readings and allocations cannot yet be corrected and archived setups cannot be restored.',
 		graduates:
 			'Readings and allocations support correction or supersession, archived setups can be restored, and broader field validation is complete.',
 	},
