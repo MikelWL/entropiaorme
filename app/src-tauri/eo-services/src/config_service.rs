@@ -513,7 +513,7 @@ fn normalize_passive_effect_sources(raw: Option<&Value>) -> Vec<PassiveEffectSou
             let object = value.as_object()?;
             let id = object.get("id")?.as_str()?.trim().to_string();
             let name = object.get("name")?.as_str()?.trim().to_string();
-            if id.is_empty() || name.is_empty() || !seen.insert(id.clone()) {
+            if id.is_empty() || name.is_empty() {
                 return None;
             }
             let effects = object
@@ -534,7 +534,10 @@ fn normalize_passive_effect_sources(raw: Option<&Value>) -> Vec<PassiveEffectSou
                     })
                 })
                 .collect::<Vec<_>>();
-            (!effects.is_empty()).then_some(PassiveEffectSource {
+            if effects.is_empty() || !seen.insert(id.clone()) {
+                return None;
+            }
+            Some(PassiveEffectSource {
                 id,
                 name,
                 enabled: object.get("enabled").map(json_truthy).unwrap_or(true),
@@ -767,6 +770,23 @@ mod tests {
 
     fn read_settings(dir: &Path) -> String {
         std::fs::read_to_string(dir.join("settings.json")).unwrap()
+    }
+
+    #[test]
+    fn a_discarded_source_does_not_reserve_its_id() {
+        // The first entry carries no usable effect, so it is dropped. A later
+        // entry under the same id is the one the user declared, and it stands.
+        let raw = serde_json::json!([
+            { "id": "ring", "name": "Ring", "effects": [{ "kind": "unknown" }] },
+            {
+                "id": "ring",
+                "name": "Ares Ring, Perfected",
+                "effects": [{ "kind": "reload_speed", "magnitude_percent": 14.0 }]
+            }
+        ]);
+        let sources = normalize_passive_effect_sources(Some(&raw));
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].name, "Ares Ring, Perfected");
     }
 
     #[test]

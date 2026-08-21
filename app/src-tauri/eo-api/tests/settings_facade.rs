@@ -248,6 +248,41 @@ async fn reload_speed_sources_round_trip_as_typed_persistent_effects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cumulative_reload_speed_beyond_representation_is_refused() {
+    use eo_api::settings::{PassiveEffectInput, PassiveEffectKind, PassiveEffectSourceInput};
+
+    // Each magnitude is finite and individually acceptable, so only the total
+    // catches this. Persisting it would divide the reload interval to nothing.
+    let dir = tempfile::tempdir().unwrap();
+    let api = settings_api(dir.path()).await;
+    let source = |id: &str| PassiveEffectSourceInput {
+        id: id.into(),
+        name: format!("Source {id}"),
+        enabled: true,
+        effects: vec![PassiveEffectInput {
+            kind: PassiveEffectKind::ReloadSpeed,
+            magnitude_percent: f64::MAX,
+        }],
+    };
+    let error = api
+        .settings_update(SettingsPatch {
+            passive_effect_sources: Some(vec![source("a"), source("b")]),
+            ..SettingsPatch::default()
+        })
+        .await
+        .expect_err("an unrepresentable total is refused");
+    assert!(
+        error.to_string().contains("too large to apply"),
+        "unexpected error: {error}"
+    );
+
+    let stored = read_settings(&dir.path().join("data"));
+    assert!(stored["passive_effect_sources"]
+        .as_array()
+        .is_none_or(|sources| sources.is_empty()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_update_validation_ladder_refuses_the_backend_way() {
     let dir = tempfile::tempdir().unwrap();
     let api = settings_api(dir.path()).await;

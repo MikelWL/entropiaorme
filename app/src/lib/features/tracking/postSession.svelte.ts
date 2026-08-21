@@ -83,6 +83,7 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 	async function stop(showArmour: boolean): Promise<void> {
 		stopping = true;
 		const wasActive = options.isSessionActive();
+		let stopped = false;
 		try {
 			// Refresh to the latest totals before capturing the final readout;
 			// the session is still active here, so this reads the live totals
@@ -91,12 +92,20 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 			lastSessionStats = wasActive ? options.readStats() : null;
 
 			const result = await options.stopTracking();
+			stopped = true;
 			lastSessionId = result.session_id;
 			await options.refresh();
 		} catch {
 			/* ignore */
 		}
 		stopping = false;
+
+		// A refused stop leaves the session running; the armour workflow belongs
+		// to a session that ended, so the user retries the stop instead.
+		if (wasActive && !stopped) {
+			clear();
+			return;
+		}
 
 		// Recording cost is opt-in via the prompt's Record branch. An opted-out
 		// session still needs its whole-session setup captured on Later.

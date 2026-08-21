@@ -42,7 +42,11 @@ pub fn reload_speed_percent(sources: &[PassiveEffectSource]) -> f64 {
 /// duration; the settings boundary prevents new totals at or below -100%.
 pub fn effective_reload_seconds(base_seconds: f64, sources: &[PassiveEffectSource]) -> f64 {
     let multiplier = 1.0 + reload_speed_percent(sources) / 100.0;
-    if !base_seconds.is_finite() || base_seconds < 0.0 || multiplier <= 0.0 {
+    if !base_seconds.is_finite()
+        || base_seconds < 0.0
+        || !multiplier.is_finite()
+        || multiplier <= 0.0
+    {
         return base_seconds;
     }
     base_seconds / multiplier
@@ -68,6 +72,15 @@ mod tests {
     fn reload_speed_is_a_throughput_multiplier() {
         let effective = effective_reload_seconds(2.5, &[source(true, 14.0)]);
         assert!((effective - 2.192_982_456).abs() < 0.000_000_001);
+    }
+
+    #[test]
+    fn an_unrepresentable_total_falls_back_to_the_catalogue_duration() {
+        // Each magnitude is finite, but their sum is not. Dividing by an
+        // infinite multiplier would erase the interval entirely.
+        let sources = [source(true, f64::MAX), source(true, f64::MAX)];
+        assert!(!reload_speed_percent(&sources).is_finite());
+        assert_eq!(effective_reload_seconds(2.5, &sources), 2.5);
     }
 
     #[test]

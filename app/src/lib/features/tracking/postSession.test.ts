@@ -111,6 +111,22 @@ describe('the stop sequence', () => {
 		expect(flow.lastSessionStats).toBeNull();
 	});
 
+	it('does not open the armour workflow when the stop was refused', async () => {
+		// The session is still running, so there is no ended session to record
+		// against; the user retries the stop instead of meeting an armour prompt.
+		const { flow, options } = makeFlow({
+			stopTracking: vi.fn(async () => {
+				throw new Error('backend away');
+			}),
+			captureArmourSetupOnLater: vi.fn(() => true),
+		});
+
+		await flow.requestStop();
+		expect(options.showArmourPopup).not.toHaveBeenCalled();
+		expect(flow.lastSessionId).toBeNull();
+		expect(flow.lastSessionStats).toBeNull();
+	});
+
 	it('flags stopping for the duration of the stop', async () => {
 		let resolveStop!: (value: { session_id: string }) => void;
 		const { flow } = makeFlow({

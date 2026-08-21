@@ -553,6 +553,11 @@ fn validate_passive_effect_sources(sources: &[PassiveEffectSourceInput]) -> Resu
             }
         }
     }
+    if !enabled_reload_speed.is_finite() {
+        return Err(ApiError::bad_request(
+            "Combined reload speed is too large to apply",
+        ));
+    }
     if enabled_reload_speed <= -100.0 {
         return Err(ApiError::bad_request(
             "Combined reload speed must be greater than -100%",

@@ -12,7 +12,7 @@
 	let assigning = $state(false);
 	let error = $state<string | null>(null);
 
-	async function choose(loadoutId: string) {
+	async function choose(select: HTMLSelectElement, loadoutId: string) {
 		if (!protection || assigning) return;
 		assigning = true;
 		error = null;
@@ -21,6 +21,9 @@
 			onassigned(loadoutId);
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : 'Armour setup could not be saved';
+			// Re-selecting the same option fires no change event, so a failure
+			// that left the choice in place would be unretryable.
+			select.value = '';
 		} finally {
 			assigning = false;
 		}
@@ -35,9 +38,11 @@
 	<div class="flex items-center gap-2">
 		<select
 			class="min-w-64 rounded-[4px] border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none focus:border-accent/60"
+			aria-label="Armour setup"
 			disabled={assigning}
 			onchange={(event) => {
-				if (event.currentTarget.value) void choose(event.currentTarget.value);
+				const select = event.currentTarget;
+				if (select.value) void choose(select, select.value);
 			}}
 		>
 			<option value="">Choose armour setup</option>

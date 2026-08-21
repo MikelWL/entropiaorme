@@ -213,7 +213,7 @@
 	{#if model.removalTarget}
 		<div class="space-y-5">
 			<p class="text-sm text-text-secondary">
-				Remove <span class="font-medium text-text">{model.removalTarget.name}</span> from the available armour choices? Recorded sessions and measurements keep their historical identity.
+				Remove <span class="font-medium text-text">{model.removalTarget.name}</span> from the available choices? Recorded sessions and measurements keep their historical identity.
 			</p>
 			{#if model.removalTarget.kind === 'set'}
 				<p class="border-l-2 border-warning pl-3 text-xs text-text-secondary">A set can only be removed after every loadout using it has been edited or removed.</p>

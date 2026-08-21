@@ -540,12 +540,12 @@
 			<div class="flex items-center gap-2 shrink-0">
 				<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 				<button
-					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
+					class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all
 						{armourSessionId && costAction.enabled
 							? armourCostOpen
-								? 'bg-accent/20 border-accent/40 text-accent'
-								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
-							: 'bg-white/5 border-white/10 text-white/20 cursor-not-allowed'}"
+								? 'cursor-pointer bg-accent/20 border-accent/40 text-accent'
+								: 'cursor-pointer bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
+							: 'cursor-not-allowed bg-white/5 border-white/10 text-white/20'}"
 					disabled={!armourSessionId || !costAction.enabled}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}
@@ -635,10 +635,12 @@
 					<span class="text-white/40 shrink-0">{@html ICON_ARMOUR}</span>
 					<button
 						bind:this={postSessionArmourButton}
-						class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all cursor-pointer
-							{armourCostOpen
-								? 'bg-accent/20 border-accent/40 text-accent'
-								: 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'}"
+						class="px-2 py-0.5 rounded-[4px] border text-[9px] font-medium transition-all
+							{!costAction.enabled
+								? 'cursor-not-allowed bg-white/5 border-white/10 text-white/20'
+								: armourCostOpen
+									? 'cursor-pointer bg-accent/20 border-accent/40 text-accent'
+									: 'cursor-pointer bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'}"
 						aria-haspopup="dialog"
 						aria-expanded={armourCostOpen}
 						onclick={onArmourCostToggle}

@@ -1260,7 +1260,7 @@ fn read_eligible_evidence(
                 d.damage, d.deflected, \
                 sp.armour_set_id, sp.plate_set_id \
          FROM protection_defence_events d \
-         JOIN tracking_sessions s ON s.id = d.session_id \
+         LEFT JOIN tracking_sessions s ON s.id = d.session_id \
          LEFT JOIN session_protection_intervals sp ON sp.interval_id = d.protection_interval_id \
          WHERE d.id > ?1 AND d.id <= ?2 AND ({layer_filter}) AND {claim_filter} \
          ORDER BY d.id"

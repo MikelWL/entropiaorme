@@ -9,7 +9,7 @@ Independent adversarial review of the demo tracking snapshot after active sessio
 - `"trackProtectionCosts":false`
 - `"trackProtectionBySegment":false`
 
-They appear after `endOfSessionArmourReminderEnabled`, the first available position from the typed snapshot field order because the demo has no session name or definition. Removing these two leaves reproduces the previous golden exactly. No existing value, count, ordering, or nested payload changes.
+They appear after `endOfSessionArmourReminderEnabled`, the first available position from the typed snapshot field order because the demo has no session name or definition. Removing these two fields reproduces the previous golden exactly. No existing value, count, ordering, or nested payload changes.
 
 ## Findings
 

@@ -48,13 +48,27 @@ describe('persistent effects', () => {
 		]);
 	});
 
-	it('does not save unnamed or invalid combined sources', async () => {
+	it('does not save an unnamed source', async () => {
 		render(EffectsTab, { props: { sources: [] } });
 		await fireEvent.click(screen.getByText('Add effect'));
 
 		const save = screen.getByText('Save effects') as HTMLButtonElement;
 		expect(save.disabled).toBe(true);
 		expect(screen.getByText(/Name every source/)).toBeTruthy();
+		expect(api.updateSettings).not.toHaveBeenCalled();
+	});
+
+	it('does not save a named source at the combined reload-speed limit', async () => {
+		// A total of -100% would leave no reload interval at all, so the
+		// boundary itself is refused rather than merely everything past it.
+		render(EffectsTab, { props: { sources: [] } });
+		await fireEvent.click(screen.getByText('Add effect'));
+		await fireEvent.input(screen.getByPlaceholderText('Ares Ring, Perfected'), {
+			target: { value: 'Broken Ring' },
+		});
+		await fireEvent.input(screen.getByRole('spinbutton'), { target: { value: '-100' } });
+
+		expect((screen.getByText('Save effects') as HTMLButtonElement).disabled).toBe(true);
 		expect(api.updateSettings).not.toHaveBeenCalled();
 	});
 });

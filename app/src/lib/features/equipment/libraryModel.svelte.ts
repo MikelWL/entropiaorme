@@ -200,6 +200,7 @@ export function createLibraryModel() {
 					...equipmentDemoTrifecta,
 					presets: equipmentDemoTrifecta.presets.map((p) => ({ ...p })),
 				};
+				passiveEffectSources = [];
 				detailCache = Object.fromEntries(
 					Object.entries(equipmentDemoDetails).map(([k, v]) => [k, { ...v }]),
 				);
