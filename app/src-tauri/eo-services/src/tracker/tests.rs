@@ -1514,7 +1514,7 @@ fn healing_cost_requires_compatible_intent_and_respects_cooldown() {
 }
 
 #[test]
-fn effective_reload_accepts_the_back_to_back_heal_observed_during_dogfooding() {
+fn effective_reload_accepts_back_to_back_heals_within_the_base_interval() {
     let rig = rig();
     let tracker = rig.tracker(Providers::default());
     let session = rig.wait(tracker.start_session()).unwrap();
