@@ -1335,10 +1335,11 @@ mod tests {
         // + manual hand-in's 2 raw-clump tables and 5 source, journal, and
         // waiting indexes + canonical quest rewards' 3 attribution,
         // reversal, and cooldown tables with 3 indexes, plus 2 provenance
-        // indexes on the rebuilt movement ledger = 76 tables, 98 indexes,
-        // 10 triggers.
-        assert_eq!(count("table").await, 76);
-        assert_eq!(count("index").await, 98);
+        // indexes on the rebuilt movement ledger + healing attribution's 3
+        // activation, effect-window, and output tables with 3 session indexes
+        // = 79 tables, 101 indexes, 10 triggers.
+        assert_eq!(count("table").await, 79);
+        assert_eq!(count("index").await, 101);
         assert_eq!(count("trigger").await, 10);
 
         let version = db
