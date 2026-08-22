@@ -456,10 +456,6 @@ export function createHuntingModel() {
 	};
 }
 
-/** Value observed reward items at current direct item markup. A missing or
- * confidence-excluded market observation leaves that item's TT unchanged;
- * the generic loot projection's Nanocube substitution is deliberately not
- * used for quest rewards. */
 /** Universal Ammo is liquid PED in item form: its exit is face value, never a
  * market sale, so it is neither projected nor floored to the nanocube proxy.
  * (Shrapnel's own carve-out is `effectiveItemMarkup`'s 101% conversion.) */
@@ -467,6 +463,10 @@ export function isTradeableRewardItem(itemName: string): boolean {
 	return itemName.trim().toLocaleLowerCase() !== 'universal ammo';
 }
 
+/** Value observed reward items at current direct item markup. A missing or
+ * confidence-excluded market observation leaves that item's TT unchanged;
+ * the generic loot projection's Nanocube substitution is deliberately not
+ * used for quest rewards. */
 export function projectRewardItems(
 	items: HuntingActivityComparison['rewardItems'],
 	market: MarketHarvestData | null,
@@ -508,9 +508,10 @@ export function projectRewardValue(
 	return totalTt - stockTt + projected;
 }
 
-/** Fold several scopes' rewards into one. A single distinct treatment carries
- * through; more than one becomes `mixed` rather than claiming a provenance
- * the aggregate does not have. */
+/** Fold several scopes' rewards into one. Every distinct treatment is
+ * retained rather than collapsed to a single label, so the disclosure can
+ * name each one behind the figure instead of the figure standing for a
+ * classification the aggregate cannot claim. */
 export function mergeRewardContexts(contexts: RewardContext[]): RewardContext {
 	const treatments = new Set(contexts.flatMap((context) => context.treatments));
 	const valued = contexts.filter((context) => context.rewardMuPed !== null);
