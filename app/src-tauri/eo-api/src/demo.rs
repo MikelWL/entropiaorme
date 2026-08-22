@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use eo_services::analytics::AnalyticsService;
+use eo_services::chatlog_time::ChatLogClock;
 use eo_services::clock::Clock;
 use eo_services::config_service::{AppConfig, TrifectaPresetConfig};
 use eo_services::db::Db;
@@ -185,8 +186,14 @@ impl DemoState {
         let db = Db::open(&work).await?;
         let analytics = AnalyticsService::new(db.clone(), clock.clone());
         let bus = Arc::new(EventBus::new());
-        let tracker =
-            HuntTracker::new(bus, db.clone(), clock.clone(), Providers::default()).await?;
+        let tracker = HuntTracker::new(
+            bus,
+            db.clone(),
+            clock.clone(),
+            ChatLogClock::host_local(),
+            Providers::default(),
+        )
+        .await?;
         let fixture: Fixture = serde_json::from_str(MID_HUNT_FIXTURE)?;
         Ok(DemoState {
             db,

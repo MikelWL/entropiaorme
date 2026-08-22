@@ -1126,7 +1126,7 @@ impl TrackerActor {
         // timestamp falls back to the injected clock.
         let occurred_ts = match &payload.timestamp {
             None => instant_to_epoch(resolve_local(self.clock.now())),
-            Some(text) => match super::time::parse_timestamp_instant(text) {
+            Some(text) => match super::time::parse_timestamp_instant(&self.chatlog_clock, text) {
                 Some(instant) => instant_to_epoch(instant),
                 None => match text.trim().parse::<f64>() {
                     Ok(numeric) => numeric,

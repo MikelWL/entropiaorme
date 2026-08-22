@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
+use eo_services::chatlog_time::ChatLogClock;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::MockClock;
 use eo_services::db::Db;
@@ -169,7 +170,7 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
 
     let bus = Arc::new(EventBus::new());
     let clock = Arc::new(MockClock::new(Some(plan.start), 0.0));
-    let watcher = ChatlogWatcher::new(bus.clone(), &chatlog, None);
+    let watcher = ChatlogWatcher::new(bus.clone(), &chatlog, None, ChatLogClock::host_local());
     watcher.start();
 
     // The recorder installs before the session starts, so the start
@@ -182,6 +183,7 @@ fn replay_against_goldens(family: &str, name: &str, player_name: &str) {
             bus.clone(),
             db.clone(),
             clock.clone(),
+            ChatLogClock::host_local(),
             Providers {
                 player_name: player_name.to_string(),
                 ..Providers::default()

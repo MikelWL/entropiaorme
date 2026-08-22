@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::bus_events::BusEvent;
+use crate::chatlog_time::ChatLogClock;
 use crate::clock::Clock;
 use crate::db::{Db, DbError};
 use crate::event_bus::{EventBus, Registration, Topic};
@@ -130,6 +131,10 @@ pub(super) struct TrackerActor {
     pub(super) bus: Arc<EventBus>,
     pub(super) db: Db,
     pub(super) clock: Arc<dyn Clock>,
+    /// The base chat-log readings resolve against; shared with the
+    /// watcher that publishes them, so the offset it derives from the
+    /// live tail is the one the payloads resolve through.
+    pub(super) chatlog_clock: ChatLogClock,
     pub(super) providers: Providers,
     pub(super) session: SessionState,
     pub(super) loot_blacklist: BTreeSet<String>,
@@ -161,6 +166,7 @@ impl TrackerActor {
         bus: Arc<EventBus>,
         db: Db,
         clock: Arc<dyn Clock>,
+        chatlog_clock: ChatLogClock,
         providers: Providers,
         sender: mpsc::UnboundedSender<TrackerMsg>,
         mut inbox: mpsc::UnboundedReceiver<TrackerMsg>,
@@ -171,6 +177,7 @@ impl TrackerActor {
             bus,
             db,
             clock,
+            chatlog_clock,
             providers,
             session: SessionState::Idle,
             loot_blacklist: BTreeSet::new(),

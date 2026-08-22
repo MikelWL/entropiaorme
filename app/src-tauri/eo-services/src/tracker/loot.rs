@@ -167,6 +167,7 @@ impl TrackerActor {
                 harvest_tool,
                 harvest_guardrail,
                 clock,
+                chatlog_clock,
                 ..
             } = &mut *self;
             let Some(active) = session.active_mut() else {
@@ -177,7 +178,7 @@ impl TrackerActor {
             let now = group
                 .timestamp
                 .as_deref()
-                .and_then(parse_timestamp_instant)
+                .and_then(|raw| parse_timestamp_instant(chatlog_clock, raw))
                 .unwrap_or_else(|| resolve_local(clock.now()));
             let now_epoch = instant_to_epoch(now);
 
@@ -401,6 +402,7 @@ impl TrackerActor {
                 session,
                 providers,
                 clock,
+                chatlog_clock,
                 ..
             } = &mut *self;
             let Some(active) = session.active_mut() else {
@@ -426,7 +428,7 @@ impl TrackerActor {
             };
             let value_ped = raw_value;
             let is_hof = matches!(event_type.as_str(), "hof_kill" | "hof_item");
-            let ts = parse_timestamp_instant(raw_ts)
+            let ts = parse_timestamp_instant(chatlog_clock, raw_ts)
                 .map(instant_to_epoch)
                 .unwrap_or_else(|| instant_to_epoch(resolve_local(clock.now())));
 
