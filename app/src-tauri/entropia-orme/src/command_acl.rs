@@ -139,6 +139,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "protection_loadout_update",
     "protection_observation_confirm",
     "protection_overview",
+    "protection_pending_attribution",
     "protection_repair_confirm",
     "protection_select",
     "protection_set_archive",

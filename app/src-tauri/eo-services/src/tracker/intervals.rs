@@ -144,6 +144,14 @@ pub struct IntervalSpec {
     /// persisted default. Session-start replay uses false; a live user
     /// selection uses true.
     pub persist_protection_default: bool,
+    /// Whether the same transaction back-stamps the session's defence
+    /// evidence that no settled cost has claimed yet onto this
+    /// interval. A whole-session declaration made part-way through a
+    /// session sets this: the user is naming what they have been
+    /// wearing all along, so the hits already recorded belong to it.
+    /// Never set once a cost has settled, because the events a
+    /// superseded declaration paid for are not the new one's to take.
+    pub adopts_unsettled_defence: bool,
     /// What this open seals first; same-kind by default, which is the
     /// rule for every kind that admits one at a time.
     pub closes: CloseScope,
@@ -158,6 +166,7 @@ impl IntervalSpec {
             magnitude: None,
             protection: None,
             persist_protection_default: false,
+            adopts_unsettled_defence: false,
             closes: CloseScope::SameKind,
         }
     }
@@ -180,6 +189,13 @@ impl IntervalSpec {
     pub fn protection(mut self, selection: ProtectionSelection, persist_default: bool) -> Self {
         self.protection = Some(selection);
         self.persist_protection_default = persist_default;
+        self
+    }
+
+    /// Back-stamp the session's unsettled defence evidence onto this
+    /// interval; see [`IntervalSpec::adopts_unsettled_defence`].
+    pub fn adopting_unsettled_defence(mut self) -> Self {
+        self.adopts_unsettled_defence = true;
         self
     }
 
@@ -368,6 +384,7 @@ impl IntervalState {
             magnitude,
             protection,
             persist_protection_default,
+            adopts_unsettled_defence,
             closes,
         } = spec;
         let closing: Vec<i64> = self
@@ -440,6 +457,16 @@ impl IntervalState {
                             rusqlite::params![protection.loadout_id, now],
                         )?;
                     }
+                }
+                if adopts_unsettled_defence {
+                    tx.execute(
+                        "UPDATE protection_defence_events \
+                         SET protection_interval_id = ?1 \
+                         WHERE session_id = ?2 \
+                           AND NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                           WHERE ce.defence_event_id = protection_defence_events.id)",
+                        rusqlite::params![interval_id, session],
+                    )?;
                 }
                 tx.execute(
                     "INSERT INTO session_contexts (session_id, created_at) VALUES (?, ?)",

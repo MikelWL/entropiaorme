@@ -51,9 +51,10 @@ use crate::market::{
     MarketPastePreview, MarketUnitPriceResult,
 };
 use crate::protection::{
-    ProtectionLoadoutInput, ProtectionLoadoutUpdateInput, ProtectionObservationInput,
-    ProtectionObservationOutcome, ProtectionOverview, ProtectionRepairInput,
-    ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
+    PendingProtectionSession, ProtectionLoadoutInput, ProtectionLoadoutUpdateInput,
+    ProtectionObservationInput, ProtectionObservationOutcome, ProtectionOverview,
+    ProtectionRepairInput, ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput,
+    ProtectionSetUpdateInput,
 };
 use crate::quests::{
     Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput, QuestHandInState, QuestInput,
@@ -221,6 +222,11 @@ pub fn manifest() -> Vec<CommandSpec> {
                 schema: schema(schema_for!(i64)),
             }],
             returns: Some(schema(schema_for!(ProtectionOverview))),
+        },
+        CommandSpec {
+            name: "protection_pending_attribution",
+            args: vec![],
+            returns: Some(schema(schema_for!(Vec<PendingProtectionSession>))),
         },
         CommandSpec {
             name: "protection_assign_session_loadout",

@@ -49,9 +49,10 @@ use eo_api::market::{
     MarketPastePreview, MarketUnitPriceResult,
 };
 use eo_api::protection::{
-    ProtectionLoadoutInput, ProtectionLoadoutUpdateInput, ProtectionObservationInput,
-    ProtectionObservationOutcome, ProtectionOverview, ProtectionRepairInput,
-    ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput, ProtectionSetUpdateInput,
+    PendingProtectionSession, ProtectionLoadoutInput, ProtectionLoadoutUpdateInput,
+    ProtectionObservationInput, ProtectionObservationOutcome, ProtectionOverview,
+    ProtectionRepairInput, ProtectionRepairOutcome, ProtectionScanResult, ProtectionSetInput,
+    ProtectionSetUpdateInput,
 };
 use eo_api::quests::{
     Quest, QuestAnalyticsRow, QuestFamily, QuestFamilyInput, QuestHandInState, QuestInput,
@@ -225,6 +226,13 @@ pub async fn protection_assign_session_loadout(
     facade(&app)?
         .protection_assign_session_loadout(&session_id, loadout_id)
         .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn protection_pending_attribution(
+    app: tauri::AppHandle,
+) -> Result<Vec<PendingProtectionSession>, ApiError> {
+    facade(&app)?.protection_pending_attribution().await
 }
 
 #[tauri::command(rename_all = "snake_case")]

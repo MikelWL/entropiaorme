@@ -1935,6 +1935,19 @@ export interface PendingHarvest {
 }
 
 /**
+ * One session whose defence evidence has no setup named for it yet, so
+ * no cost naming an armour or plate set can settle it.
+ */
+export interface PendingProtectionSession {
+	sessionId: string;
+	name: string | null;
+	startedAt: number;
+	/** Absent while the session is still running. */
+	endedAt: number | null;
+	defenceEventCount: number;
+}
+
+/**
  * One palette entry: a pin *type* scoped to a `(planet, map view)` preset.
  * `category` is `generic` or `special`; the only special `kind` so far is
  * `tree`, which carries a `cooldownColour`. `colour` is the generic colour or
@@ -3289,6 +3302,10 @@ export async function protectionLoadoutArchive(loadoutId: number): Promise<Prote
 
 export async function protectionSelect(loadoutId: number): Promise<ProtectionOverview> {
 	return invokeCommand('protection_select', { loadout_id: loadoutId });
+}
+
+export async function protectionPendingAttribution(): Promise<PendingProtectionSession[]> {
+	return invokeCommand('protection_pending_attribution', {});
 }
 
 export async function protectionAssignSessionLoadout(sessionId: string, loadoutId: number): Promise<ProtectionOverview> {

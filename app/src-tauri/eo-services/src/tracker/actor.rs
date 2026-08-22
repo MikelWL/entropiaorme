@@ -90,6 +90,11 @@ pub(super) enum TrackerMsg {
         selection: ProtectionSelection,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
+    DeclareWholeSessionProtection {
+        selection: ProtectionSelection,
+        reply: oneshot::Sender<Result<(), TrackerCommandError>>,
+    },
+    ActiveSessionId(oneshot::Sender<Option<String>>),
     ReleaseMob(oneshot::Sender<Option<String>>),
     PrimeDemo {
         session: TrackingSession,
@@ -243,6 +248,16 @@ impl TrackerActor {
             }
             TrackerMsg::SetProtection { selection, reply } => {
                 let _ = reply.send(self.set_protection(selection).await);
+            }
+            TrackerMsg::DeclareWholeSessionProtection { selection, reply } => {
+                let _ = reply.send(self.declare_whole_session_protection(selection).await);
+            }
+            TrackerMsg::ActiveSessionId(reply) => {
+                let _ = reply.send(
+                    self.session
+                        .active()
+                        .map(|active| active.session.id.clone()),
+                );
             }
             TrackerMsg::SetDeclaredMob {
                 name,
