@@ -6,6 +6,7 @@
 
 use eo_services::protection::{
     ObservationOutcome as ServiceObservationOutcome, ObservationSource as ServiceObservationSource,
+    PendingProtectionSession as ServicePendingSession,
     ProtectionCostAllocation as ServiceCostAllocation, ProtectionCostWindow as ServiceCostWindow,
     ProtectionEconomyKind as ServiceEconomyKind, ProtectionError,
     ProtectionLoadout as ServiceLoadout, ProtectionObservation as ServiceObservation,
@@ -18,6 +19,31 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{Api, ApiError, Nullable};
+
+/// One session whose defence evidence has no setup named for it yet, so
+/// no cost naming an armour or plate set can settle it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingProtectionSession {
+    pub session_id: String,
+    pub name: Nullable<String>,
+    pub started_at: f64,
+    /// Absent while the session is still running.
+    pub ended_at: Nullable<f64>,
+    pub defence_event_count: i64,
+}
+
+impl From<ServicePendingSession> for PendingProtectionSession {
+    fn from(value: ServicePendingSession) -> Self {
+        Self {
+            session_id: value.session_id,
+            name: value.name.into(),
+            started_at: value.started_at,
+            ended_at: value.ended_at.into(),
+            defence_event_count: value.defence_event_count,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -410,10 +436,13 @@ impl Api {
                         .await
                         .map_err(protection_error)?;
                 }
-                Err(eo_services::tracker::TrackerCommandError::ProtectionBySegmentDisabled) => {
-                    return Err(ApiError::conflict(
-                        "Armour costs are not tracked by segment for this session",
-                    ));
+                Err(
+                    error @ (eo_services::tracker::TrackerCommandError::ProtectionBySegmentDisabled
+                    | eo_services::tracker::TrackerCommandError::ProtectionBySegmentEnabled
+                    | eo_services::tracker::TrackerCommandError::ProtectionCostsDisabled
+                    | eo_services::tracker::TrackerCommandError::SessionNoLongerActive),
+                ) => {
+                    return Err(ApiError::conflict(error.to_string()));
                 }
                 Err(eo_services::tracker::TrackerCommandError::Persistence) => {
                     return Err(ApiError::invalid_state(
@@ -430,16 +459,55 @@ impl Api {
         self.protection_overview().await
     }
 
+    /// Name the setup worn for one session that opted out of
+    /// per-segment attribution.
+    ///
+    /// The running session is routed through the tracker, which owns
+    /// the live interval and context state: writing that session's
+    /// intervals from here would leave the actor stamping incoming hits
+    /// against a picture the database no longer holds. A session that
+    /// has already ended has no live state to keep in step, so the
+    /// service writes it directly.
     pub async fn protection_assign_session_loadout(
         &self,
         session_id: &str,
         loadout_id: i64,
     ) -> Result<ProtectionOverview, ApiError> {
-        self.protection
-            .assign_session_loadout(session_id, loadout_id)
-            .await
-            .map_err(protection_error)?;
+        if self.tracker.active_session_id().await.as_deref() == Some(session_id) {
+            let selection = self
+                .protection
+                .selection(loadout_id)
+                .await
+                .map_err(protection_error)?;
+            self.tracker
+                .declare_whole_session_protection(session_id, selection)
+                .await
+                .map_err(|error| match error {
+                    eo_services::tracker::TrackerCommandError::Persistence => {
+                        ApiError::invalid_state("Armour setup could not be saved")
+                    }
+                    other => ApiError::conflict(other.to_string()),
+                })?;
+        } else {
+            self.protection
+                .assign_session_loadout(session_id, loadout_id)
+                .await
+                .map_err(protection_error)?;
+        }
         self.protection_overview().await
+    }
+
+    pub async fn protection_pending_attribution(
+        &self,
+    ) -> Result<Vec<PendingProtectionSession>, ApiError> {
+        Ok(self
+            .protection
+            .pending_attribution()
+            .await
+            .map_err(protection_error)?
+            .into_iter()
+            .map(PendingProtectionSession::from)
+            .collect())
     }
 
     pub async fn protection_observation_confirm(

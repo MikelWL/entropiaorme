@@ -201,6 +201,26 @@ pub struct ObservationOutcome {
     pub cost_window: Option<ProtectionCostWindow>,
 }
 
+/// How many sessions the pending-attribution read offers at once. A
+/// backlog longer than this is a catalogue, not a prompt; the oldest
+/// drop off rather than turning the recording surface into a list to
+/// scroll.
+const PENDING_ATTRIBUTION_LIMIT: i64 = 12;
+
+/// One session whose defence evidence is not yet attributed to a setup,
+/// and so cannot be settled by any cost that names one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingProtectionSession {
+    pub session_id: String,
+    /// The session's own name, else its definition's; absent for a
+    /// session recorded under neither.
+    pub name: Option<String>,
+    pub started_at: f64,
+    /// Absent while the session is still running.
+    pub ended_at: Option<f64>,
+    pub defence_event_count: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepairOutcome {
     pub cost_window: ProtectionCostWindow,
@@ -571,6 +591,54 @@ impl ProtectionService {
             .map_err(ProtectionError::from)
     }
 
+    /// The sessions still waiting to be told which setup was worn.
+    ///
+    /// A session that opted out of per-segment attribution carries its
+    /// defence evidence unattributed until a setup is named for it, and
+    /// unattributed evidence cannot be settled by any cost that names an
+    /// armour or plate set: the layer filter has nothing to match. That
+    /// is what leaves a postponed session stranded, and it is invisible
+    /// unless the recording surface says so, hence this read.
+    ///
+    /// The running session appears here like any other, because naming
+    /// its setup is no longer something that waits for it to end.
+    pub async fn pending_attribution(
+        &self,
+    ) -> Result<Vec<PendingProtectionSession>, ProtectionError> {
+        self.db
+            .with_reader(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT s.id, COALESCE(s.session_name, d.name), s.started_at, s.ended_at, \
+                            COUNT(e.id) \
+                     FROM tracking_sessions s \
+                     LEFT JOIN session_definitions d ON d.id = s.definition_id \
+                     JOIN protection_defence_events e ON e.session_id = s.id \
+                     WHERE s.track_protection_costs != 0 \
+                       AND s.track_protection_by_segment = 0 \
+                       AND e.protection_interval_id IS NULL \
+                       AND NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                       WHERE ce.defence_event_id = e.id) \
+                     GROUP BY s.id \
+                     ORDER BY s.started_at DESC \
+                     LIMIT ?1",
+                )?;
+                let rows = stmt
+                    .query_map(rusqlite::params![PENDING_ATTRIBUTION_LIMIT], |row| {
+                        Ok(PendingProtectionSession {
+                            session_id: row.get(0)?,
+                            name: row.get(1)?,
+                            started_at: row.get(2)?,
+                            ended_at: row.get(3)?,
+                            defence_event_count: row.get(4)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await
+            .map_err(ProtectionError::from)
+    }
+
     /// Attach one whole-session protection setup after an opted-out session
     /// ends. Raw event contexts remain untouched, but allocation deliberately
     /// collapses them to session grain through the stamped session policy.
@@ -663,7 +731,21 @@ impl ProtectionService {
                     tx.commit()?;
                     return Ok(true);
                 }
-                if claimed {
+                // Settled evidence is no longer a blanket refusal: the
+                // back-stamp below takes only what no cost has claimed, so
+                // naming a setup can no longer move what one bought. What
+                // must still hold is that there is something left to
+                // attribute, or the declaration would record an answer
+                // about no evidence at all.
+                let unsettled: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM protection_defence_events d \
+                     WHERE d.session_id = ?1 \
+                       AND NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                       WHERE ce.defence_event_id = d.id))",
+                    [&session_id],
+                    |row| row.get(0),
+                )?;
+                if !unsettled {
                     return Ok(false);
                 }
 
@@ -700,9 +782,14 @@ impl ProtectionService {
                         stored.plates.as_ref().and_then(|set| set.markup_percent),
                     ],
                 )?;
+                // Only evidence no settled cost has claimed. A window that
+                // already paid for a hit named the setup standing then, and
+                // re-pointing it would silently move what that cost bought.
                 tx.execute(
                     "UPDATE protection_defence_events SET protection_interval_id = ?1 \
-                     WHERE session_id = ?2",
+                     WHERE session_id = ?2 \
+                       AND NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                       WHERE ce.defence_event_id = protection_defence_events.id)",
                     rusqlite::params![interval_id, session_id],
                 )?;
                 tx.commit()?;
@@ -711,7 +798,9 @@ impl ProtectionService {
             .await?
             .then_some(())
             .ok_or(ProtectionError::Conflict(
-                "Whole-session armour can only be assigned to a completed session with armour costs enabled and segment attribution disabled, before its evidence is settled",
+                "That session cannot take a whole-session armour setup: it needs armour costs \
+                 enabled, per-segment attribution off, and defence evidence no recorded cost has \
+                 settled yet",
             ))?;
         Ok(selection)
     }
@@ -2019,6 +2108,172 @@ mod tests {
         assert_eq!(outcome.cost_window.allocations.len(), 2);
         assert!((outcome.cost_window.allocations[0].cost_ped - 1.0).abs() < 1e-9);
         assert!((outcome.cost_window.allocations[1].cost_ped - 2.0).abs() < 1e-9);
+    }
+
+    /// A session that opted out of per-segment attribution carries its
+    /// evidence unattributed until a setup is named, and unattributed
+    /// evidence cannot be settled by any cost that names a set. The
+    /// recording surface has to be able to say which sessions are in
+    /// that state, or a postponed one is stranded silently.
+    #[tokio::test]
+    async fn pending_attribution_names_the_sessions_still_owed_a_setup() {
+        let (_dir, db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Hyperion",
+                ProtectionEconomyKind::Unlimited,
+                None,
+            )
+            .await
+            .expect("create set");
+        let loadout = service
+            .create_loadout("Hyperion + 5B", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO session_definitions (id, name) VALUES (3, 'Caly AI Dailies')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, definition_id, \
+                  track_protection_costs, track_protection_by_segment) \
+                 VALUES ('postponed', 10, 20, 0, 3, 1, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, is_active, track_protection_costs, \
+                  track_protection_by_segment) \
+                 VALUES ('running', 30, 1, 1, 0)",
+                [],
+            )?;
+            // By segment: declared through the per-segment route, never here.
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, track_protection_costs, \
+                  track_protection_by_segment) \
+                 VALUES ('by-segment', 5, 8, 0, 1, 1)",
+                [],
+            )?;
+            for session in ["postponed", "running", "by-segment"] {
+                conn.execute(
+                    "INSERT INTO protection_defence_events \
+                     (session_id, damage, deflected) VALUES (?1, 80, 0)",
+                    rusqlite::params![session],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .expect("seed sessions");
+
+        let pending = service
+            .pending_attribution()
+            .await
+            .expect("read pending attribution");
+        let ids: Vec<&str> = pending.iter().map(|row| row.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["running", "postponed"], "newest first");
+        let postponed = &pending[1];
+        assert_eq!(postponed.name.as_deref(), Some("Caly AI Dailies"));
+        assert_eq!(postponed.ended_at, Some(20.0));
+        assert_eq!(postponed.defence_event_count, 1);
+        assert_eq!(pending[0].ended_at, None, "the running session is running");
+
+        service
+            .assign_session_loadout("postponed", loadout.id)
+            .await
+            .expect("name the postponed session's setup");
+        let pending = service
+            .pending_attribution()
+            .await
+            .expect("read pending attribution");
+        let ids: Vec<&str> = pending.iter().map(|row| row.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["running"], "a named session stops being owed");
+    }
+
+    /// A window that already paid for a hit named the setup standing
+    /// then. Naming a different one later must not move what that cost
+    /// bought.
+    #[tokio::test]
+    async fn naming_a_setup_never_moves_evidence_a_cost_already_settled() {
+        let (_dir, db, _clock, service) = harness().await;
+        let set = service
+            .create_set(
+                ProtectionSetKind::Armour,
+                "Hyperion",
+                ProtectionEconomyKind::Unlimited,
+                None,
+            )
+            .await
+            .expect("create set");
+        let first = service
+            .create_loadout("Hyperion + 5B", Some(set.id), None)
+            .await
+            .expect("create loadout");
+        db.with_writer(|conn| {
+            conn.execute(
+                "INSERT INTO tracking_sessions \
+                 (id, started_at, ended_at, is_active, track_protection_costs, \
+                  track_protection_by_segment) \
+                 VALUES ('settled', 10, 20, 0, 1, 0)",
+                [],
+            )?;
+            // One hit a generic repair already paid for, one it did not.
+            conn.execute(
+                "INSERT INTO protection_defence_events \
+                 (session_id, damage, deflected) VALUES ('settled', 80, 0), ('settled', 40, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO protection_cost_windows \
+                 (kind, cost_ped, status, created_at) VALUES ('repair', 1.55, 'booked', 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO protection_cost_evidence (window_id, set_id, defence_event_id) \
+                 SELECT 1, NULL, MIN(id) FROM protection_defence_events",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("seed settled session");
+
+        service
+            .assign_session_loadout("settled", first.id)
+            .await
+            .expect("name the setup");
+
+        let (settled_attributed, unsettled_attributed): (i64, i64) = db
+            .with_reader(|conn| {
+                Ok(conn.query_row(
+                    "SELECT \
+                       SUM(CASE WHEN EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                             WHERE ce.defence_event_id = d.id) \
+                                 AND d.protection_interval_id IS NOT NULL \
+                                THEN 1 ELSE 0 END), \
+                       SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM protection_cost_evidence ce \
+                                                 WHERE ce.defence_event_id = d.id) \
+                                 AND d.protection_interval_id IS NOT NULL \
+                                THEN 1 ELSE 0 END) \
+                     FROM protection_defence_events d WHERE d.session_id = 'settled'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?)
+            })
+            .await
+            .expect("count attributed");
+        assert_eq!(
+            settled_attributed, 0,
+            "a hit a settled cost paid for keeps the attribution that cost was recorded against"
+        );
+        assert_eq!(
+            unsettled_attributed, 1,
+            "the hit still owed a cost is what the new setup takes"
+        );
     }
 
     #[tokio::test]

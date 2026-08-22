@@ -3,10 +3,16 @@
  * the user asking to stop and the post-session readout clearing.
  *
  * One prompt: when the end-of-session armour reminder is enabled, the stop
- * request does not stop: it arms a Record armour costs? decision and the actual stop
- * runs only on the Record/Later answer. Record opens the armour-cost popup after
- * the stop settles. For a session that opted out of segment declarations, Later
- * still captures the whole-session setup so a later reading has an identity to
+ * request does not stop: it arms a Record armour costs? decision.
+ *
+ * Record does not stop either. Armour cost is part of the session it was spent
+ * in, and a reading taken after the session ended reads like an afterthought
+ * about something already closed, so Record opens the armour-cost workflow
+ * against the session still running and leaves it running. The user stops when
+ * they have finished, answering Later that time.
+ *
+ * Later stops. For a session that opted out of segment declarations it still
+ * captures the whole-session setup, so a later reading has an identity to
  * reconcile against.
  *
  * The stop itself re-reads the snapshot BEFORE capturing the final stats
@@ -14,9 +20,10 @@
  * session's true totals, not a stale frame), then stops, then re-reads again
  * for the idle state.
  *
- * The readout (session id + final stats) clears once the stop settles. While
- * the armour workflow is open, or when its satellite failed to open, the clear
- * is deferred so the stopped-session anchor does not vanish underneath it.
+ * The readout (session id + final stats) clears once the stop settles, deferred
+ * while the armour workflow is open so the stopped-session anchor does not
+ * vanish underneath it. If that workflow fails to open, the readout clears
+ * anyway rather than standing with nothing over it and nothing to dismiss it.
  * (The post-stop quest-link prompt this flow used to run retired with the
  * curated link model: the quest lifecycle records its own stretches now, so
  * there is nothing left to ask after the stop.)
@@ -46,6 +53,8 @@ export interface PostSessionFlowOptions {
 	captureArmourSetupOnLater(): boolean;
 	/** Open the armour workflow and report only once the satellite is open. */
 	showArmourPopup(recordNow: boolean): Promise<boolean>;
+	/** Open the armour workflow against the session still running. */
+	showArmourWorkflowInSession(): Promise<boolean>;
 	/** A prompt or notice just became visible (hosts re-anchor satellites here). */
 	onPromptShown?(): void;
 }
@@ -61,7 +70,10 @@ export interface PostSessionFlow {
 	readonly stopping: boolean;
 	/** Ask to stop: arms the armour prompt when the reminder is on, else stops. */
 	requestStop(): Promise<void>;
-	/** Answer the protection prompt; Record opens the cost popup after the stop. */
+	/**
+	 * Answer the armour prompt. Record opens the cost workflow and leaves the
+	 * session running; Later stops it.
+	 */
 	decideArmourTrack(action: 'yes' | 'no'): Promise<void>;
 	/** The armour-cost popup closed: run a clear that was deferred on it. */
 	notifyArmourPopupClosed(): void;
@@ -116,9 +128,13 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 				clearPending = true;
 				return;
 			}
-			// Keep the stopped-session anchor and totals available when the
-			// satellite fails to open. The host surfaces the launch error and
-			// the user can retry instead of silently losing the workflow.
+			// The satellite did not open. The host surfaces its launch error;
+			// what must not happen is the readout staying up with no workflow
+			// over it and nothing left to dismiss it, which strands the overlay
+			// in a stopped state until the window is reloaded. Clearing costs
+			// nothing now that a session left unattributed is offered back
+			// through the pending-attribution route.
+			clear();
 			return;
 		}
 
@@ -149,7 +165,13 @@ export function createPostSessionFlow(options: PostSessionFlowOptions): PostSess
 		async decideArmourTrack(action: 'yes' | 'no') {
 			if (!awaitingArmourDecision) return;
 			awaitingArmourDecision = false;
-			await stop(action === 'yes');
+			if (action === 'yes') {
+				// Recording belongs to the session, so the session stays
+				// running and the stop is the user's next move, not this one's.
+				await options.showArmourWorkflowInSession();
+				return;
+			}
+			await stop(false);
 		},
 		notifyArmourPopupClosed() {
 			if (!clearPending) return;

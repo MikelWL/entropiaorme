@@ -42,6 +42,7 @@
 		mobInput = $bindable(null),
 		boostDraft = $bindable(''),
 		postSessionArmourButton = $bindable(null),
+		inSessionArmourButton = $bindable(null),
 		awaitingArmourTrackDecision = false,
 		attributionWarning = null,
 		onStart = noop,
@@ -88,6 +89,7 @@
 		mobInput?: HTMLInputElement | null;
 		boostDraft?: string;
 		postSessionArmourButton?: HTMLButtonElement | null;
+		inSessionArmourButton?: HTMLButtonElement | null;
 		awaitingArmourTrackDecision?: boolean;
 		attributionWarning?: string | null;
 		onStart?: () => void | Promise<void>;
@@ -546,6 +548,7 @@
 								? 'cursor-pointer bg-accent/20 border-accent/40 text-accent'
 								: 'cursor-pointer bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
 							: 'cursor-not-allowed bg-white/5 border-white/10 text-white/20'}"
+					bind:this={inSessionArmourButton}
 					disabled={!armourSessionId || !costAction.enabled}
 					aria-haspopup="dialog"
 					aria-expanded={armourCostOpen}

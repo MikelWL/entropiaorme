@@ -13,6 +13,13 @@ import type { SatelliteWindow } from '$lib/windows/satellite';
  * the anchor gap it lays popups out with, and readers for the session and
  * armour state the popup renders from. Everything else the controller owns.
  */
+/**
+ * How many render flushes an anchor is given to appear before the open is
+ * reported as failed. Generous enough for a readout that renders in a later
+ * flush, short enough that a genuinely absent anchor fails visibly.
+ */
+const ANCHOR_FLUSHES = 8;
+
 export interface OverlayArmourCostPorts {
 	window: SatelliteWindow;
 	anchorGap: number;
@@ -23,6 +30,8 @@ export interface OverlayArmourCostPorts {
 	protection: () => ProtectionOverview | null;
 	/** The post-session readout's Cost button, once it has rendered. */
 	postSessionAnchor: () => HTMLElement | null;
+	/** The running session's own Cost control on the strip. */
+	inSessionAnchor: () => HTMLElement | null;
 	/** Told after the popup closes, so the stop flow can settle. */
 	onClosed: () => void;
 }
@@ -33,6 +42,24 @@ export interface OverlayArmourCostPorts {
  * separate webview, so the controller holds the open/anchor state the route
  * used to carry inline.
  */
+/**
+ * Wait for an anchor the host is about to render. The control appears only
+ * once the surface carrying it has, which is not guaranteed to be the flush
+ * this is asked in, so a bounded few are given rather than assuming the
+ * first. Each attempt yields the task as well as the flush: a host that
+ * renders off a promise or a timer would otherwise never be observed, since
+ * those settle after every flush this loop could drain.
+ */
+async function waitForAnchor(read: () => HTMLElement | null): Promise<HTMLElement | null> {
+	for (let attempt = 0; attempt < ANCHOR_FLUSHES; attempt += 1) {
+		await tick();
+		const target = read();
+		if (target?.isConnected) return target;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+	return null;
+}
+
 export function createOverlayArmourCostModel(ports: OverlayArmourCostPorts) {
 	let open = $state(false);
 	let error = $state<string | null>(null);
@@ -137,16 +164,39 @@ export function createOverlayArmourCostModel(ports: OverlayArmourCostPorts) {
 	}
 
 	/**
-	 * The popup after a Record answer on the armour prompt: the anchor button
-	 * only renders once the post-session readout has, hence the tick.
+	 * The popup over the post-session readout: its anchor button only renders
+	 * once that readout has, so the anchor is waited for rather than assumed
+	 * present after one microtask. A single `tick()` was a bet on the readout
+	 * rendering in the same flush, and losing it left the workflow silently
+	 * unopened.
 	 */
 	async function showPostSession(forRecording: boolean): Promise<boolean> {
-		await tick();
-		const target = ports.postSessionAnchor();
-		if (target && ports.sessionId() && !open) {
-			return show(target, forRecording);
+		const target = await waitForAnchor(ports.postSessionAnchor);
+		if (!ports.sessionId()) {
+			error = 'There is no session left to record an armour cost against';
+			return false;
 		}
-		return false;
+		if (!target) {
+			error = 'The armour cost window could not be opened';
+			return false;
+		}
+		if (open) return false;
+		return show(target, forRecording);
+	}
+
+	/** The armour workflow over the running session's own Cost control. */
+	async function showInSession(): Promise<boolean> {
+		const target = await waitForAnchor(ports.inSessionAnchor);
+		if (!ports.sessionId()) {
+			error = 'There is no session left to record an armour cost against';
+			return false;
+		}
+		if (!target) {
+			error = 'The armour cost window could not be opened';
+			return false;
+		}
+		if (open) return true;
+		return show(target, true);
 	}
 
 	/** The popup reported that it closed itself. */
@@ -166,6 +216,7 @@ export function createOverlayArmourCostModel(ports: OverlayArmourCostPorts) {
 		hide,
 		toggle,
 		showPostSession,
+		showInSession,
 		scheduleAnchorSync,
 		noteClosed,
 	};
