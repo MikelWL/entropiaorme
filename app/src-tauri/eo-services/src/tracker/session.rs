@@ -1001,11 +1001,15 @@ impl TrackerActor {
     /// effect from now and the next recording covers only what follows.
     pub(super) async fn declare_whole_session_protection(
         &mut self,
+        for_session: &str,
         selection: ProtectionSelection,
     ) -> Result<(), TrackerCommandError> {
         let Some(active) = self.session.active_mut() else {
             return Err(TrackerCommandError::NoActiveSession);
         };
+        if active.session.id != for_session {
+            return Err(TrackerCommandError::SessionNoLongerActive);
+        }
         if !active.facets.track_protection_costs {
             return Err(TrackerCommandError::ProtectionCostsDisabled);
         }

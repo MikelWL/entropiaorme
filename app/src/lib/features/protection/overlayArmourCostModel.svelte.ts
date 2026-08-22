@@ -43,15 +43,19 @@ export interface OverlayArmourCostPorts {
  * used to carry inline.
  */
 /**
- * Wait for an anchor the host is about to render. Svelte may need more than
- * one flush before the button exists, so this gives it a bounded few rather
- * than assuming the first.
+ * Wait for an anchor the host is about to render. The control appears only
+ * once the surface carrying it has, which is not guaranteed to be the flush
+ * this is asked in, so a bounded few are given rather than assuming the
+ * first. Each attempt yields the task as well as the flush: a host that
+ * renders off a promise or a timer would otherwise never be observed, since
+ * those settle after every flush this loop could drain.
  */
 async function waitForAnchor(read: () => HTMLElement | null): Promise<HTMLElement | null> {
 	for (let attempt = 0; attempt < ANCHOR_FLUSHES; attempt += 1) {
 		await tick();
 		const target = read();
 		if (target?.isConnected) return target;
+		await new Promise((resolve) => setTimeout(resolve, 0));
 	}
 	return null;
 }
@@ -168,19 +172,26 @@ export function createOverlayArmourCostModel(ports: OverlayArmourCostPorts) {
 	 */
 	async function showPostSession(forRecording: boolean): Promise<boolean> {
 		const target = await waitForAnchor(ports.postSessionAnchor);
-		if (target && ports.sessionId() && !open) {
-			return show(target, forRecording);
+		if (!ports.sessionId()) {
+			error = 'There is no session left to record an armour cost against';
+			return false;
 		}
 		if (!target) {
 			error = 'The armour cost window could not be opened';
+			return false;
 		}
-		return false;
+		if (open) return false;
+		return show(target, forRecording);
 	}
 
 	/** The armour workflow over the running session's own Cost control. */
 	async function showInSession(): Promise<boolean> {
 		const target = await waitForAnchor(ports.inSessionAnchor);
-		if (!target || !ports.sessionId()) {
+		if (!ports.sessionId()) {
+			error = 'There is no session left to record an armour cost against';
+			return false;
+		}
+		if (!target) {
 			error = 'The armour cost window could not be opened';
 			return false;
 		}

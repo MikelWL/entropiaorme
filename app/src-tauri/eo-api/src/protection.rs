@@ -439,7 +439,8 @@ impl Api {
                 Err(
                     error @ (eo_services::tracker::TrackerCommandError::ProtectionBySegmentDisabled
                     | eo_services::tracker::TrackerCommandError::ProtectionBySegmentEnabled
-                    | eo_services::tracker::TrackerCommandError::ProtectionCostsDisabled),
+                    | eo_services::tracker::TrackerCommandError::ProtectionCostsDisabled
+                    | eo_services::tracker::TrackerCommandError::SessionNoLongerActive),
                 ) => {
                     return Err(ApiError::conflict(error.to_string()));
                 }
@@ -479,7 +480,7 @@ impl Api {
                 .await
                 .map_err(protection_error)?;
             self.tracker
-                .declare_whole_session_protection(selection)
+                .declare_whole_session_protection(session_id, selection)
                 .await
                 .map_err(|error| match error {
                     eo_services::tracker::TrackerCommandError::Persistence => {

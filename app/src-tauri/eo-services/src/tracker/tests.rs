@@ -5638,7 +5638,7 @@ fn a_mid_session_armour_declaration_adopts_the_hits_already_recorded() {
         "nothing is attributed before a setup is named"
     );
 
-    rig.wait(tracker.declare_whole_session_protection(worn(1, "Hyperion + 5B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(1, "Hyperion + 5B")))
         .unwrap();
 
     assert_eq!(
@@ -5666,7 +5666,7 @@ fn a_mid_session_armour_declaration_adopts_the_hits_already_recorded() {
 fn hits_after_a_declaration_carry_it_without_being_asked_again() {
     let (rig, tracker) = whole_session_rig();
     let session = rig.wait(tracker.start_session()).unwrap();
-    rig.wait(tracker.declare_whole_session_protection(worn(1, "Hyperion + 5B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(1, "Hyperion + 5B")))
         .unwrap();
     deflect(&rig, "2026-01-01T00:00:03");
 
@@ -5687,10 +5687,10 @@ fn redeclaring_before_anything_settles_corrects_the_whole_session() {
     let (rig, tracker) = whole_session_rig();
     let session = rig.wait(tracker.start_session()).unwrap();
     deflect(&rig, "2026-01-01T00:00:01");
-    rig.wait(tracker.declare_whole_session_protection(worn(1, "Hyperion + 5B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(1, "Hyperion + 5B")))
         .unwrap();
     deflect(&rig, "2026-01-01T00:00:02");
-    rig.wait(tracker.declare_whole_session_protection(worn(2, "Pegasus 6B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(2, "Pegasus 6B")))
         .unwrap();
 
     assert_eq!(
@@ -5723,7 +5723,7 @@ fn redeclaring_after_a_settled_cost_leaves_what_it_paid_for_alone() {
     let (rig, tracker) = whole_session_rig();
     let session = rig.wait(tracker.start_session()).unwrap();
     deflect(&rig, "2026-01-01T00:00:01");
-    rig.wait(tracker.declare_whole_session_protection(worn(1, "Hyperion + 5B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(1, "Hyperion + 5B")))
         .unwrap();
     let settled_interval = rig.scalar_i64(
         "SELECT protection_interval_id FROM protection_defence_events WHERE session_id = ?",
@@ -5736,7 +5736,7 @@ fn redeclaring_after_a_settled_cost_leaves_what_it_paid_for_alone() {
         "INSERT INTO protection_cost_evidence (window_id, set_id, defence_event_id)          SELECT 1, NULL, id FROM protection_defence_events",
     );
 
-    rig.wait(tracker.declare_whole_session_protection(worn(2, "Pegasus 6B")))
+    rig.wait(tracker.declare_whole_session_protection(&session.id, worn(2, "Pegasus 6B")))
         .unwrap();
 
     assert_eq!(
@@ -5760,6 +5760,34 @@ fn redeclaring_after_a_settled_cost_leaves_what_it_paid_for_alone() {
     );
 }
 
+/// The session a declaration names is the session it lands on. A stop
+/// and a fresh start can happen between reading which session is running
+/// and asking for the setup to be recorded, and the setup meant for the
+/// finished session must not be recorded against its successor.
+#[test]
+fn a_declaration_naming_a_session_that_has_since_stopped_is_refused() {
+    let (rig, tracker) = whole_session_rig();
+    let first = rig.wait(tracker.start_session()).unwrap();
+    deflect(&rig, "2026-01-01T00:00:01");
+    rig.wait(tracker.stop_session()).unwrap();
+    let second = rig.wait(tracker.start_session()).unwrap();
+    assert_ne!(first.id, second.id);
+
+    assert_eq!(
+        rig.wait(tracker.declare_whole_session_protection(&first.id, worn(1, "Hyperion + 5B"))),
+        Err(TrackerCommandError::SessionNoLongerActive),
+        "the finished session is no longer the tracker's to write"
+    );
+    assert_eq!(
+        rig.scalar_i64(
+            "SELECT COUNT(*) FROM protection_defence_events              WHERE session_id = ? AND protection_interval_id IS NOT NULL",
+            &[&second.id],
+        ),
+        0,
+        "nothing was recorded against the session that happens to be running"
+    );
+}
+
 /// The two attribution modes stay disjoint: a session tracking by
 /// segment declares through the per-segment route, and one not tracking
 /// armour cost at all has nothing to declare.
@@ -5778,9 +5806,11 @@ fn a_whole_session_declaration_refuses_the_modes_it_does_not_belong_to() {
         }),
         ..Providers::default()
     });
-    rig.wait(by_segment.start_session()).unwrap();
+    let segmented = rig.wait(by_segment.start_session()).unwrap();
     assert_eq!(
-        rig.wait(by_segment.declare_whole_session_protection(worn(1, "Hyperion + 5B"))),
+        rig.wait(
+            by_segment.declare_whole_session_protection(&segmented.id, worn(1, "Hyperion + 5B"))
+        ),
         Err(TrackerCommandError::ProtectionBySegmentEnabled)
     );
     rig.wait(by_segment.stop_session()).unwrap();
@@ -5792,9 +5822,11 @@ fn a_whole_session_declaration_refuses_the_modes_it_does_not_belong_to() {
         }),
         ..Providers::default()
     });
-    rig.wait(opted_out.start_session()).unwrap();
+    let untracked = rig.wait(opted_out.start_session()).unwrap();
     assert_eq!(
-        rig.wait(opted_out.declare_whole_session_protection(worn(1, "Hyperion + 5B"))),
+        rig.wait(
+            opted_out.declare_whole_session_protection(&untracked.id, worn(1, "Hyperion + 5B"))
+        ),
         Err(TrackerCommandError::ProtectionCostsDisabled)
     );
 }

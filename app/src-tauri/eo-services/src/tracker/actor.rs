@@ -91,6 +91,7 @@ pub(super) enum TrackerMsg {
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
     DeclareWholeSessionProtection {
+        session_id: String,
         selection: ProtectionSelection,
         reply: oneshot::Sender<Result<(), TrackerCommandError>>,
     },
@@ -249,8 +250,15 @@ impl TrackerActor {
             TrackerMsg::SetProtection { selection, reply } => {
                 let _ = reply.send(self.set_protection(selection).await);
             }
-            TrackerMsg::DeclareWholeSessionProtection { selection, reply } => {
-                let _ = reply.send(self.declare_whole_session_protection(selection).await);
+            TrackerMsg::DeclareWholeSessionProtection {
+                session_id,
+                selection,
+                reply,
+            } => {
+                let _ = reply.send(
+                    self.declare_whole_session_protection(&session_id, selection)
+                        .await,
+                );
             }
             TrackerMsg::ActiveSessionId(reply) => {
                 let _ = reply.send(

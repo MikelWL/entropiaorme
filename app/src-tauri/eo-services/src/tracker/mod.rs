@@ -90,6 +90,8 @@ const HARVEST_YIELD_WINDOW_SECONDS: f64 = 30.0;
 pub enum TrackerCommandError {
     #[error("No active session")]
     NoActiveSession,
+    #[error("That session is no longer the running one")]
+    SessionNoLongerActive,
     #[error("Armour costs are not tracked by segment for this session")]
     ProtectionBySegmentDisabled,
     #[error("Armour costs are tracked by segment for this session")]
@@ -305,12 +307,22 @@ impl HuntTracker {
     /// identity only, since allocation for such a session collapses to
     /// session grain whatever intervals exist, and it can be made while
     /// the session is still running rather than only after it ends.
+    /// The caller names the session it meant: the session it read may
+    /// have stopped and another started before this message is handled,
+    /// and a declaration is refused rather than landing on whichever
+    /// session happens to be running by then.
     pub async fn declare_whole_session_protection(
         &self,
+        session_id: &str,
         selection: ProtectionSelection,
     ) -> Result<(), TrackerCommandError> {
-        self.call(|reply| TrackerMsg::DeclareWholeSessionProtection { selection, reply })
-            .await
+        let session_id = session_id.to_owned();
+        self.call(|reply| TrackerMsg::DeclareWholeSessionProtection {
+            session_id,
+            selection,
+            reply,
+        })
+        .await
     }
 
     /// The id of the session the tracker is running, if any. The

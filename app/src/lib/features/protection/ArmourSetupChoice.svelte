@@ -38,7 +38,8 @@
 			pending = await pendingProtectionAttribution();
 			error = null;
 		} catch (cause) {
-			pending = [];
+			// Leaving the list at its last-good value: emptying it would make
+			// this session look owed nothing and drop the others outright.
 			error = cause instanceof Error ? cause.message : 'Sessions could not be read';
 		}
 	}
