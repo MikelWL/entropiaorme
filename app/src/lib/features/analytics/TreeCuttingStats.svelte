@@ -114,12 +114,12 @@
 	realisedTip={realisedTip}
 />
 
-{#if reward && reward.rewardStatus !== 'none'}
+{#if reward && reward.treatments.length > 0}
 	<div class="mt-5">
 		<CompletionRewardContext
 			ttPed={reward.rewardTtPed}
 			muPed={reward.rewardMuPed}
-			status={reward.rewardStatus}
+			treatments={reward.treatments}
 			scope="session"
 		/>
 	</div>

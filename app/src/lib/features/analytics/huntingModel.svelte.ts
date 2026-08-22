@@ -51,7 +51,10 @@ export type RewardContext = {
 	/** The same reward valued at current market. Null only when no reward
 	 * items were recorded, never merely because none of them are tradeable. */
 	rewardMuPed: number | null;
-	rewardStatus: HuntingRewardStatus;
+	/** Every distinct treatment the scope contains, `none` excluded. The
+	 * figure above is the answer; this says what it is made of, and (via
+	 * `unverified`) what it knowingly leaves out. */
+	treatments: HuntingRewardStatus[];
 };
 
 export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'> & {
@@ -237,7 +240,7 @@ export function createHuntingModel() {
 				row.expected?.expectedTtRate ?? null,
 			);
 			const rates = rewardRates(
-				{ rewardTtPed: row.confirmedRewardPed, rewardMuPed, rewardStatus: row.rewardStatus },
+				rewardContextOf({ ...row, rewardMuPed }),
 				row.cycled,
 				projected.expectedMarketRate,
 			);
@@ -271,13 +274,7 @@ export function createHuntingModel() {
 			const activities = row.activities.map((activity, index) =>
 				activitySection(activity, key, index),
 			);
-			const reward = mergeRewardContexts(
-				activities.map((activity) => ({
-					rewardTtPed: activity.confirmedRewardPed,
-					rewardMuPed: activity.rewardMuPed,
-					rewardStatus: activity.rewardStatus,
-				})),
-			);
+			const reward = mergeRewardContexts(activities.map(rewardContextOf));
 			const confirmedRewardPed = reward.rewardTtPed;
 			const realisedReturns = row.returns + confirmedRewardPed + realisedMarkup;
 			const projected = projectedEconomics(
@@ -515,21 +512,27 @@ export function projectRewardValue(
  * through; more than one becomes `mixed` rather than claiming a provenance
  * the aggregate does not have. */
 export function mergeRewardContexts(contexts: RewardContext[]): RewardContext {
-	const statuses = new Set(
-		contexts.map((context) => context.rewardStatus).filter((status) => status !== 'none'),
-	);
+	const treatments = new Set(contexts.flatMap((context) => context.treatments));
 	const valued = contexts.filter((context) => context.rewardMuPed !== null);
 	return {
 		rewardTtPed: contexts.reduce((sum, context) => sum + context.rewardTtPed, 0),
 		rewardMuPed: valued.length
 			? valued.reduce((sum, context) => sum + (context.rewardMuPed ?? 0), 0)
 			: null,
-		rewardStatus:
-			statuses.size === 0
-				? 'none'
-				: statuses.size === 1
-					? ([...statuses][0] as HuntingRewardStatus)
-					: 'mixed',
+		treatments: [...treatments],
+	};
+}
+
+/** One activity's own reward, as the same context its scope aggregates. */
+export function rewardContextOf(activity: {
+	confirmedRewardPed: number;
+	rewardMuPed: number | null;
+	rewardStatus: HuntingRewardStatus;
+}): RewardContext {
+	return {
+		rewardTtPed: activity.confirmedRewardPed,
+		rewardMuPed: activity.rewardMuPed,
+		treatments: activity.rewardStatus === 'none' ? [] : [activity.rewardStatus],
 	};
 }
 

@@ -9,7 +9,7 @@
 	import EconomicOutcomeHorizon from './EconomicOutcomeHorizon.svelte';
 	import ExpectedEconomicsEquation from './ExpectedEconomicsEquation.svelte';
 	import HuntingActivityPicker from './HuntingActivityPicker.svelte';
-	import type { HuntingActivitySection } from './huntingModel.svelte';
+	import { rewardContextOf, type HuntingActivitySection } from './huntingModel.svelte';
 
 	let {
 		activities,
@@ -155,7 +155,7 @@
 					<CompletionRewardContext
 						ttPed={selected.confirmedRewardPed}
 						muPed={selected.rewardMuPed}
-						status={selected.rewardStatus}
+						treatments={rewardContextOf(selected).treatments}
 						scope="activity"
 					/>
 				</div>

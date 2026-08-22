@@ -7,54 +7,31 @@
 	let {
 		ttPed,
 		muPed,
-		status,
+		treatments,
 		scope,
 	}: {
+		/** Confirmed reward TT, exactly as captured. The figure is the answer;
+		 * the treatments only explain what it is made of. */
 		ttPed: number;
 		muPed: number | null;
-		status: HuntingRewardStatus;
-		/** A session states the same reward its activities do, aggregated; the
-		 * scope only changes where a mixed provenance is resolved. */
+		treatments: HuntingRewardStatus[];
 		scope: 'activity' | 'session';
 	} = $props();
 
-	const ttValue = $derived.by(() => {
-		switch (status) {
-			case 'included_in_loot':
-				return 'In loot';
-			case 'fixed_liquid':
-				return `+${formatPed(ttPed)}`;
-			case 'item':
-				return formatPed(ttPed);
-			case 'skill':
-				return 'Skill';
-			case 'mixed':
-				return ttPed > 0 ? formatPed(ttPed) : 'Mixed';
-			default:
-				return NO_DATA;
-		}
-	});
-	const showsPed = $derived(['fixed_liquid', 'item'].includes(status) || (status === 'mixed' && ttPed > 0));
-	const detail = $derived.by(() => {
-		switch (status) {
-			case 'included_in_loot':
-				return 'The completion payout is already present in tracked loot and is not added again.';
-			case 'fixed_liquid':
-				return 'A separately recorded liquid reward is linked to this completion and added exactly once.';
-			case 'item':
-				return 'The completion reward was separated from ordinary loot. Its observed TT is counted here; current market value is shown separately as Reward MU.';
-			case 'skill':
-				return 'The completion paid progression value. It remains outside PED profit.';
-			case 'mixed':
-				return scope === 'session'
-					? 'This session contains more than one reward treatment. Open an activity for its exact provenance.'
-					: 'This aggregate contains more than one reward treatment. Open a variant for its exact provenance.';
-			case 'unverified':
-				return 'Some completions predate immutable reward capture. Their present-day quest settings are not used to rewrite history.';
-			default:
-				return 'No separate economic reward was recorded for this activity.';
-		}
-	});
+	/** A completion whose reward evidence is unresolved or predates immutable
+	 * capture. It is knowingly excluded from the figure and never estimated,
+	 * so it is the one thing the number itself cannot say. */
+	const incomplete = $derived(treatments.includes('unverified'));
+	const counted = $derived(treatments.filter((treatment) => treatment !== 'unverified'));
+
+	const TREATMENT_DETAIL: Record<Exclude<HuntingRewardStatus, 'none' | 'unverified'>, string> = {
+		item: 'Reward items separated from ordinary loot. Their observed TT is counted here and their current market value appears as Reward MU.',
+		fixed_liquid: 'A separately recorded liquid reward, counted exactly once.',
+		included_in_loot:
+			'A payout already present in tracked loot. It is counted there and never added again here.',
+		skill: 'A progression payout. It carries no TT and stays outside PED profit.',
+		mixed: 'An activity whose own completions were treated in more than one way.',
+	};
 </script>
 
 <div
@@ -64,10 +41,30 @@
 	<span class="eyebrow">Completion reward</span>
 	<span class="flex items-baseline gap-1.5">
 		<span>Reward TT</span>
-		<strong class="font-medium tabular-nums text-text-secondary">{ttValue}</strong>
-		{#if showsPed}<span>PED</span>{/if}
+		<strong class="font-medium tabular-nums text-text-secondary">{formatPed(ttPed)}</strong>
+		<span>PED</span>
 		<InfoTip align="right" width="w-80" label="How this reward is counted">
-			<p class="text-xs leading-relaxed text-text-secondary">{detail}</p>
+			<p class="text-xs font-semibold leading-relaxed text-text">Confirmed reward TT</p>
+			<p class="mt-1 text-xs leading-relaxed text-text-secondary">
+				What {scope === 'session' ? "this session's completions" : 'this activity'} paid, as recorded
+				at the moment of completion.
+			</p>
+			{#if counted.length}
+				<ul class="mt-2 space-y-1.5">
+					{#each counted as treatment (treatment)}
+						<li class="text-xs leading-relaxed text-text-secondary">
+							{TREATMENT_DETAIL[treatment as keyof typeof TREATMENT_DETAIL]}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if incomplete}
+				<p class="mt-2 text-xs leading-relaxed text-text-secondary">
+					Some completions have no usable reward evidence, either unresolved or predating reward
+					capture. They contribute nothing to this figure and are never estimated. Quests, Reward
+					Review holds any that can still be settled.
+				</p>
+			{/if}
 		</InfoTip>
 	</span>
 	<span class="h-3 w-px bg-border-bright" aria-hidden="true"></span>

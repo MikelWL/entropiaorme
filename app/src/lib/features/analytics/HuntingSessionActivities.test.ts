@@ -106,7 +106,7 @@ describe('HuntingSessionActivities', () => {
 		expect(within(reward).getByText('Completion reward')).not.toBeNull();
 		expect(within(reward).getByText('Reward TT')).not.toBeNull();
 		expect(within(reward).getByText('Reward MU')).not.toBeNull();
-		expect(within(reward).getByText('+15.00')).not.toBeNull();
+		expect(within(reward).getByText('15.00')).not.toBeNull();
 		expect(within(reward).getByText('18.00')).not.toBeNull();
 		expect(within(grid).queryByText('Cycled')).toBeNull();
 		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
