@@ -176,6 +176,53 @@ describe('Hunting economic comparisons', () => {
 		expect(screen.queryByText(/partial historical basis/)).toBeNull();
 	});
 
+	it('states a session-level completion reward and carries it into the outlook', async () => {
+		const row = session({
+			expected: expectedEconomics,
+			expectedTtRate: 0.94,
+			expectedMarketRate: 0.94 * (106 / 90),
+			reward: { rewardTtPed: 12, rewardMuPed: 15, treatments: ['item', 'unverified'] },
+			rewardMuRate: 0.15,
+			expectedTotalRate: 0.94 * (106 / 90) + 0.15,
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [row],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingPrimaryView, { props: primaryProps(table, row) });
+
+		const reward = screen.getByTestId('session-reward-context');
+		expect(within(reward).getByText('Reward TT')).not.toBeNull();
+		expect(within(reward).getByText('12.00')).not.toBeNull();
+		expect(within(reward).getByText('15.00')).not.toBeNull();
+		// Knowingly excluded completions are disclosed, never estimated.
+		await fireEvent.click(within(reward).getByLabelText('How this reward is counted'));
+		expect(screen.getByText(/no usable reward evidence/)).not.toBeNull();
+
+		const strip = screen.getByTestId('hunting-expected-economics');
+		expect(within(strip).getByText('Reward MU')).not.toBeNull();
+		expect(within(strip).getByText('15.0%')).not.toBeNull();
+		expect(within(strip).getByText('125.7%')).not.toBeNull();
+	});
+
+	it('leaves a reward-free session with the loot-only outlook', () => {
+		const row = session({
+			expected: expectedEconomics,
+			expectedTtRate: 0.94,
+			expectedMarketRate: 0.94 * (106 / 90),
+		});
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [row],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingPrimaryView, { props: primaryProps(table, row) });
+
+		expect(screen.queryByTestId('session-reward-context')).toBeNull();
+		const strip = screen.getByTestId('hunting-expected-economics');
+		expect(within(strip).queryByText('Reward MU')).toBeNull();
+		expect(within(strip).getByText('110.7%')).not.toBeNull();
+	});
+
 	it('keeps the long-stock search compact and visually discloses overflow', async () => {
 		const stock = Array.from({ length: 9 }, (_, index) => ({
 			itemName: `Hunting loot ${index + 1}`,

@@ -296,6 +296,107 @@ describe('createHuntingModel', () => {
 		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(5);
 	});
 
+	it('aggregates a session reward from the activities that partition it', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						cycled: 200,
+						activities: [
+							sessionActivity({
+								rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
+								confirmedRewardPed: 15,
+								rewardStatus: 'item',
+								// A family variant restates its parent's reward and must
+								// never be summed alongside it.
+								variants: [
+									sessionActivity({
+										label: 'Variant',
+										rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
+										confirmedRewardPed: 15,
+										rewardStatus: 'item',
+									}),
+								],
+							}),
+							sessionActivity({
+								label: 'Skill daily',
+								rewardItems: [],
+								confirmedRewardPed: 0,
+								rewardStatus: 'skill',
+							}),
+						],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const session = model.sessionSections[0];
+		expect(session.reward.rewardTtPed).toBe(15);
+		// 15 TT at the 130% week markup, the variant excluded.
+		expect(session.reward.rewardMuPed).toBeCloseTo(19.5, 10);
+		expect(session.reward.treatments.sort()).toEqual(['item', 'skill']);
+		expect(session.rewardMuRate).toBeCloseTo(19.5 / 200, 10);
+	});
+
+	it('adds the reward to the long-run rate without disturbing the loot-only rate', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						cycled: 100,
+						lootItems: [{ itemName: 'Animal Muscle Oil', quantity: 40, valuePed: 100 }],
+						expected: expectedEconomics(),
+						activities: [
+							sessionActivity({
+								rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 10, valuePed: 10 }],
+								confirmedRewardPed: 10,
+								rewardStatus: 'item',
+							}),
+						],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const session = model.sessionSections[0];
+		const lootOnly = required(session.expectedMarketRate, 'expectedMarketRate');
+		expect(lootOnly).toBeCloseTo(0.94 * 1.3, 10);
+		expect(session.rewardMuRate).toBeCloseTo(13 / 100, 10);
+		expect(session.expectedTotalRate).toBeCloseTo(lootOnly + 13 / 100, 10);
+	});
+
+	it('leaves a reward-free scope without a reward term at all', async () => {
+		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
+			activity({
+				definitions: [
+					definition({
+						expected: expectedEconomics(),
+						activities: [
+							sessionActivity({
+								rewardItems: [],
+								confirmedRewardPed: 0,
+								rewardStatus: 'none',
+							}),
+						],
+					}),
+				],
+			}),
+		);
+		const model = createHuntingModel();
+		await model.loadData();
+
+		const session = model.sessionSections[0];
+		expect(session.reward.treatments).toEqual([]);
+		expect(session.reward.rewardMuPed).toBeNull();
+		expect(session.rewardMuRate).toBeNull();
+		// With no reward, the long-run rate is exactly the loot-only rate.
+		expect(session.expectedTotalRate).toBe(session.expectedMarketRate);
+	});
+
 	it('values zero-TT reward items from an absolute PED-per-unit quote', async () => {
 		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
 			activity({
