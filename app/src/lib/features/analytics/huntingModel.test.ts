@@ -255,7 +255,7 @@ describe('createHuntingModel', () => {
 		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(15);
 	});
 
-	it('does not project Universal Ammo as tradeable reward stock', async () => {
+	it('values a Universal Ammo reward at face value rather than dropping it', async () => {
 		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
 			activity({
 				definitions: [
@@ -271,10 +271,10 @@ describe('createHuntingModel', () => {
 		);
 		const model = createHuntingModel();
 		await model.loadData();
-		expect(model.sessionSections[0].activities[0].rewardMuPed).toBeNull();
+		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(4);
 	});
 
-	it('projects only the stock item in a mixed ammo reward', async () => {
+	it('projects the stock item and keeps ammo at face value in a mixed reward', async () => {
 		mocked.getAnalyticsHuntingActivity.mockResolvedValue(
 			activity({
 				definitions: [
@@ -293,7 +293,7 @@ describe('createHuntingModel', () => {
 		);
 		const model = createHuntingModel();
 		await model.loadData();
-		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(1);
+		expect(model.sessionSections[0].activities[0].rewardMuPed).toBe(5);
 	});
 
 	it('values zero-TT reward items from an absolute PED-per-unit quote', async () => {

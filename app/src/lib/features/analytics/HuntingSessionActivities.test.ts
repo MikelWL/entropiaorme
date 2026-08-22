@@ -35,6 +35,8 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
 		rewardMuPed: 18,
+		rewardMuRate: null,
+		expectedTotalRate: null,
 		rewardedReturns: 105,
 		rewardedRate: 1.05,
 		rewardStatus: 'fixed_liquid',

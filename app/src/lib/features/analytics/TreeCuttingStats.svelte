@@ -2,10 +2,13 @@
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
 	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
+	import RewardMuInfoTip from '$lib/components/RewardMuInfoTip.svelte';
 	import type { ExpectedHuntingEconomics } from '$lib/api';
 	import { NO_DATA } from '$lib/utils/format';
+	import CompletionRewardContext from './CompletionRewardContext.svelte';
 	import EconomicOutcomeHorizon from './EconomicOutcomeHorizon.svelte';
 	import ExpectedEconomicsEquation from './ExpectedEconomicsEquation.svelte';
+	import type { RewardContext } from './huntingModel.svelte';
 
 	let {
 		cycled,
@@ -19,6 +22,9 @@
 		expectedEconomics,
 		realisedReturns,
 		realisedRate,
+		reward = null,
+		rewardMuRate = null,
+		expectedTotalRate = null,
 	}: {
 		cycled: number;
 		returns: number;
@@ -31,6 +37,11 @@
 		expectedEconomics?: ExpectedHuntingEconomics | null;
 		realisedReturns: number;
 		realisedRate: number;
+		/** Completion rewards aggregated over the scope's activities. Absent
+		 * for activities that do not have them at all, Tree Cutting included. */
+		reward?: RewardContext | null;
+		rewardMuRate?: number | null;
+		expectedTotalRate?: number | null;
 	} = $props();
 
 	const effectiveEfficiencyValue = $derived.by(() => {
@@ -87,6 +98,10 @@
 	</InfoTip>
 {/snippet}
 
+{#snippet rewardMuTip()}
+	<RewardMuInfoTip />
+{/snippet}
+
 <EconomicOutcomeHorizon
 	{cycled}
 	ttNet={returns - cycled}
@@ -99,14 +114,28 @@
 	realisedTip={realisedTip}
 />
 
+{#if reward && reward.rewardStatus !== 'none'}
+	<div class="mt-5">
+		<CompletionRewardContext
+			ttPed={reward.rewardTtPed}
+			muPed={reward.rewardMuPed}
+			status={reward.rewardStatus}
+			scope="session"
+		/>
+	</div>
+{/if}
+
 {#if lootMarkupFactor !== undefined || expectedTtRate !== undefined}
 	<ExpectedEconomicsEquation
 		effectiveEfficiency={effectiveEfficiencyValue}
 		lootMarkupFactor={lootMarkupFactor ?? null}
 		expectedTtRate={expectedTtRate ?? null}
 		expectedMarketRate={expectedMarketRate ?? null}
+		{rewardMuRate}
+		{expectedTotalRate}
 		efficiencyTip={effectiveEfficiencyTip}
 		estimateTip={estimateTip}
 		expectedTip={expectedReturnTip}
+		rewardTip={rewardMuTip}
 	/>
 {/if}

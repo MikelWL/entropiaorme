@@ -56,6 +56,9 @@
 				expectedEconomics={line.expected}
 				realisedReturns={line.realisedReturns}
 				realisedRate={line.realisedRate}
+				reward={line.reward}
+				rewardMuRate={line.rewardMuRate}
+				expectedTotalRate={line.expectedTotalRate}
 			/>
 		</div>
 
