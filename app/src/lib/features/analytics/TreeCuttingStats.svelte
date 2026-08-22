@@ -23,6 +23,7 @@
 		realisedReturns,
 		realisedRate,
 		reward = null,
+		rewardScope = 'session',
 		rewardMuRate = null,
 		expectedTotalRate = null,
 	}: {
@@ -40,6 +41,9 @@
 		/** Completion rewards aggregated over the scope's activities. Absent
 		 * for activities that do not have them at all, Tree Cutting included. */
 		reward?: RewardContext | null;
+		/** The surface this line is rendering: one session, or every session
+		 * in the period. The reward disclosure states which it covers. */
+		rewardScope?: 'session' | 'overall';
 		rewardMuRate?: number | null;
 		expectedTotalRate?: number | null;
 	} = $props();
@@ -120,7 +124,7 @@
 			ttPed={reward.rewardTtPed}
 			muPed={reward.rewardMuPed}
 			treatments={reward.treatments}
-			scope="session"
+			scope={rewardScope}
 		/>
 	</div>
 {/if}

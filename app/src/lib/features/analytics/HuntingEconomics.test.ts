@@ -205,6 +205,30 @@ describe('Hunting economic comparisons', () => {
 		expect(within(strip).getByText('125.7%')).not.toBeNull();
 	});
 
+	it('states an all-sessions reward without describing it as one session', async () => {
+		const table = createTableModel<HuntingSessionSection>({
+			rows: () => [session()],
+			pageSize: Number.MAX_SAFE_INTEGER,
+		});
+		render(HuntingPrimaryView, {
+			props: {
+				...primaryProps(table, null),
+				overall: overall({
+					reward: { rewardTtPed: 30, rewardMuPed: 36, treatments: ['item'] },
+					rewardMuRate: 0.2,
+					expectedTotalRate: 1.1,
+				}),
+			},
+		});
+
+		const reward = screen.getByTestId('overall-reward-context');
+		expect(within(reward).getByText('30.00')).not.toBeNull();
+		await fireEvent.click(within(reward).getByLabelText('How this reward is counted'));
+		// The figure spans every session, so the disclosure must not claim one.
+		expect(screen.getByText(/completions across every session in this period/)).not.toBeNull();
+		expect(screen.queryByText(/this session's completions/)).toBeNull();
+	});
+
 	it('leaves a reward-free session with the loot-only outlook', () => {
 		const row = session({
 			expected: expectedEconomics,

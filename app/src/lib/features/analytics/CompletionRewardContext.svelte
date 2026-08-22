@@ -15,8 +15,17 @@
 		ttPed: number;
 		muPed: number | null;
 		treatments: HuntingRewardStatus[];
-		scope: 'activity' | 'session';
+		/** Which economics scope states this reward. It selects the wording
+		 * that says what the figure covers, so it must follow the surface
+		 * actually being rendered rather than the component's usual caller. */
+		scope: 'activity' | 'session' | 'overall';
 	} = $props();
+
+	const SCOPE_SUBJECT: Record<'activity' | 'session' | 'overall', string> = {
+		activity: 'this activity',
+		session: "this session's completions",
+		overall: 'completions across every session in this period',
+	};
 
 	/** A completion whose reward evidence is unresolved or predates immutable
 	 * capture. It is knowingly excluded from the figure and never estimated,
@@ -46,8 +55,7 @@
 		<InfoTip align="right" width="w-80" label="How this reward is counted">
 			<p class="text-xs font-semibold leading-relaxed text-text">Confirmed reward TT</p>
 			<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-				What {scope === 'session' ? "this session's completions" : 'this activity'} paid, as recorded
-				at the moment of completion.
+				What {SCOPE_SUBJECT[scope]} paid, as recorded at the moment of completion.
 			</p>
 			{#if counted.length}
 				<ul class="mt-2 space-y-1.5">
@@ -61,8 +69,8 @@
 			{#if incomplete}
 				<p class="mt-2 text-xs leading-relaxed text-text-secondary">
 					Some completions have no usable reward evidence, either unresolved or predating reward
-					capture. They contribute nothing to this figure and are never estimated. Quests, Reward
-					Review holds any that can still be settled.
+					capture. They contribute nothing to this figure and are never estimated. The Reward
+					Review view on the Quests tab holds any that can still be settled.
 				</p>
 			{/if}
 		</InfoTip>

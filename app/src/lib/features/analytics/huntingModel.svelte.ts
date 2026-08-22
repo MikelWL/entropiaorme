@@ -40,8 +40,6 @@ import {
 
 // ── Sessions axis ──────────────────────────────────────────────────────
 
-/** One session-definition row with its display key (definitions are keyed
- * by id; the unassigned bucket by this sentinel). */
 /** One scope's completion reward, stated identically wherever economics are
  * presented. Sessions and Overall aggregate it from the activities that
  * partition them; an activity states its own. */
@@ -57,6 +55,8 @@ export type RewardContext = {
 	treatments: HuntingRewardStatus[];
 };
 
+/** One session-definition row with its display key (definitions are keyed
+ * by id; the unassigned bucket by this sentinel). */
 export type HuntingActivitySection = Omit<HuntingActivityComparison, 'variants'> & {
 	key: string;
 	isUnscoped: boolean;
