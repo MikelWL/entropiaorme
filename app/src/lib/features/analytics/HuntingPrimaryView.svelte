@@ -56,6 +56,10 @@
 				expectedEconomics={line.expected}
 				realisedReturns={line.realisedReturns}
 				realisedRate={line.realisedRate}
+				reward={line.reward}
+				rewardScope={selected ? 'session' : 'overall'}
+				rewardMuRate={line.rewardMuRate}
+				expectedTotalRate={line.expectedTotalRate}
 			/>
 		</div>
 

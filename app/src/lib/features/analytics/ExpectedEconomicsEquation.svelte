@@ -7,20 +7,33 @@
 		lootMarkupFactor,
 		expectedTtRate,
 		expectedMarketRate,
+		rewardMuRate = null,
+		expectedTotalRate = null,
 		efficiencyTip,
 		estimateTip,
 		expectedTip,
+		rewardTip,
 		testid = 'hunting-expected-economics',
 	}: {
 		effectiveEfficiency: string;
 		lootMarkupFactor: number | null;
 		expectedTtRate: number | null;
+		/** The loot-only long-run rate: expected return against loot markup. */
 		expectedMarketRate: number | null;
+		/** A completion reward sits outside the expected-return model, so it
+		 * joins the equation additively. Null where the scope records none:
+		 * the term is then absent rather than standing at zero. */
+		rewardMuRate?: number | null;
+		expectedTotalRate?: number | null;
 		efficiencyTip?: Snippet;
 		estimateTip?: Snippet;
 		expectedTip?: Snippet;
+		rewardTip?: Snippet;
 		testid?: string;
 	} = $props();
+
+	const hasReward = $derived(rewardMuRate !== null);
+	const resultRate = $derived(hasReward ? expectedTotalRate : expectedMarketRate);
 </script>
 
 <section class="long-run relative mt-7 overflow-hidden border-y border-border/45 py-5" data-testid={testid}>
@@ -54,12 +67,22 @@
 				<div class="equation-context">100%-anchored loot mix</div>
 			</div>
 
+			{#if hasReward}
+				<span class="equation-operator" aria-hidden="true">+</span>
+
+				<div class="equation-term" data-testid="{testid}-reward">
+					<div class="equation-label">Reward MU {#if rewardTip}{@render rewardTip()}{/if}</div>
+					<div class="equation-value text-text">{formatPercent(rewardMuRate ?? 0)}</div>
+					<div class="equation-context">Completion reward over cycled</div>
+				</div>
+			{/if}
+
 			<span class="equation-operator" aria-hidden="true">=</span>
 
 			<div class="equation-result">
 				<div class="equation-label">Expected + MU {#if expectedTip}{@render expectedTip()}{/if}</div>
-				<div class={expectedMarketRate !== null ? 'result-value text-text' : 'result-value text-text-tertiary'}>
-					{expectedMarketRate !== null ? formatPercent(expectedMarketRate) : NO_DATA}
+				<div class={resultRate !== null ? 'result-value text-text' : 'result-value text-text-tertiary'}>
+					{resultRate !== null ? formatPercent(resultRate) : NO_DATA}
 				</div>
 				<div class="equation-context">Long-run economic rate</div>
 			</div>

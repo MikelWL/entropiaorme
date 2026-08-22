@@ -2,12 +2,14 @@
 	import InfoTip from '$lib/components/InfoTip.svelte';
 	import EffectiveEfficiencyInfoTip from '$lib/components/EffectiveEfficiencyInfoTip.svelte';
 	import ExpectedReturnInfoTip from '$lib/components/ExpectedReturnInfoTip.svelte';
-	import { NO_DATA, formatPed } from '$lib/utils/format';
+	import RewardMuInfoTip from '$lib/components/RewardMuInfoTip.svelte';
+	import { NO_DATA } from '$lib/utils/format';
 	import ActivityLootComposition from './ActivityLootComposition.svelte';
+	import CompletionRewardContext from './CompletionRewardContext.svelte';
 	import EconomicOutcomeHorizon from './EconomicOutcomeHorizon.svelte';
 	import ExpectedEconomicsEquation from './ExpectedEconomicsEquation.svelte';
 	import HuntingActivityPicker from './HuntingActivityPicker.svelte';
-	import type { HuntingActivitySection } from './huntingModel.svelte';
+	import { rewardContextOf, type HuntingActivitySection } from './huntingModel.svelte';
 
 	let {
 		activities,
@@ -67,51 +69,7 @@
 				return 'Quest';
 		}
 	};
-	const rewardValue = (activity: HuntingActivitySection) => {
-		switch (activity.rewardStatus) {
-			case 'included_in_loot':
-				return 'In loot';
-			case 'fixed_liquid':
-				return `+${formatPed(activity.confirmedRewardPed)}`;
-			case 'item':
-				return formatPed(activity.confirmedRewardPed);
-			case 'skill':
-				return 'Skill';
-			case 'mixed':
-				return 'Mixed';
-			case 'unverified':
-				return NO_DATA;
-			default:
-				return NO_DATA;
-		}
-	};
-	const rewardDetail = (activity: HuntingActivitySection) => {
-		switch (activity.rewardStatus) {
-			case 'included_in_loot':
-				return 'The completion payout is already present in tracked loot and is not added again.';
-			case 'fixed_liquid':
-				return 'A separately recorded liquid reward is linked to this completion and added exactly once.';
-			case 'item':
-				return 'The completion reward was separated from ordinary loot. Its observed TT is counted here; current market value is shown separately as Reward MU.';
-			case 'skill':
-				return 'The completion paid progression value. It remains outside PED profit.';
-			case 'mixed':
-				return 'This aggregate contains more than one reward treatment. Open a variant for its exact provenance.';
-			case 'unverified':
-				return 'Some completions predate immutable reward capture. Their present-day quest settings are not used to rewrite history.';
-			default:
-				return 'No separate economic reward was recorded for this activity.';
-		}
-	};
 </script>
-
-{#snippet rewardTip()}
-	{#if selected}
-		<InfoTip align="right" width="w-80" label="How this reward is counted">
-			<p class="text-xs leading-relaxed text-text-secondary">{rewardDetail(selected)}</p>
-		</InfoTip>
-	{/if}
-{/snippet}
 
 {#snippet estimateTip()}
 	<InfoTip label="What MU figures are">
@@ -134,13 +92,7 @@
 {/snippet}
 
 {#snippet rewardMuTip()}
-	<InfoTip label="What Reward MU is">
-		<p class="text-xs font-semibold leading-relaxed text-text">Projected, not realised</p>
-		<p class="mt-1 text-xs leading-relaxed text-text-secondary">
-			The actual reward item recorded at completion, valued from its current market data. An item
-			without usable market data stays at TT. Realised figures continue to use confirmed value only.
-		</p>
-	</InfoTip>
+	<RewardMuInfoTip />
 {/snippet}
 
 {#snippet expectedReturnTip()}
@@ -199,23 +151,13 @@
 			</div>
 
 			{#if selected.rewardStatus !== 'none'}
-				<div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 pl-1 text-xs text-text-tertiary" data-testid="activity-reward-context">
-					<span class="eyebrow">Completion reward</span>
-					<span class="flex items-baseline gap-1.5">
-						<span>Reward TT</span>
-						<strong class="font-medium tabular-nums text-text-secondary">{rewardValue(selected)}</strong>
-						{#if ['fixed_liquid', 'item'].includes(selected.rewardStatus)}<span>PED</span>{/if}
-						{@render rewardTip()}
-					</span>
-					<span class="h-3 w-px bg-border-bright" aria-hidden="true"></span>
-					<span class="flex items-baseline gap-1.5" data-testid="activity-subordinate-reward-mu">
-						<span>Reward MU</span>
-						<strong class={selected.rewardMuPed !== null ? 'font-medium tabular-nums text-text-secondary' : 'font-medium tabular-nums text-text-tertiary'}>
-							{selected.rewardMuPed !== null ? formatPed(selected.rewardMuPed) : NO_DATA}
-						</strong>
-						{#if selected.rewardMuPed !== null}<span>PED</span>{/if}
-						{@render rewardMuTip()}
-					</span>
+				<div class="mt-4">
+					<CompletionRewardContext
+						ttPed={selected.confirmedRewardPed}
+						muPed={selected.rewardMuPed}
+						treatments={rewardContextOf(selected).treatments}
+						scope="activity"
+					/>
 				</div>
 			{/if}
 
@@ -224,9 +166,12 @@
 				lootMarkupFactor={selected.lootMarkupFactor}
 				expectedTtRate={selected.expectedTtRate}
 				expectedMarketRate={selected.expectedMarketRate}
+				rewardMuRate={selected.rewardMuRate}
+				expectedTotalRate={selected.expectedTotalRate}
 				efficiencyTip={effectiveEfficiencyTip}
 				estimateTip={estimateTip}
 				expectedTip={expectedReturnTip}
+				rewardTip={rewardMuTip}
 				testid="activity-expected-economics"
 			/>
 

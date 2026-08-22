@@ -35,6 +35,8 @@ function activity(overrides: Partial<HuntingActivitySection> = {}): HuntingActiv
 		realisedRewardMarkup: 0,
 		rewardItems: [{ itemName: 'Animal Muscle Oil', quantity: 50, valuePed: 15 }],
 		rewardMuPed: 18,
+		rewardMuRate: null,
+		expectedTotalRate: null,
 		rewardedReturns: 105,
 		rewardedRate: 1.05,
 		rewardStatus: 'fixed_liquid',
@@ -104,7 +106,7 @@ describe('HuntingSessionActivities', () => {
 		expect(within(reward).getByText('Completion reward')).not.toBeNull();
 		expect(within(reward).getByText('Reward TT')).not.toBeNull();
 		expect(within(reward).getByText('Reward MU')).not.toBeNull();
-		expect(within(reward).getByText('+15.00')).not.toBeNull();
+		expect(within(reward).getByText('15.00')).not.toBeNull();
 		expect(within(reward).getByText('18.00')).not.toBeNull();
 		expect(within(grid).queryByText('Cycled')).toBeNull();
 		expect(within(grid).getByText('+4.00').className).not.toContain('text-positive');
@@ -154,7 +156,7 @@ describe('HuntingSessionActivities', () => {
 		expect(screen.queryByRole('menu')).toBeNull();
 	});
 
-	it('labels tracked completion loot without adding it again', () => {
+	it('states tracked completion loot as zero confirmed TT without adding it again', async () => {
 		render(HuntingSessionActivities, {
 			props: {
 				activities: [
@@ -162,6 +164,7 @@ describe('HuntingSessionActivities', () => {
 						returns: 105,
 						lootRate: 1.05,
 						confirmedRewardPed: 0,
+						rewardMuPed: null,
 						rewardedReturns: 105,
 						rewardedRate: 1.05,
 						rewardStatus: 'included_in_loot',
@@ -171,10 +174,70 @@ describe('HuntingSessionActivities', () => {
 			},
 		});
 
-		expect(screen.getByText('In loot')).not.toBeNull();
+		// The figure is the answer; the provenance that makes it zero is
+		// available on demand rather than occupying the value slot.
+		const reward = screen.getByTestId('activity-reward-context');
+		expect(within(reward).queryByText('In loot')).toBeNull();
+		expect(within(reward).getByText('0.00')).not.toBeNull();
+		await fireEvent.click(within(reward).getByLabelText('How this reward is counted'));
+		expect(screen.getByText(/already present in tracked loot/)).not.toBeNull();
 		const nets = screen.getAllByText('+5.00');
 		expect(nets).toHaveLength(2);
 		expect(nets.filter((value) => value.classList.contains('text-positive'))).toHaveLength(1);
+	});
+
+	it('carries the completion reward into the long-run outlook as its own term', () => {
+		render(HuntingSessionActivities, {
+			props: {
+				activities: [
+					activity({
+						expected: expectedEconomics,
+						lootMarkupFactor: 1.018,
+						expectedTtRate: 0.936,
+						expectedMarketRate: 0.936 * 1.018,
+						rewardMuRate: 0.036,
+						expectedTotalRate: 0.936 * 1.018 + 0.036,
+					}),
+				],
+				marketAvailable: true,
+			},
+		});
+
+		const strip = screen.getByTestId('activity-expected-economics');
+		for (const label of ['Expected Return', 'Loot MU', 'Reward MU', 'Expected + MU']) {
+			expect(within(strip).getByText(label)).not.toBeNull();
+		}
+		expect(within(strip).getByText('93.6%')).not.toBeNull();
+		expect(within(strip).getByText('101.8%')).not.toBeNull();
+		expect(within(strip).getByText('3.6%')).not.toBeNull();
+		// The result is the loot product plus the reward, not the product alone.
+		expect(within(strip).getByText('98.9%')).not.toBeNull();
+		expect(within(strip).queryByText('95.3%')).toBeNull();
+	});
+
+	it('omits the reward term entirely where no completion reward exists', () => {
+		render(HuntingSessionActivities, {
+			props: {
+				activities: [
+					activity({
+						expected: expectedEconomics,
+						lootMarkupFactor: 1.018,
+						expectedTtRate: 0.936,
+						expectedMarketRate: 0.936 * 1.018,
+						rewardMuRate: null,
+						expectedTotalRate: null,
+						rewardStatus: 'none',
+					}),
+				],
+				marketAvailable: true,
+			},
+		});
+
+		const strip = screen.getByTestId('activity-expected-economics');
+		expect(within(strip).queryByText('Reward MU')).toBeNull();
+		// No zero figure stands in for an absent reward.
+		expect(within(strip).queryByText('0.0%')).toBeNull();
+		expect(within(strip).getByText('95.3%')).not.toBeNull();
 	});
 
 	it('shows neutral activity-level expected economics from ordinary loot only', () => {
