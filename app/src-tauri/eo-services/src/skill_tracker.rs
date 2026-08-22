@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bus_events::BusEvent;
 use crate::character_calc::ATTRIBUTE_SKILLS;
+use crate::chatlog_time::ChatLogClock;
 use crate::clock::Clock;
 use crate::db::Db;
 use crate::event_bus::{EventBus, Registration, Topic};
@@ -46,6 +47,9 @@ struct SkillState {
 pub struct SkillTracker {
     db: Db,
     clock: Arc<dyn Clock>,
+    /// The base chat-log readings resolve against; see
+    /// [`crate::chatlog_time`]. Shared with the watcher publishing them.
+    chatlog_clock: ChatLogClock,
     state: Mutex<SkillState>,
     /// Held for the lifetime of the tracker: the subscriptions are
     /// permanent, exactly as the original subscribes once in its
@@ -54,10 +58,16 @@ pub struct SkillTracker {
 }
 
 impl SkillTracker {
-    pub fn new(bus: &Arc<EventBus>, db: Db, clock: Arc<dyn Clock>) -> Arc<Self> {
+    pub fn new(
+        bus: &Arc<EventBus>,
+        db: Db,
+        clock: Arc<dyn Clock>,
+        chatlog_clock: ChatLogClock,
+    ) -> Arc<Self> {
         let tracker = Arc::new(Self {
             db,
             clock,
+            chatlog_clock,
             state: Mutex::new(SkillState::default()),
             _subscriptions: Mutex::new(Vec::new()),
         });
@@ -137,7 +147,7 @@ impl SkillTracker {
             // Bus timestamps are the watcher's isoformat strings; the
             // original's float passthrough is kept for numeric stamps.
             let ts_epoch = match parse_timestamp_str(&payload.timestamp) {
-                Some(instant) => naive_to_epoch(instant),
+                Some(reading) => self.chatlog_clock.resolve_epoch(reading),
                 None => match payload.timestamp.trim().parse::<f64>() {
                     Ok(numeric) => numeric,
                     Err(_) => return,
@@ -271,7 +281,8 @@ mod tests {
             .unwrap();
         let bus = Arc::new(EventBus::new());
         let clock = Arc::new(MockClock::new(None, 0.0));
-        let tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
+        let tracker =
+            SkillTracker::new(&bus, db.clone(), clock.clone(), ChatLogClock::host_local());
         Rig {
             _dir: dir,
             runtime,

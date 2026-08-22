@@ -508,7 +508,11 @@
 			if (document.visibilityState === 'visible') {
 				windowSizeSync.schedule();
 			} else {
-				void hideOverlayMenu();
+				// A hand-in waits on the user going to the game to hand
+				// the quest in, so it outlives the strip going away.
+				if (overlayMenuKind !== 'questHandIn') {
+					void hideOverlayMenu();
+				}
 				void armourCost.hide();
 			}
 		};

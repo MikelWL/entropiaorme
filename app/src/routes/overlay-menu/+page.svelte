@@ -78,6 +78,11 @@
 
 			unlistenFocus = await currentWindow.onFocusChanged(({ payload: focused }) => {
 				if (disposed || focused || !menuState) return;
+				// Handing in a quest means going back to the game to do
+				// it, so losing focus is the middle of the flow rather
+				// than the end of it. A menu is dismissed by looking
+				// away; this panel is dismissed by Cancel or Escape.
+				if (menuState.kind === 'questHandIn') return;
 				if (Date.now() < suppressBlurCloseUntil) return;
 				void requestClose();
 			});

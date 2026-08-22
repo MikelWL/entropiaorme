@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::bus_events::{
@@ -29,6 +29,7 @@ use crate::bus_events::{
     MissionReceivedPayload, MissionReceivedTag, SkillGainPayload, SkillGainTag, TickFlushedPayload,
 };
 use crate::chatlog_parser::{parse_line, ChatEvent, EventType};
+use crate::chatlog_time::{ChatLogClock, ChatLogReading};
 use crate::event_bus::{EventBus, Topic};
 use crate::ped::Ped;
 
@@ -257,6 +258,11 @@ struct Shared {
     signal_reward_filter: OnceLock<SignalRewardFilter>,
     signal_loot_probe: OnceLock<SignalLootProbe>,
     mission_complete_probe: OnceLock<MissionCompleteProbe>,
+    /// The base the lines this watcher reads resolve against. The tail
+    /// is the only surface that can see a line's reading beside the
+    /// instant it arrived, so it is the only one that can derive the
+    /// game server's offset; see [`crate::chatlog_time`].
+    chatlog_clock: ChatLogClock,
 }
 
 pub struct ChatlogWatcher {
@@ -285,6 +291,7 @@ impl ChatlogWatcher {
         bus: Arc<EventBus>,
         chatlog_path: impl Into<PathBuf>,
         quest_reward_filter: Option<QuestRewardFilter>,
+        chatlog_clock: ChatLogClock,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
@@ -300,6 +307,7 @@ impl ChatlogWatcher {
                 signal_reward_filter: OnceLock::new(),
                 signal_loot_probe: OnceLock::new(),
                 mission_complete_probe: OnceLock::new(),
+                chatlog_clock,
             }),
             thread: Mutex::new(None),
         }
@@ -571,6 +579,18 @@ fn flush_tick(shared: &Shared, tick: &mut TickBuffer) {
 
     let events = std::mem::take(&mut tick.events);
     let tick_ts = tick.timestamp;
+
+    // Read the tick's own reading against the moment it reached us
+    // before anything downstream resolves it: the tail seeks to
+    // end-of-file and polls, so this line was appended moments ago and
+    // the gap is the game server's offset from UTC. `Utc::now()` here
+    // is the live boundary itself, not a logical clock: what is being
+    // measured is when a real file's real bytes arrived.
+    if let Some(reading) = tick_ts {
+        shared
+            .chatlog_clock
+            .observe(ChatLogReading::new(reading), Utc::now());
+    }
 
     let mut loot_events: Vec<ChatEvent> = Vec::new();
     let mut skill_events: Vec<ChatEvent> = Vec::new();
@@ -892,6 +912,13 @@ mod tests {
     }
 
     fn pipeline(filter: Option<QuestRewardFilter>) -> Pipeline {
+        pipeline_on_chatlog_clock(filter, ChatLogClock::host_local())
+    }
+
+    fn pipeline_on_chatlog_clock(
+        filter: Option<QuestRewardFilter>,
+        chatlog_clock: ChatLogClock,
+    ) -> Pipeline {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("chat_testing.log");
         std::fs::File::create(&log_path).unwrap();
@@ -903,7 +930,7 @@ mod tests {
                 .unwrap()
                 .push((event.topic(), event.payload_value()));
         });
-        let watcher = ChatlogWatcher::new(bus.clone(), &log_path, filter);
+        let watcher = ChatlogWatcher::new(bus.clone(), &log_path, filter, chatlog_clock);
         watcher.start();
         Pipeline {
             _dir: dir,
@@ -939,6 +966,38 @@ mod tests {
             .unwrap();
         write!(file, "{text}").unwrap();
         file.flush().unwrap();
+    }
+
+    /// The tail is the only surface that sees a reading beside the
+    /// instant it arrived, so it is where the game server's offset from
+    /// UTC gets derived. Stamp a line the way a server two hours ahead
+    /// of UTC would and the watcher should settle on that, whatever
+    /// zone the machine running the test is in.
+    #[test]
+    fn the_tail_derives_the_server_offset_from_a_live_line() {
+        let chatlog_clock = ChatLogClock::observed();
+        let pipeline = pipeline_on_chatlog_clock(None, chatlog_clock.clone());
+        assert_eq!(
+            chatlog_clock.server_offset_seconds(),
+            None,
+            "nothing read yet"
+        );
+
+        let server_now = Utc::now() + chrono::TimeDelta::hours(2);
+        append(
+            &pipeline,
+            &[&format!(
+                "{} [System] [] You received Shrapnel x (100) Value: 0.01 PED",
+                server_now.format("%Y-%m-%d %H:%M:%S")
+            )],
+        );
+        drain(&pipeline, 1);
+
+        assert_eq!(
+            chatlog_clock.server_offset_seconds(),
+            Some(2 * 3600),
+            "the live gap between the reading and its arrival is the server's offset"
+        );
     }
 
     #[test]
@@ -1127,7 +1186,7 @@ mod tests {
                 .unwrap()
                 .push((event.topic(), event.payload_value()));
         });
-        let watcher = ChatlogWatcher::new(bus.clone(), &log_path, None);
+        let watcher = ChatlogWatcher::new(bus.clone(), &log_path, None, ChatLogClock::host_local());
         watcher.start();
         assert!(watcher.is_running());
 
@@ -1186,7 +1245,12 @@ mod tests {
     #[test]
     fn missing_files_decline_to_start() {
         let bus = Arc::new(EventBus::new());
-        let watcher = ChatlogWatcher::new(bus, "/nonexistent/chat.log", None);
+        let watcher = ChatlogWatcher::new(
+            bus,
+            "/nonexistent/chat.log",
+            None,
+            ChatLogClock::host_local(),
+        );
         watcher.start();
         assert!(!watcher.is_running());
     }
@@ -1262,7 +1326,8 @@ mod tests {
 
         let started = Instant::now();
         {
-            let watcher = ChatlogWatcher::new(bus.clone(), &log_path, None);
+            let watcher =
+                ChatlogWatcher::new(bus.clone(), &log_path, None, ChatLogClock::host_local());
             watcher.start();
             assert!(
                 started.elapsed() < Duration::from_secs(4),

@@ -14,6 +14,7 @@ pub mod auction_fee_research;
 pub mod bus_events;
 pub mod character_calc;
 pub mod chatlog_parser;
+pub mod chatlog_time;
 pub mod chatlog_watcher;
 pub mod clock;
 pub mod codex;

@@ -13,6 +13,9 @@ pub(super) use crate::time::{
     epoch_to_instant, instant_to_epoch, local_isoformat, resolve_local, to_iso_utc,
 };
 
+use crate::chatlog_time::ChatLogClock;
+#[cfg(test)]
+use crate::chatlog_time::ChatLogReading;
 use crate::time::parse_timestamp_str;
 
 /// Bus payload timestamps are the watcher's isoformat strings (whole
@@ -22,13 +25,17 @@ use crate::time::parse_timestamp_str;
 /// `String` now, so only the pinning test still reads through `Value`.
 #[cfg(test)]
 pub(crate) fn parse_bus_timestamp(value: Option<&Value>) -> Option<NaiveDateTime> {
-    parse_timestamp_str(value?.as_str()?)
+    parse_timestamp_str(value?.as_str()?).map(ChatLogReading::as_naive)
 }
 
 /// The payload timestamp form parsed and resolved to the instant it
-/// names (chat-log timestamps are local wall-clock readings).
-pub(super) fn parse_timestamp_instant(raw: &str) -> Option<DateTime<Utc>> {
-    parse_timestamp_str(raw).map(resolve_local)
+/// names. The reading is the game server's wall clock, so the chat-log
+/// clock owns the conversion; see [`crate::chatlog_time`].
+pub(super) fn parse_timestamp_instant(
+    chatlog_clock: &ChatLogClock,
+    raw: &str,
+) -> Option<DateTime<Utc>> {
+    parse_timestamp_str(raw).map(|reading| chatlog_clock.resolve(reading))
 }
 
 /// `timedelta.total_seconds()`.

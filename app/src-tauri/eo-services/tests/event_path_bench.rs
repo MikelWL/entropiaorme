@@ -44,6 +44,7 @@ use std::time::{Duration, Instant};
 
 use chrono::NaiveDateTime;
 use eo_services::bus_events::BusEvent;
+use eo_services::chatlog_time::ChatLogClock;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::MockClock;
 use eo_services::db::Db;
@@ -181,7 +182,7 @@ fn capture_events(content: &str, lines: u64) -> Vec<BusEvent> {
     bus.add_tap(move |event: &BusEvent| sink.lock().expect("capture sink").push(event.clone()));
     bus.subscribe(Topic::Combat, |_| {});
 
-    let watcher = ChatlogWatcher::new(bus.clone(), &chatlog, None);
+    let watcher = ChatlogWatcher::new(bus.clone(), &chatlog, None, ChatLogClock::host_local());
     watcher.start();
     {
         let mut sink = std::fs::OpenOptions::new()
@@ -322,12 +323,14 @@ fn event_path_bench() {
         0.0,
     ));
     let _quests = QuestService::start(&bus, db.clone(), clock.clone(), runtime.handle().clone());
-    let _skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
+    let _skill_tracker =
+        SkillTracker::new(&bus, db.clone(), clock.clone(), ChatLogClock::host_local());
     let tracker = runtime
         .block_on(HuntTracker::new(
             bus.clone(),
             db.clone(),
             clock.clone(),
+            ChatLogClock::host_local(),
             Providers {
                 player_name: "TestPlayer".to_string(),
                 ..Providers::default()

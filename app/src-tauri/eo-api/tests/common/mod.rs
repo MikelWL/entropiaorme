@@ -11,6 +11,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use eo_services::chatlog_time::ChatLogClock;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::RealClock;
 use eo_services::config_service::ConfigService;
@@ -82,10 +83,12 @@ pub async fn producer_handles_with_tracker(
     let config_service = Arc::new(Mutex::new(
         ConfigService::new(data_dir).expect("config service"),
     ));
+    let chatlog_clock = ChatLogClock::host_local();
     let tracker = HuntTracker::new(
         bus.clone(),
         db.clone(),
         Arc::new(RealClock::new()),
+        chatlog_clock.clone(),
         providers,
     )
     .await
@@ -95,8 +98,10 @@ pub async fn producer_handles_with_tracker(
         bus.clone(),
         data_dir.join("chat.log"),
         None,
+        chatlog_clock.clone(),
     ));
-    let skill_tracker = SkillTracker::new(&bus, db.clone(), Arc::new(RealClock::new()));
+    let skill_tracker =
+        SkillTracker::new(&bus, db.clone(), Arc::new(RealClock::new()), chatlog_clock);
     let skill_scan = SkillScanManual::new(
         ScanProviders::default(),
         Arc::new(RealClock::new()),

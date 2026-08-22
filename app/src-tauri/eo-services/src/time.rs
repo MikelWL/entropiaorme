@@ -6,14 +6,21 @@
 //! module for the payload-parsing helpers only it uses.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
+
+use crate::chatlog_time::ChatLogReading;
 use eo_wire::normalizer::round_half_even;
 
 /// The payload timestamp form (isoformat, with or without fractional
-/// seconds) parsed back to the naive reading.
-pub(crate) fn parse_timestamp_str(raw: &str) -> Option<NaiveDateTime> {
+/// seconds) parsed back to the reading it carries. Every string this
+/// parses came from the chat log, so it yields a [`ChatLogReading`]
+/// rather than a bare naive reading: the log is stamped in the game
+/// server's zone, and resolving one of these against the host's would
+/// skew it (see [`crate::chatlog_time`]).
+pub(crate) fn parse_timestamp_str(raw: &str) -> Option<ChatLogReading> {
     NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f")
         .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S"))
         .ok()
+        .map(ChatLogReading::new)
 }
 
 /// CPython `datetime.fromtimestamp`'s split of an epoch float into
@@ -35,8 +42,13 @@ pub(crate) fn epoch_to_parts(epoch: f64) -> (i64, u32) {
 /// with the original's fold=0 rule: the earliest interpretation for
 /// ambiguous readings, and a reading inside a DST gap resolved through
 /// the neighbouring hour's offset. This is the one local-to-instant
-/// boundary: wall-clock inputs (the injected clock, chat-log
-/// timestamps) resolve here once, and interiors carry the instant.
+/// boundary: the injected clock's readings resolve here once, and
+/// interiors carry the instant.
+///
+/// A chat-log timestamp is **not** one of these. The log is stamped in
+/// the game server's zone, so it resolves through
+/// [`crate::chatlog_time::ChatLogClock`] instead; [`ChatLogReading`]
+/// exists so that cannot be got wrong by habit.
 pub fn resolve_local(reading: NaiveDateTime) -> DateTime<Utc> {
     let resolved = match reading.and_local_timezone(chrono::Local) {
         chrono::LocalResult::Single(instant) => Some(instant),

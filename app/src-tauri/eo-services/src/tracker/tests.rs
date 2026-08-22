@@ -2,6 +2,7 @@ use chrono::NaiveDateTime;
 use serde_json::Value;
 
 use crate::bus_events::BusEvent;
+use crate::chatlog_time::ChatLogClock;
 use crate::event_bus::Topic;
 use crate::harvest_yield::{HarvestYieldSource, HarvestYieldTier};
 
@@ -134,11 +135,23 @@ fn rig() -> Rig {
 
 impl Rig {
     fn tracker(&self, providers: Providers) -> Arc<HuntTracker> {
+        self.tracker_on_chatlog_clock(providers, ChatLogClock::host_local())
+    }
+
+    /// A tracker resolving chat-log readings against a known server
+    /// offset, for the cases that turn on a logged instant landing
+    /// where the app's own stamps can see it.
+    fn tracker_on_chatlog_clock(
+        &self,
+        providers: Providers,
+        chatlog_clock: ChatLogClock,
+    ) -> Arc<HuntTracker> {
         self.runtime
             .block_on(HuntTracker::new(
                 self.bus.clone(),
                 self.db.clone(),
                 self.clock.clone(),
+                chatlog_clock,
                 providers,
             ))
             .unwrap()
@@ -971,6 +984,43 @@ fn loot_creates_and_persists_kills_with_filtering() {
             &[&session.id, &kill_id],
         ),
         0
+    );
+}
+
+/// The chat log is stamped in the game server's zone, not the host's,
+/// so a reading must land at the instant it actually names. The
+/// session, interval, and quest-run boundaries beside a kill are
+/// stamped from the host clock, and every feature that compares the
+/// two (a manual quest hand-in offering the clump it just saw, an
+/// armour window, a rollup boundary) is only correct while both are
+/// the same clock.
+#[test]
+fn a_server_stamped_loot_reading_lands_at_the_instant_it_names() {
+    let rig = rig();
+    // A server two hours ahead of UTC, which is what every player's
+    // log says whatever their own machine is set to.
+    let tracker =
+        rig.tracker_on_chatlog_clock(Providers::default(), ChatLogClock::pinned(2 * 3600));
+    rig.wait(tracker.start_session()).unwrap();
+    rig.bus.publish(&BusEvent::LootGroup(LootGroupPayload {
+        kind: LootTag,
+        source_id: Some("server-stamped".into()),
+        timestamp: Some("2026-01-01T02:00:02".into()),
+        items: vec![LootItem {
+            item_name: "Animal Hide".into(),
+            quantity: 1,
+            value_ped: 4.5,
+            is_enhancer_shrapnel: false,
+        }],
+        total_ped: 4.5,
+    }));
+    assert_eq!(
+        rig.scalar_f64(
+            "SELECT timestamp FROM kills WHERE loot_source_id = ?",
+            &["server-stamped"],
+        ),
+        super::time::instant_to_epoch(naive("2026-01-01T00:00:02").and_utc()),
+        "02:00:02 on a server two hours ahead of UTC is 00:00:02 UTC"
     );
 }
 

@@ -68,6 +68,7 @@ use std::sync::{Arc, Mutex};
 use eo_services::bus_events::BusEvent;
 use eo_services::bus_events::HotbarItemKind;
 use eo_services::character_calc::all_profession_levels;
+use eo_services::chatlog_time::ChatLogClock;
 use eo_services::chatlog_watcher::ChatlogWatcher;
 use eo_services::clock::{Clock, RealClock};
 use eo_services::config_service::{
@@ -1256,14 +1257,21 @@ fn compose_producers(
     let quests = QuestService::start(&bus, db.clone(), clock.clone(), runtime.clone());
 
     let watched_chatlog = chatlog_override.unwrap_or_else(|| PathBuf::from(&config.chatlog_path));
+    // One chat-log time base, shared by the tail that derives it from
+    // the live file and by every service that resolves the readings it
+    // publishes. The log is stamped in the game server's zone, so this
+    // is what keeps a logged instant comparable with one the app
+    // stamped itself; see `eo_services::chatlog_time`.
+    let chatlog_clock = ChatLogClock::observed();
     let watcher = Arc::new(ChatlogWatcher::new(
         bus.clone(),
         watched_chatlog,
         Some(quests.watcher_filter()),
+        chatlog_clock.clone(),
     ));
     watcher.set_signal_reward_filter(quests.watcher_signal_filter());
 
-    let skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone());
+    let skill_tracker = SkillTracker::new(&bus, db.clone(), clock.clone(), chatlog_clock.clone());
 
     // The input listeners share ONE keyboard source (the OS hook is
     // single-instance): a ref-counted wrapper makes the injected source
@@ -1300,6 +1308,7 @@ fn compose_producers(
             bus.clone(),
             db.clone(),
             clock.clone(),
+            chatlog_clock,
             build_providers(db, config_reader, &config, runtime.clone(), game_data),
         ),
     )?;

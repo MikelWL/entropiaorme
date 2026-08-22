@@ -140,12 +140,13 @@ impl TrackerActor {
                 harvest_tool,
                 harvest_guardrail,
                 clock,
+                chatlog_clock,
                 ..
             } = &mut *self;
             let Some(active) = session.active_mut() else {
                 return;
             };
-            let now_epoch = parse_timestamp_instant(&payload.timestamp)
+            let now_epoch = parse_timestamp_instant(chatlog_clock, &payload.timestamp)
                 .map(instant_to_epoch)
                 .unwrap_or_else(|| instant_to_epoch(resolve_local(clock.now())));
             let (tool_name, cost) = Self::no_evidence_swing_cost(

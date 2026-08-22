@@ -49,6 +49,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::chatlog_time::ChatLogClock;
 use crate::clock::Clock;
 use crate::db::{Db, DbError};
 use crate::event_bus::EventBus;
@@ -172,6 +173,7 @@ impl HuntTracker {
         bus: Arc<EventBus>,
         db: Db,
         clock: Arc<dyn Clock>,
+        chatlog_clock: ChatLogClock,
         mut providers: Providers,
     ) -> Result<Arc<Self>, DbError> {
         providers.player_name = providers
@@ -185,6 +187,7 @@ impl HuntTracker {
             bus,
             db.clone(),
             clock,
+            chatlog_clock,
             providers,
             sender.clone(),
             inbox,
