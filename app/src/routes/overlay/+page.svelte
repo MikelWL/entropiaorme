@@ -78,6 +78,7 @@
 	let overlayRoot: HTMLDivElement | null = $state(null);
 	let overlayMenuKind = $state<OverlayMenuKind | null>(null);
 	let postSessionArmourButton: HTMLButtonElement | null = $state(null);
+	let inSessionArmourButton: HTMLButtonElement | null = $state(null);
 	// Yellow attribution-not-ready warning that replaces the TRACK button when
 	// startTracking is refused by the backend (no hotbar slot bound in hotbar
 	// mode, or trifecta not configured in trifecta mode). Persists until the
@@ -167,6 +168,7 @@
 			data.trackProtectionBySegment === false &&
 			(protection.overview?.loadouts.length ?? 0) > 0,
 		showArmourPopup: (recordNow: boolean) => armourCost.showPostSession(recordNow),
+		showArmourWorkflowInSession: () => armourCost.showInSession(),
 		onPromptShown: () => {
 			void tick().then(() => armourCost.scheduleAnchorSync());
 		}
@@ -438,6 +440,7 @@
 		bySegment: () => data.trackProtectionBySegment !== false,
 		protection: () => protection.overview,
 		postSessionAnchor: () => postSessionArmourButton,
+		inSessionAnchor: () => inSessionArmourButton,
 		onClosed: () => flow.notifyArmourPopupClosed()
 	});
 
@@ -951,6 +954,7 @@
 		bind:mobInput
 		bind:boostDraft={facets.boostDraft}
 		bind:postSessionArmourButton
+		bind:inSessionArmourButton
 		onStart={handleStart}
 		onStop={flow.requestStop}
 		awaitingArmourTrackDecision={flow.awaitingArmourDecision}

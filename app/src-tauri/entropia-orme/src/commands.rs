@@ -1858,6 +1858,7 @@ mod tests {
         "protection_set_archive",
         "protection_loadout_archive",
         "protection_select",
+        "protection_pending_attribution",
         "protection_assign_session_loadout",
         "protection_observation_confirm",
         "protection_repair_confirm",

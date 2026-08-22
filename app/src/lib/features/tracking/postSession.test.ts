@@ -22,6 +22,7 @@ function makeFlow(overrides: Partial<PostSessionFlowOptions> = {}) {
 		stopTracking: vi.fn(async () => ({ session_id: 's1' })),
 		captureArmourSetupOnLater: vi.fn(() => false),
 		showArmourPopup: vi.fn(async () => true),
+		showArmourWorkflowInSession: vi.fn(async () => true),
 		onPromptShown: vi.fn(),
 	};
 	const flow = createPostSessionFlow({ ...options, ...overrides } satisfies PostSessionFlowOptions);
@@ -91,7 +92,7 @@ describe('the stop sequence', () => {
 		await flow.requestStop();
 		isSessionActive.mockReturnValue(false);
 
-		await flow.decideArmourTrack('yes');
+		await flow.decideArmourTrack('no');
 		expect(options.stopTracking).toHaveBeenCalledTimes(1);
 		expect(options.refresh).toHaveBeenCalledTimes(1); // only the post-stop refresh
 		expect(flow.lastSessionStats).toBeNull();
@@ -155,18 +156,30 @@ describe('decideArmourTrack', () => {
 		expect(options.stopTracking).not.toHaveBeenCalled();
 	});
 
-	it('yes disarms the prompt, stops, then opens the armour popup after the stop', async () => {
+	it('Record opens the workflow against the session and leaves it running', async () => {
+		// Armour cost belongs to the session it was spent in, so recording it
+		// is part of that session rather than an afterthought about a closed
+		// one. The user stops when they have finished.
 		const { flow, options } = makeFlow({ armourReminderEnabled: vi.fn(() => true) });
 		await flow.requestStop();
 
 		await flow.decideArmourTrack('yes');
 		expect(flow.awaitingArmourDecision).toBe(false);
+		expect(options.showArmourWorkflowInSession).toHaveBeenCalledTimes(1);
+		expect(options.stopTracking).not.toHaveBeenCalled();
+		expect(options.showArmourPopup).not.toHaveBeenCalled();
+		expect(flow.lastSessionId).toBeNull();
+	});
+
+	it('a second stop after recording still offers the prompt', async () => {
+		const { flow, options } = makeFlow({ armourReminderEnabled: vi.fn(() => true) });
+		await flow.requestStop();
+		await flow.decideArmourTrack('yes');
+
+		await flow.requestStop();
+		expect(flow.awaitingArmourDecision).toBe(true);
+		await flow.decideArmourTrack('no');
 		expect(options.stopTracking).toHaveBeenCalledTimes(1);
-		expect(options.showArmourPopup).toHaveBeenCalledTimes(1);
-		expect(options.showArmourPopup).toHaveBeenCalledWith(true);
-		expect(options.showArmourPopup.mock.invocationCallOrder[0]).toBeGreaterThan(
-			options.stopTracking.mock.invocationCallOrder[0],
-		);
 	});
 
 	it('no stops without the armour popup', async () => {
@@ -195,10 +208,11 @@ describe('the deferred clear', () => {
 	it('holds the readout while the armour popup is open, until it closes', async () => {
 		const { flow } = makeFlow({
 			armourReminderEnabled: vi.fn(() => true),
+			captureArmourSetupOnLater: vi.fn(() => true),
 		});
 
 		await flow.requestStop();
-		await flow.decideArmourTrack('yes');
+		await flow.decideArmourTrack('no');
 		// The popup is open: the readout must survive underneath it.
 		expect(flow.lastSessionId).toBe('s1');
 		expect(flow.lastSessionStats).toEqual(stats);
@@ -214,15 +228,20 @@ describe('the deferred clear', () => {
 		expect(flow.lastSessionId).toBeNull();
 	});
 
-	it('retains the stopped-session anchor when the popup fails to open', async () => {
+	it('clears rather than stranding the readout when the popup fails to open', async () => {
+		// A readout left standing with no workflow over it and nothing to
+		// dismiss it wedges the overlay until the window is reloaded. The
+		// session is offered back through the pending-attribution route, so
+		// clearing loses nothing.
 		const { flow } = makeFlow({
 			armourReminderEnabled: vi.fn(() => true),
+			captureArmourSetupOnLater: vi.fn(() => true),
 			showArmourPopup: vi.fn(async () => false),
 		});
 		await flow.requestStop();
-		await flow.decideArmourTrack('yes');
+		await flow.decideArmourTrack('no');
 
-		expect(flow.lastSessionId).toBe('s1');
-		expect(flow.lastSessionStats).toEqual(stats);
+		expect(flow.lastSessionId).toBeNull();
+		expect(flow.lastSessionStats).toBeNull();
 	});
 });

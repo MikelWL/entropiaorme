@@ -4,6 +4,7 @@ import type { ProtectionLoadoutInput, ProtectionSetInput } from './commands.gen'
 import * as commands from './commands.gen';
 
 export type {
+	PendingProtectionSession,
 	ProtectionCostAllocation,
 	ProtectionCostWindow,
 	ProtectionEconomyKind,
@@ -38,6 +39,8 @@ export const archiveProtectionLoadout = (id: string) =>
 export const selectProtectionLoadout = (id: string) => commands.protectionSelect(Number(id));
 export const assignSessionProtectionLoadout = (sessionId: string, loadoutId: string) =>
 	commands.protectionAssignSessionLoadout(sessionId, Number(loadoutId));
+/** The sessions whose defence evidence still has no armour setup named for it. */
+export const pendingProtectionAttribution = commands.protectionPendingAttribution;
 export const confirmProtectionObservation = commands.protectionObservationConfirm;
 export const confirmProtectionRepair = commands.protectionRepairConfirm;
 export const scanTradeTerminalValue = commands.protectionTradeTerminalScan;

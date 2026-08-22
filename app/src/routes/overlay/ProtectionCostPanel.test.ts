@@ -6,6 +6,7 @@ import type { ProtectionCostStep } from '$lib/features/protection/protectionCost
 
 const api = vi.hoisted(() => ({
 	assignSessionProtectionLoadout: vi.fn(),
+	pendingProtectionAttribution: vi.fn(),
 	confirmProtectionRepair: vi.fn(),
 	scanRepairCost: vi.fn(),
 	scanTradeTerminalValue: vi.fn(),
@@ -138,6 +139,17 @@ describe('protection cost panel', () => {
 	it('captures a whole-session setup on Later without recording a cost', async () => {
 		const onClose = vi.fn();
 		api.assignSessionProtectionLoadout.mockResolvedValue({});
+		api.pendingProtectionAttribution
+			.mockResolvedValueOnce([
+				{
+					sessionId: 's1',
+					name: 'Caly AI Dailies',
+					startedAt: 1,
+					endedAt: null,
+					defenceEventCount: 3,
+				},
+			])
+			.mockResolvedValue([]);
 		render(ProtectionCostPanel, {
 			props: {
 				sessionId: 's1',
@@ -163,14 +175,121 @@ describe('protection cost panel', () => {
 			},
 		});
 
+		await waitFor(() => expect(screen.getByRole('combobox')).toBeTruthy());
 		await fireEvent.change(screen.getByRole('combobox'), { target: { value: '10' } });
 		await waitFor(() =>
 			expect(api.assignSessionProtectionLoadout).toHaveBeenCalledWith('s1', '10'),
 		);
+		// Naming the setup takes the session off the owed list, which must not
+		// read as the hits it just attributed having gone away.
+		await waitFor(() => expect(screen.getByText(/Recording under/)).toBeTruthy());
+		expect(screen.queryByText(/hits/)).toBeNull();
+		await fireEvent.click(await screen.findByText('Continue'));
 		expect(screen.getByText('Armour setup saved')).toBeTruthy();
 		expect(api.confirmProtectionRepair).not.toHaveBeenCalled();
 		await fireEvent.click(screen.getByText('Done'));
 		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('waits for a named setup before it will carry one forward', async () => {
+		// A session that has taken no hits is owed no setup, so it is absent
+		// from the pending list. Nothing may be carried forward on its behalf
+		// until a setup is actually named.
+		api.assignSessionProtectionLoadout.mockResolvedValue({});
+		api.pendingProtectionAttribution.mockResolvedValue([]);
+		render(ProtectionCostPanel, {
+			props: {
+				sessionId: 's1',
+				repairOcrEnabled: false,
+				steps: [],
+				requiresLoadoutSelection: true,
+				recordNow: true,
+				protection: {
+					sets: [],
+					loadouts: [
+						{
+							id: '10',
+							name: 'Jaguar and plates',
+							armour: { id: '1', name: 'Jaguar', economyKind: 'unlimited', markupPercent: null },
+							plates: null,
+						},
+					],
+					activeLoadoutId: null,
+					recentReconciliations: [],
+					recentCostWindows: [],
+				},
+				onClose: vi.fn(),
+			},
+		});
+
+		await waitFor(() => expect(screen.getByRole('combobox')).toBeTruthy());
+		expect(screen.queryByText('Continue')).toBeNull();
+		expect(screen.queryByText('Armour setup saved')).toBeNull();
+
+		await fireEvent.change(screen.getByRole('combobox'), { target: { value: '10' } });
+		await waitFor(() =>
+			expect(api.assignSessionProtectionLoadout).toHaveBeenCalledWith('s1', '10'),
+		);
+		await fireEvent.click(await screen.findByText('Continue'));
+		expect(screen.queryByText('Choose armour setup')).toBeNull();
+	});
+
+	it('offers a session left without a setup alongside the running one', async () => {
+		// A session put off for later carries unattributed evidence, which no
+		// cost naming an armour set can settle. If the recording surface does
+		// not say so, it stays unpriced silently.
+		api.assignSessionProtectionLoadout.mockResolvedValue({});
+		api.pendingProtectionAttribution.mockResolvedValue([
+			{
+				sessionId: 's1',
+				name: 'Caly AI Dailies',
+				startedAt: 2,
+				endedAt: null,
+				defenceEventCount: 3,
+			},
+			{
+				sessionId: 'postponed',
+				name: 'Caly AI Dailies',
+				startedAt: 1,
+				endedAt: 2,
+				defenceEventCount: 123,
+			},
+		]);
+		render(ProtectionCostPanel, {
+			props: {
+				sessionId: 's1',
+				repairOcrEnabled: false,
+				steps: [],
+				requiresLoadoutSelection: true,
+				recordNow: false,
+				protection: {
+					sets: [],
+					loadouts: [
+						{
+							id: '10',
+							name: 'Hyperion + 5B',
+							armour: { id: '1', name: 'Hyperion', economyKind: 'unlimited', markupPercent: null },
+							plates: null,
+						},
+					],
+					activeLoadoutId: null,
+					recentReconciliations: [],
+					recentCostWindows: [],
+				},
+				onClose: vi.fn(),
+			},
+		});
+
+		await waitFor(() => expect(screen.getAllByRole('combobox')).toHaveLength(2));
+		expect(screen.getByText('This session')).toBeTruthy();
+		expect(screen.getByText(/123 hits/)).toBeTruthy();
+
+		await fireEvent.change(screen.getByLabelText('Armour setup for Caly AI Dailies'), {
+			target: { value: '10' },
+		});
+		await waitFor(() =>
+			expect(api.assignSessionProtectionLoadout).toHaveBeenCalledWith('postponed', '10'),
+		);
 	});
 
 	it('accepts a lower limited-armour reading without an implementation assertion', async () => {
