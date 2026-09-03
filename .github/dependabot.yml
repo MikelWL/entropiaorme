@@ -10,10 +10,15 @@
 #
 # Scope is GitHub Actions only; the npm / pip / cargo ecosystems keep their
 # own committed lockfiles and are out of scope here.
+#
+# Bumps target the integration branch (next) so they soak like every other
+# change and reach main by promotion, rather than landing on the release line
+# directly.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "next"
     schedule:
       interval: "weekly"
     groups:

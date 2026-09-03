@@ -14,10 +14,6 @@ reviews:
     drafts: false
     base_branches:
       - main
-      # Stacked flows open incremental PRs against a long-lived integration
-      # branch (conventional-commit-typed) rather than main; without this
-      # pattern those PRs silently skip auto-review.
-      - "^(feat|fix|refactor|docs|chore|build|ci|style|test|perf)/.+"
   path_filters:
     - "!**/*.lock"
     - "!**/package-lock.json"

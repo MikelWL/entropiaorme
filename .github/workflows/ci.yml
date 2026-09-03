@@ -2,13 +2,12 @@ name: ci
 
 on:
   pull_request:
+  # Two lines. next is the integration branch: work lands on it directly and is
+  # lived with there. main is the vetted branch releases are cut from, reached
+  # by a promotion pull request from next. Both run the whole workflow on push,
+  # so a landing is verified on the exact state that landed.
   push:
-    branches: [main]
-  # The merge queue integrates a pull request onto the current main, then runs
-  # this workflow against that integrated commit before it lands. The full tier
-  # runs on this event (see the full-tier step), so the queue is the pre-merge
-  # gate that keeps the complete suite passing on the exact state being merged.
-  merge_group:
+    branches: [main, next]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,8 +23,8 @@ permissions:
 jobs:
   # Detect whether the change needs the expensive jobs (the Windows backend
   # matrix, the frontend build, and the compiling Rust workspace jobs) or is
-  # documentation-only. A pull request, or a merge-queue run, that touches only
-  # Markdown skips them; any other path, and a push to main, runs them. The
+  # documentation-only. A pull request or a push that touches only Markdown
+  # skips them; any other path runs them, as does any event without a range. The
   # verdict is consumed by the gated jobs' `if:` and by the always-running
   # `ci-gate` sentinel below, which is the required check.
   changes:
@@ -40,9 +39,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Pure git + POSIX shell, so no language runtime is needed. Emits code=false
-      # only when every changed path is Markdown. On the merge queue the range is
-      # the integrated commit's base..head (the queued change merged onto main),
-      # so a documentation-only change skips the expensive jobs in the queue too.
+      # only when every changed path is Markdown. On a push the range is the
+      # pushed commits (the ref before..after), so a documentation-only push to
+      # either line skips the expensive jobs too. A push that creates a branch
+      # has no before (the all-zero SHA), so it resolves to code=true.
       #
       # The gating LOGIC runs from the BASE commit's copy of the script, not the
       # PR head's, so a fork pull request cannot rewrite the classifier to emit
@@ -59,12 +59,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
         run: |
           case "$EVENT_NAME" in
             pull_request) base_sha="$PR_BASE_SHA" ;;
-            merge_group) base_sha="$MERGE_GROUP_BASE_SHA" ;;
+            push) base_sha="$PUSH_BEFORE_SHA" ;;
             *) base_sha="" ;;
           esac
           script=".github/scripts/classify-change-scope.sh"
@@ -81,28 +81,38 @@ jobs:
     name: Golden ratification guard
     runs-on: ubuntu-latest
     # The guard compares the changed commits against their base, so it needs a
-    # two-sided range. It runs on a pull request (the review-time gate) and on
-    # the merge queue's integrated commit (this is a required check, so it must
-    # report a status on the merge_group event or the queue stalls; it also
-    # re-verifies the guard on the exact state about to land). A plain push to
-    # main is excluded: that state already cleared this check on its PR and in
-    # the queue.
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # two-sided range: a pull request's base..head at review time, and the
+    # pushed commits' before..after on either line, so the exact state that
+    # landed is re-verified. A push that creates a branch has no before (git
+    # reports the all-zero SHA) and stands up content already verified on
+    # another ref, so the guard skips cleanly rather than failing.
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so the base..head range resolves to the PR's commits.
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve the change range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          PUSH_CREATED: ${{ github.event.created }}
+        run: bash .github/scripts/resolve-change-range.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
+        if: steps.range.outputs.skip != 'true'
         with:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        if: steps.range.outputs.skip != 'true'
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       # Fail when a commit modifies a committed golden (a scenario fingerprint /
       # DB-state snapshot, an HTTP-response or OpenAPI snapshot, or a consistency
       # golden) without BOTH the documented 'test: regenerate goldens'
@@ -120,54 +130,64 @@ jobs:
       # main. The guard is a subcommand of the in-tree cargo xtask, so it
       # fails closed on any range it cannot resolve.
       - name: Guard golden ratification
+        if: steps.range.outputs.skip != 'true'
         working-directory: app/src-tauri
-        # On a pull request the range is the PR's base..head; on the merge queue
-        # it is the integrated commit's base..head (the queued change merged onto
-        # main), which carries the same commits, golden edits, and ratification
-        # report the PR did.
+        # A pull request's base..head, or the pushed commits' before..after: the
+        # same commits, golden edits, and ratification report either way.
         env:
-          RANGE_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
-          RANGE_HEAD: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
         run: cargo run -q -p xtask -- ratify-check --range "$RANGE_BASE..$RANGE_HEAD"
 
   authoring-lint:
-    name: Authoring lint (em dash + UK spelling)
+    name: Authoring lint
     runs-on: ubuntu-latest
     # The lint is diff-scoped, so it needs a base..head range to know which lines
-    # the change adds. It runs on a pull request (review time) and on the merge
-    # queue's integrated commit (the exact lines about to land), mirroring the
-    # golden-ratification guard above. A plain push to main is excluded: that
-    # state already cleared this on its PR and in the queue. The version-stamp
-    # parity check is whole-tree rather than diff-scoped, so it runs as its own
-    # step below (and locally via the pre-commit hook).
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # and commits the change adds: a pull request's base..head at review time,
+    # and the pushed commits' before..after on either line (the exact lines and
+    # messages that landed), mirroring the golden-ratification guard above. A
+    # push that creates a branch skips the diff-scoped step the same way. The
+    # version-stamp parity check and the source disciplines are whole-tree
+    # rather than diff-scoped, so they run unconditionally as their own steps
+    # below (and locally via the pre-commit hook).
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so the base..head range resolves to the PR's commits.
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve the change range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          PUSH_CREATED: ${{ github.event.created }}
+        run: bash .github/scripts/resolve-change-range.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
         with:
           toolchain: 1.96.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # Flag em dashes (U+2014) in any added line, and US spellings in added
-      # prose lines (docs + comments), on the lines this PR adds only. Pre-existing
-      # content is out of scope by construction, so the gate binds new authoring
-      # without forcing a drive-by sweep of the old. A subcommand of the in-tree
-      # cargo xtask.
-      - name: Lint newly authored lines
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
+      # Flag em dashes (U+2014) in any added line, US spellings in added prose
+      # lines (docs + comments), and, over the added prose lines and the commit
+      # messages in the range, references to files the repository does not have,
+      # iteration tokens, and tool-attribution lines. Only what this change adds
+      # is inspected: pre-existing content is out of scope by construction, so
+      # the gate binds new authoring without forcing a drive-by sweep of the old.
+      # A subcommand of the in-tree cargo xtask.
+      - name: Lint newly authored lines and commit messages
+        if: steps.range.outputs.skip != 'true'
         working-directory: app/src-tauri
-        # PR base..head on a pull request; the integrated commit's base..head on
-        # the merge queue (the same added lines, merged onto main).
         env:
-          RANGE_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
-          RANGE_HEAD: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+          RANGE_BASE: ${{ steps.range.outputs.base }}
+          RANGE_HEAD: ${{ steps.range.outputs.head }}
         run: cargo run -q -p xtask -- authoring-lint --range "$RANGE_BASE..$RANGE_HEAD"
 
       - name: Check version-stamp parity
@@ -175,7 +195,7 @@ jobs:
         # Whole-tree, not diff-scoped: the three version stamps (frontend
         # package.json, the Cargo workspace package, tauri.conf.json) must agree.
         # authoring-lint is a required input of the ci-gate aggregator, so this
-        # binds the parity check at PR and merge-queue time, not just locally.
+        # binds the parity check on every pull request and push, not just locally.
         run: cargo run -q -p xtask -- version-stamps
 
       - name: Check the source disciplines
@@ -188,7 +208,7 @@ jobs:
         # informational and never joins a realised figure), and the
         # in-development register (a surface shipping ahead of its capability
         # is declared once and marked where it renders; graduating it deletes
-        # both). All bind at PR and merge-queue time through this required job.
+        # both). All bind on every pull request and push through this required job.
         run: |
           cargo run -q -p xtask -- no-bare-setinterval
           cargo run -q -p xtask -- no-new-writable
@@ -269,9 +289,9 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       - run: npm ci
       # tauri-driver bridges WebdriverIO to the platform WebView2 WebDriver.
       - name: Install tauri-driver
@@ -430,9 +450,9 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       # --all-targets lints the test and bench code too; -D warnings promotes
       # every lint to a failure so the gate cannot drift into an
       # ignored-warnings state.
@@ -494,9 +514,9 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       # Prebuilt binary rather than cargo install (same rationale as the
       # policy job's tools).
       - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2.82.11
@@ -545,7 +565,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
@@ -607,9 +627,9 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: app/src-tauri
-          # Restrict cache writes to the trusted main timeline; PR and merge-queue
+          # Restrict cache writes to the trusted main and next timelines; pull-request
           # runs restore read-only so a branch cannot seed or poison the cache.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' }}
       - uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2.82.11
         with:
           tool: cargo-llvm-cov,cargo-nextest
@@ -709,16 +729,15 @@ jobs:
             echo "::error::The Rust workspace policy checks (fmt, audit, deny) did not pass (result: $RUST_POLICY_RESULT)."
             exit 1
           fi
-          # The golden ratification guard and the authoring lint run on pull
-          # requests and the merge queue (the gating events). They are skipped on
-          # a direct push to main, where the gate tolerates the skip because the
-          # gating already happened at the pull-request and merge-queue runs. A
-          # real failure on a gating event still fails the gate.
-          if [ "$GOLDEN_RATIFICATION_RESULT" != "success" ] && [ "$GOLDEN_RATIFICATION_RESULT" != "skipped" ]; then
+          # The golden ratification guard and the authoring lint run on every
+          # pull request and push (a branch-creating push skips their diff-scoped
+          # steps inside the job, which still succeeds), so both must succeed
+          # outright on every run.
+          if [ "$GOLDEN_RATIFICATION_RESULT" != "success" ]; then
             echo "::error::The golden ratification guard did not pass (result: $GOLDEN_RATIFICATION_RESULT)."
             exit 1
           fi
-          if [ "$AUTHORING_LINT_RESULT" != "success" ] && [ "$AUTHORING_LINT_RESULT" != "skipped" ]; then
+          if [ "$AUTHORING_LINT_RESULT" != "success" ]; then
             echo "::error::The authoring lint did not pass (result: $AUTHORING_LINT_RESULT)."
             exit 1
           fi

@@ -142,7 +142,7 @@ The contract snapshots are unchanged.
 
 ### Ratification guard
 
-Both the marker and the recorded verdict are enforced, not merely a courtesy to reviewers. `cargo run -p xtask -- ratify-check --range <BASE>..<HEAD>` runs as a pull-request and merge-queue job (`Golden ratification guard` in `.github/workflows/ci.yml`). It inspects the diff against the base; a golden file is anything matching the committed-golden paths above. If any commit modifies a golden, the guard requires **both**:
+Both the marker and the recorded verdict are enforced, not merely a courtesy to reviewers. `cargo run -p xtask -- ratify-check --range <BASE>..<HEAD>` runs on every pull request and push (`Golden ratification guard` in `.github/workflows/ci.yml`). It inspects the diff against the base; a golden file is anything matching the committed-golden paths above. If any commit modifies a golden, the guard requires **both**:
 
 - the `test: regenerate goldens` subject prefix on the relevant commit(s); and
 - a ratification report added or modified in the same range, carrying a fenced `ORACLE-RATIFICATION` block whose `VERDICT` is `ratification-sound` and whose `goldens:` field names every changed set, committed no earlier than the last golden change in the range.
@@ -210,11 +210,11 @@ This layer runs on Windows in CI (the `Frontend e2e + visual (native shell, Wind
 
 ## Continuous integration
 
-Every pull request, push to `main`, and merge-queue run executes the workflow in `.github/workflows/ci.yml`. On a documentation-only change (every changed file is Markdown) the compiling jobs are skipped, as described under "Documentation-only changes" below.
+Every pull request and every push to the two development branches executes the workflow in `.github/workflows/ci.yml`. `next` is the integration branch work lands on directly; `main` is the stable branch releases are cut from, reached by a promotion pull request from `next` (merged as a merge commit, so both lines keep the same commits) or by a squash hotfix pull request. On a documentation-only change (every changed file is Markdown) the compiling jobs are skipped, as described under "Documentation-only changes" below.
 
 - **Change scope and CI gate**: a quick detection job classifies whether the change touches code or only documentation, and the compiling jobs run only for a code change. A small always-running `CI gate` sentinel is the single required check in their place: it passes when the change is documentation-only (those jobs were legitimately skipped) or when every gated job succeeded, and fails closed otherwise, so a skip can never let an untested change merge. Branch protection requires only this one context, so the required-check list never drifts as individual jobs are added or renamed.
-- **Golden ratification** (pull requests and the merge queue): the `ratify-check` guard, failing when a commit moves a golden without both the marker and a recorded `ratification-sound` verdict for the changed sets (see "Ratification guard" above).
-- **Authoring lint** (pull requests and the merge queue): the `authoring-lint` guard flags em dashes and US spellings on the lines a change adds, and a `version-stamps` step asserts the three application version stamps stay in lock-step (see "Authoring lint" below).
+- **Golden ratification** (every pull request and push): the `ratify-check` guard, failing when a commit moves a golden without both the marker and a recorded `ratification-sound` verdict for the changed sets (see "Ratification guard" above).
+- **Authoring lint** (every pull request and push): the `authoring-lint` guard flags em dashes and US spellings on the lines a change adds, and references to absent files, iteration tokens, and tool-attribution lines in the added prose and the commit messages; a `version-stamps` step asserts the three application version stamps stay in lock-step (see "Authoring lint" below).
 - **Frontend**: the generated-client freshness check, the production build, the type-check, the Biome lint, and the Vitest suites.
 - **Frontend e2e + visual** (Windows): the native-shell IPC and visual-regression suites (see above).
 - **Rust workspace policy** (`fmt` + `audit` + `deny`): formatting, RustSec advisory audit, and supply-chain policy (licence allowlist, bans, registry sources). Source- and lockfile-level only, so it runs unconditionally on a cheap Linux runner (see "Rust workspace checks" below).
@@ -222,15 +222,15 @@ Every pull request, push to `main`, and merge-queue run executes the workflow in
 - **Rust backend members** (`nextest`, Linux): builds and tests the backend members on a runner without the Tauri toolchain, structurally proving they stay free of GUI dependencies, and compile-checks the criterion benches.
 - **Rust backend members** (branch coverage): measures per-member branch coverage over the same members with `cargo llvm-cov` on the nightly toolchain (branch instrumentation is nightly-only). The figure is review evidence (whether a member's tests exercise the paths its behaviour rests on) and is published as the README's coverage badge from `main`.
 
-On the merge queue these same jobs run against the integrated commit, so the queue is the pre-merge gate that vets the exact state being merged.
+On a push these same jobs run against the state that landed, so a promotion to `main` is verified on the exact merged result as well as on its pull request.
 
-### The merge queue
+### The two branches
 
-A change can pass on its own branch yet break once integrated onto the current `main`; a required merge queue closes that gap. When a pull request is ready, merging it adds it to the queue rather than landing it directly; the queue integrates the change onto the current `main` and runs the CI workflow against that integrated commit on a `merge_group` event, then merges automatically once the run is green. Because the queue tests the integrated result, a regression that only appears once a change is combined with the current `main` is caught before it reaches the branch: a change that fails in the queue is dropped from it rather than landing.
+A change lands on `next` by direct push and is run from there before it is promoted. `main` accepts only pull requests, requires the `CI gate` check with the branch up to date, and merges by auto-merge once the check is green; there is no merge queue, because the workflow already runs on every push to both branches and the nightly campaign covers what is too slow for it. A promotion pull request from `next` merges as a merge commit; the integration branch is never squashed, so the two branches keep the same commits and a promotion that falls behind `main` is refreshed by merging `main` into `next`.
 
 ### Documentation-only changes
 
-A change that touches only documentation needs none of the compiling jobs: there is no code to test and no frontend to build. The change-scope detection classifies it on both a pull request and the merge queue, so the heavy jobs are skipped in both places. The classification logic runs from the base commit's copy of the classifier, not the head's, so a fork pull request cannot rewrite it to skip the gates; the head's changed-file list is data the fork cannot forge.
+A change that touches only documentation needs none of the compiling jobs: there is no code to test and no frontend to build. The change-scope detection classifies it on both a pull request and a push, so the heavy jobs are skipped in both places. The classification logic runs from the base commit's copy of the classifier, not the head's, so a fork pull request cannot rewrite it to skip the gates; the head's changed-file list is data the fork cannot forge.
 
 Skipping a required check is the hazard: branch protection treats a never-reported required check as pending (deadlocking the merge) and a skipped one as passing (fail-open). The `CI gate` avoids this with an always-running, fail-closed sentinel that stands in for the gated contexts: a documentation-only change goes green in seconds on the sentinel's verdict alone, while a code change still runs and must pass everything. The classification is deliberately conservative: anything other than Markdown counts as code, so the safe direction (run the suite) is the default whenever there is any doubt.
 
@@ -257,7 +257,7 @@ The configured hooks are:
 - **Biome** (lint + format) over the frontend, mirroring the CI `npm run lint` step through the lockfile-pinned binary (run `npm ci` in `app/` once so the hook can resolve it).
 - **`no-bare-setinterval`**: the frontend polling-discipline guard (a `cargo xtask` subcommand), forbidding a bare `setInterval` outside the visibility-gated helper and any reference to the retired tracking event.
 - **`in-development`**: the in-development surface guard (a `cargo xtask` subcommand); see "In-development surfaces" below.
-- **authoring lint** (em dash + UK spelling), diff-scoped against the staged change, and **version-stamp parity**, both `cargo xtask` subcommands (see "Authoring lint" below).
+- **authoring lint** (em dash, UK spelling, and the reference and vocabulary rules), diff-scoped against the staged change, and **version-stamp parity**, both `cargo xtask` subcommands (see "Authoring lint" below).
 - general hygiene: end-of-file and trailing-whitespace fixers, YAML and TOML validity, merge-conflict markers, and a mixed-line-ending check (line-ending policy itself is set per file type in `.gitattributes`).
 
 The xtask guards compile the in-tree `xtask` crate once (cached thereafter) and run the same logic CI runs. The CI `pre-commit` job exercises the hygiene hooks in pre-commit's own managed environments; Biome is skipped there (no `node_modules`), the dedicated frontend job being its enforcing gate.
@@ -278,12 +278,15 @@ Only genuinely misleading surfaces belong in the register: a control that does n
 
 ## Authoring lint
 
-Two mechanical authoring rules are enforced as deterministic lint rather than eyeballed in review: no em dashes (U+2014) in authored content, and UK spelling in authored prose. Both are `cargo xtask` subcommands, run in CI over the pull request's `base..head` range and locally over the staged change.
+Five mechanical authoring rules are enforced as deterministic lint rather than eyeballed in review: no em dashes (U+2014) in authored content, UK spelling in authored prose, and, over the added prose and the commit messages, no references to files the repository does not have, no iteration tokens, and no tool-attribution lines. All run from one `cargo xtask authoring-lint` subcommand, in CI over the pull request's or push's `base..head` range and locally over the staged change.
 
-They are **diff-scoped**: they inspect only the lines a change adds, never the whole tree. This is deliberate. The tree carries pre-existing US spellings and em dashes that predate the discipline, and normalising them drive-by is out of scope; checking added lines only binds new content without disturbing the old. The scope differs by rule:
+They are **diff-scoped**: they inspect only the lines and commit messages a change adds, never the whole tree. This is deliberate. The tree carries pre-existing US spellings and em dashes that predate the discipline, and normalising them drive-by is out of scope; checking added lines only binds new content without disturbing the old. The scope differs by rule:
 
 - The **em-dash ban** applies to every added line in a non-exempt file (licence texts, third-party notices, vendored trees and lockfiles, binaries, and generated artefacts are exempt). U+2014 is never code syntax, so an added em dash is always authored content.
 - The **UK-spelling check** applies only to added lines in prose contexts (Markdown / plain-text docs, and comment-only lines in code), because tokens like `color` (CSS), `behavior` (DOM API), `center` (a CSS value), and `serialize` (an identifier) are legitimate US-spelled code, not authoring slips. The US-to-UK map is a curated floor, extended as real slips appear.
+- The **reference check** applies to the commit messages in the range and to added prose lines. A path-like token (a Markdown file name, a dot-directory path, or, in a commit message, a slash path with a source extension) must name something the repository has: a tracked file or directory at the head of the range, a suffix of one at a path-component boundary, a path relative to the citing file, a path the change itself deletes or renames away, or a path the repository declares ignored. Git trailers (`Co-Authored-By`, `Fixes #N`) and URLs are exempt. Prose in a decision record legitimately cites files a later decision removed, so diff text is checked for the two narrow shapes only.
+- The **iteration-token check** flags round-number tokens (an upper-case R and one or two digits; three digits is git's rename score, not a round) in messages and prose, and "round N" in commit messages; a message describes the change, not its attempt number.
+- The **attribution-line check** flags a line that opens with an attribution verb ("Generated with", "Authored by") and names a tool by link or product name. Authorship is the commit's author and its `Co-Authored-By` trailers.
 
 A companion check, `cargo xtask version-stamps`, asserts the three application version stamps (`app/package.json`, the `[workspace.package]` version in `app/src-tauri/Cargo.toml`, and `app/src-tauri/entropia-orme/tauri.conf.json`) carry an identical version, so a release bump cannot update some and miss others. It is whole-tree rather than diff-scoped (the invariant holds over the current tree at all times). `cargo xtask bump-version <VERSION>` rewrites all three in lock-step.
 

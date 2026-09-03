@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Classify a change as documentation-only or code, to gate the expensive CI jobs.
 #
-# The per-pull-request CI gate runs a Windows backend test matrix and a frontend
-# build, and the full tier runs on the merge queue's integrated commit before a
-# change lands. A change that touches only documentation (Markdown) needs none of
-# that. This guard inspects the set of files a change touches and emits a single
-# `code` flag the workflows read to decide whether to run those jobs.
+# The CI workflow runs a Windows backend test matrix and a frontend build on
+# every pull request and on every push to the two development lines. A change
+# that touches only documentation (Markdown) needs none of that. This guard
+# inspects the set of files a change touches and emits a single `code` flag the
+# workflows read to decide whether to run those jobs.
 #
 # The flag is deliberately conservative. `code=false` (documentation-only: skip
 # the expensive jobs) is emitted only when EVERY changed path is a Markdown file.
 # Any other path, an empty change set, an event that supplies no comparable range
-# (such as a push to main), and any classification doubt all resolve to
-# `code=true`, so the safe failure direction is to run the suite.
+# (such as a push that creates a branch), and any classification doubt all
+# resolve to `code=true`, so the safe failure direction is to run the suite.
 #
 # The flag gates required checks, so the workflows pair it with a fail-closed
 # aggregator: a documentation-only skip passes the gate, but a detection that did
@@ -19,10 +19,11 @@
 # through.
 #
 # Range resolution mirrors the workflow event: a pull request supplies its
-# base..head through PR_BASE_SHA / PR_HEAD_SHA; a merge_group event supplies the
-# integrated commit's base..head through MERGE_GROUP_BASE_SHA /
-# MERGE_GROUP_HEAD_SHA. Any other event, or a handled event missing either SHA,
-# yields no range and therefore code=true. An explicit --range overrides the env.
+# base..head through PR_BASE_SHA / PR_HEAD_SHA; a push supplies the pushed
+# commits' before..after through PUSH_BEFORE_SHA / PUSH_HEAD_SHA (a push that
+# creates a branch reports the all-zero SHA as its before, which counts as no
+# range). Any other event, or a handled event missing either SHA, yields no range
+# and therefore code=true. An explicit --range overrides the env.
 #
 # Pure git + POSIX shell, so CI needs no language runtime. Run from a workflow:
 #   EVENT_NAME=pull_request PR_BASE_SHA=<base> PR_HEAD_SHA=<head> \
@@ -46,9 +47,12 @@ done
 if [ -z "$commit_range" ]; then
   case "${EVENT_NAME:-}" in
     pull_request) base="${PR_BASE_SHA:-}"; head="${PR_HEAD_SHA:-}" ;;
-    merge_group) base="${MERGE_GROUP_BASE_SHA:-}"; head="${MERGE_GROUP_HEAD_SHA:-}" ;;
+    push) base="${PUSH_BEFORE_SHA:-}"; head="${PUSH_HEAD_SHA:-}" ;;
     *) base=""; head="" ;;
   esac
+  if [ "$base" = "0000000000000000000000000000000000000000" ]; then
+    base=""
+  fi
   if [ -n "$base" ] && [ -n "$head" ]; then
     commit_range="$base..$head"
   fi
@@ -63,7 +67,7 @@ emit() {
 
 # No comparable range: run the jobs unconditionally.
 if [ -z "$commit_range" ]; then
-  echo "classify-change-scope: no pull-request or merge-queue range to inspect; code=true (run the jobs)."
+  echo "classify-change-scope: no pull-request or push range to inspect; code=true (run the jobs)."
   emit true
   exit 0
 fi

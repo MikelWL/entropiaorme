@@ -7,13 +7,16 @@
 //!
 //! Both rules inspect only added lines, never the whole tree: the tree carries
 //! pre-existing US spellings and em dashes that predate the discipline, and a
-//! lint floor only ratchets up.
+//! lint floor only ratchets up. The reference and vocabulary rules over the
+//! same added prose lines and over the range's commit messages live in
+//! `vocabulary.rs` and run from the same subcommand.
 
 use std::sync::OnceLock;
 
 use regex::Regex;
 
 use crate::git;
+use crate::vocabulary;
 
 /// The em dash, as an escape rather than the literal glyph so this guard's own
 /// source does not trip the rule it enforces.
@@ -325,22 +328,53 @@ pub fn run(args: &[String]) -> Result<i32, String> {
 
     let range = commit_range.as_deref().unwrap_or("HEAD");
     let diff = git::run(&["diff", "-U0", "--no-color", range], &repo_root)?;
-    let findings = scan(&parse_added_lines(&diff));
+    let added = parse_added_lines(&diff);
+    let findings = scan(&added);
 
-    if findings.is_empty() {
-        println!("check-authoring-lint: no em-dash or UK-spelling issues in the added lines.");
+    // The reference and vocabulary rules: over the added prose lines always,
+    // and over the commit messages when there is a range to read them from
+    // (the local pre-commit shape has no commits yet, only a working tree).
+    let known = vocabulary::known_paths(commit_range.as_deref(), &repo_root)?;
+    let mut vocabulary_findings = match commit_range.as_deref() {
+        Some(range) => {
+            vocabulary::scan_messages(&vocabulary::commits_in_range(range, &repo_root)?, &known)
+        }
+        None => Vec::new(),
+    };
+    vocabulary_findings.extend(vocabulary::scan_diff(&added, &known));
+    let candidates: Vec<String> = vocabulary_findings
+        .iter()
+        .flat_map(|f| f.candidates.iter().cloned())
+        .collect();
+    let ignored = vocabulary::ignored_paths(&candidates, &repo_root)?;
+    let vocabulary_findings = vocabulary::drop_ignored(vocabulary_findings, &ignored);
+
+    if findings.is_empty() && vocabulary_findings.is_empty() {
+        println!(
+            "check-authoring-lint: no authoring issues in the added lines{}.",
+            if commit_range.is_some() {
+                " or commit messages"
+            } else {
+                ""
+            }
+        );
         return Ok(0);
     }
 
     eprintln!(
-        "check-authoring-lint: authoring-discipline issues on newly added \
-lines.\n\n\
-These rules apply only to lines this change adds; pre-existing content \
-is out of scope. Fix the flagged lines (or, for the em-dash rule, \
-reword with a colon / semicolon / parentheses / comma).\n"
+        "check-authoring-lint: authoring-discipline issues in what this change \
+adds.\n\n\
+These rules apply only to the lines and commit messages this change adds; \
+pre-existing content is out of scope. Fix the flagged lines (for the em-dash \
+rule, reword with a colon / semicolon / parentheses / comma; for a flagged \
+reference, cite a path the repository has or drop the reference; reword an \
+iteration token or attribution line).\n"
     );
     for f in &findings {
         eprintln!("  {}:{}: [{}] {}", f.path, f.lineno, f.rule, f.detail);
+    }
+    for f in &vocabulary_findings {
+        eprintln!("  {}: [{}] {}", f.location, f.rule, f.detail);
     }
 
     if warn_only {
