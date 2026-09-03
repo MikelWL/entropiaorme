@@ -86,7 +86,7 @@ repos:
       # against HEAD here); the version-stamp parity check reads the manifests
       # whole, so both always_run. Both are cargo xtask subcommands.
       - id: authoring-lint
-        name: authoring lint (em dash + UK spelling, diff-scoped)
+        name: authoring lint (diff-scoped)
         entry: bash -c 'cd app/src-tauri && cargo run -q -p xtask -- authoring-lint'
         language: system
         pass_filenames: false

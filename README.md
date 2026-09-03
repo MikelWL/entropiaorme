@@ -16,6 +16,10 @@ A Tauri 2 shell hosting a Svelte 5 frontend over a pure-Rust in-process backend.
 - `data/demo/`: the bundled demo database
 - `assets/`: repository art
 
+## Branches
+
+Development happens on `next`; `main` is the stable line releases are cut from, and it moves only when `next` is promoted after its changes have been run in the installed application for a while. Build from `main` for stability, from `next` for the latest changes.
+
 ## Build (Windows)
 
 Prerequisites: Node.js ≥ 20.19, Rust (`rustup`), Visual Studio Build Tools (MSVC C++ workload), Windows Terminal, [`just`](https://just.systems/) ≥ 1.34.

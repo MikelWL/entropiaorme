@@ -30,6 +30,7 @@ mod no_new_writable;
 mod ratify;
 mod route_ceilings;
 mod version_stamps;
+mod vocabulary;
 
 use std::process::ExitCode;
 
@@ -41,7 +42,7 @@ USAGE:
 
 SUBCOMMANDS:
     ratify-check    --range <BASE>..<HEAD>   guard golden changes behind a recorded ratification verdict
-    authoring-lint  --range <BASE>..<HEAD>   flag em dashes and US spellings on newly added lines
+    authoring-lint  --range <BASE>..<HEAD>   flag em dashes, US spellings, and stray references in what a change adds
     version-stamps                            assert the app version stamps agree across the tree
     mutation-floors --outcomes <PATH>...      enforce per-file cargo-mutants score floors (flag repeats to merge campaign shards)
     no-bare-setinterval [--warn-only]         forbid bare setInterval and the retired tracking event in the frontend
