@@ -84,14 +84,19 @@ jobs:
     # two-sided range: a pull request's base..head at review time, and the
     # pushed commits' before..after on either line, so the exact state that
     # landed is re-verified. A push that creates a branch has no before (git
-    # reports the all-zero SHA) and stands up content already verified on
-    # another ref, so the guard skips cleanly rather than failing.
+    # reports the all-zero SHA): the resolver then inspects from the merge base
+    # with the default branch, or skips when the pushed commits are already on
+    # another branch, so a branch-creating push never bypasses the guard.
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so the base..head range resolves to the PR's commits.
           fetch-depth: 0
           persist-credentials: false
+      # The resolver decides what the guard inspects, so on a pull request it
+      # runs from the BASE commit's copy (the same fork-safety rule as the
+      # change-scope classifier): a fork cannot rewrite it to skip the guard.
+      # A push is the maintainer's own, so the checked-out copy is trusted.
       - name: Resolve the change range
         id: range
         env:
@@ -101,7 +106,19 @@ jobs:
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PUSH_HEAD_SHA: ${{ github.sha }}
           PUSH_CREATED: ${{ github.event.created }}
-        run: bash .github/scripts/resolve-change-range.sh
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          script=".github/scripts/resolve-change-range.sh"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_script="$RUNNER_TEMP/resolve-change-range.base.sh"
+            if ! git show "$PR_BASE_SHA:$script" > "$base_script" 2>/dev/null; then
+              echo "::error::The range resolver is absent on the pull request's base commit; failing closed."
+              exit 1
+            fi
+            script="$base_script"
+          fi
+          bash "$script"
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
         if: steps.range.outputs.skip != 'true'
         with:
@@ -145,8 +162,8 @@ jobs:
     # The lint is diff-scoped, so it needs a base..head range to know which lines
     # and commits the change adds: a pull request's base..head at review time,
     # and the pushed commits' before..after on either line (the exact lines and
-    # messages that landed), mirroring the golden-ratification guard above. A
-    # push that creates a branch skips the diff-scoped step the same way. The
+    # messages that landed), mirroring the golden-ratification guard above,
+    # including how a branch-creating push resolves its range. The
     # version-stamp parity check and the source disciplines are whole-tree
     # rather than diff-scoped, so they run unconditionally as their own steps
     # below (and locally via the pre-commit hook).
@@ -156,6 +173,10 @@ jobs:
           # Full history so the base..head range resolves to the PR's commits.
           fetch-depth: 0
           persist-credentials: false
+      # The resolver decides what the guard inspects, so on a pull request it
+      # runs from the BASE commit's copy (the same fork-safety rule as the
+      # change-scope classifier): a fork cannot rewrite it to skip the guard.
+      # A push is the maintainer's own, so the checked-out copy is trusted.
       - name: Resolve the change range
         id: range
         env:
@@ -165,7 +186,19 @@ jobs:
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PUSH_HEAD_SHA: ${{ github.sha }}
           PUSH_CREATED: ${{ github.event.created }}
-        run: bash .github/scripts/resolve-change-range.sh
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          script=".github/scripts/resolve-change-range.sh"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_script="$RUNNER_TEMP/resolve-change-range.base.sh"
+            if ! git show "$PR_BASE_SHA:$script" > "$base_script" 2>/dev/null; then
+              echo "::error::The range resolver is absent on the pull request's base commit; failing closed."
+              exit 1
+            fi
+            script="$base_script"
+          fi
+          bash "$script"
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (branch SHA; dtolnay has no semver tags)
         with:
           toolchain: 1.96.0
@@ -730,9 +763,10 @@ jobs:
             exit 1
           fi
           # The golden ratification guard and the authoring lint run on every
-          # pull request and push (a branch-creating push skips their diff-scoped
-          # steps inside the job, which still succeeds), so both must succeed
-          # outright on every run.
+          # pull request and push (a branch-creating push whose commits are all
+          # already on another branch skips their diff-scoped step inside the
+          # job, which still succeeds), so both must succeed outright on every
+          # run.
           if [ "$GOLDEN_RATIFICATION_RESULT" != "success" ]; then
             echo "::error::The golden ratification guard did not pass (result: $GOLDEN_RATIFICATION_RESULT)."
             exit 1
